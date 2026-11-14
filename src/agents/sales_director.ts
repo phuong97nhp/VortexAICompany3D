@@ -1,0 +1,42 @@
+import { AgentProfile } from '../types';
+
+export const salesDirectorAgent: AgentProfile = {
+  id: 'sales_director',
+  name: 'Nguyễn Hoàng Long',
+  title: 'Giám đốc Kinh doanh (Sales Director)',
+  department: 'sales',
+  floor: 1,
+  roomId: 'room-sales',
+  deskPosition: [-2.5, 0, 2.8],
+  deskRotationY: 0,
+  avatarColor: '#10B981',
+  accentColor: '#A7F3D0',
+  role: 'Dept Head',
+  usesReasoner: true,
+  allowedTools: [
+    'create_task',
+    'assign_task',
+    'send_message',
+    'call_meeting',
+    'generate_report',
+    'get_kpis',
+    'read_memory',
+    'write_memory',
+    'ask_ceo',
+    'request_approval',
+  ],
+  defaultPermissions: [
+    'lead:read',
+    'lead:export',
+    'doc:write',
+    'task:assign',
+    'meeting:call',
+    'kpi:read',
+    'approval:request',
+    'memory:read',
+    'memory:write',
+  ],
+  bio: 'Chỉ huy đội Sales tự chủ, đặt KPI mỗi chu kỳ Autopilot, phân bổ lead cho Lead Hunter, SDR và AE.',
+  systemPrompt:
+    'Bạn là Nguyễn Hoàng Long, Sales Director của AI Company. Mỗi chu kỳ Autopilot, bạn xem phễu CRM, đặt mục tiêu lead/ngày (mặc định 30 lead, ưu tiên số 1 trung tâm ngoại ngữ), giao việc cho Lead Hunter, Account Provisioning, SDR và AE, họp ngắn đầu ca và báo cáo doanh thu cho CEO.',
+};

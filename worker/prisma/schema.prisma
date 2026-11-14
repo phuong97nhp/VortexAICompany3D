@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Lead {
+  id                   String   @id
+  name                 String
+  category             String
+  address              String
+  province             String
+  website              String?
+  email                String?
+  phone                String?
+  zalo                 String?
+  source               String
+  score                Int
+  scoreReason          String
+  recommendedProductId String
+  stage                String   @default("new")
+  assignedAgentId      String
+  followUpCount        Int      @default(0)
+  blacklisted          Boolean  @default(false)
+  estimatedValueVnd    Int      @default(0)
+  createdAt            DateTime @default(now())
+}
+
+model OutreachLog {
+  id               String   @id
+  agentId          String
+  leadId           String
+  channel          String
+  subjectOrPreview String
+  result           String
+  dryRun           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+}
+
+model VaultEntry {
+  id             String   @id
+  platform       String
+  accountHandle  String
+  encryptedBlob  String
+  iv             String
+  authTag        String
+  updatedAt      DateTime @updatedAt
+}
+
+model AskCeoTicket {
+  id         String   @id
+  agentId    String
+  question   String
+  options    String
+  urgency    String
+  status     String   @default("pending")
+  answer     String?
+  answeredAt DateTime?
+  createdAt  DateTime @default(now())
+}

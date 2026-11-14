@@ -1,0 +1,6 @@
+{
+  "name": "VĂN PHÒNG ẢO 3D – AI COMPANY",
+  "description": "Công ty phần mềm vận hành hoàn toàn bởi đội ngũ AI Agent đa phòng ban trong không gian văn phòng 3D tương tác, tích hợp đội Sales tự chủ, RBAC và kênh Hỏi CEO qua Zalo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
