@@ -1,10 +1,10 @@
 import { MessageSquare, Shield, X } from 'lucide-react';
-import { getAgentById } from '../agents';
-import { DEPARTMENTS } from '../config/departments';
 import { useCompanyStore } from '../store/useCompanyStore';
 
 export function AgentProfileModal() {
   const selectedAgentId = useCompanyStore((s) => s.selectedAgentId);
+  const agents = useCompanyStore((s) => s.agents);
+  const departments = useCompanyStore((s) => s.departments);
   const selectAgent = useCompanyStore((s) => s.selectAgent);
   const accounts = useCompanyStore((s) => s.accounts);
   const runtimes = useCompanyStore((s) => s.runtimes);
@@ -14,13 +14,13 @@ export function AgentProfileModal() {
   const setActiveChannel = useCompanyStore((s) => s.setActiveChannel);
 
   if (!selectedAgentId) return null;
-  const agent = getAgentById(selectedAgentId);
+  const agent = agents.find((a) => a.id === selectedAgentId);
   if (!agent) return null;
 
   const account = accounts.find((a) => a.agentId === agent.id);
   const runtime = runtimes[agent.id];
   const memory = agentMemories[agent.id];
-  const dept = DEPARTMENTS[agent.department];
+  const dept = departments.find((d) => d.id === agent.department);
   const agentLogs = auditLogs.filter((l) => l.agentId === agent.id).slice(0, 6);
 
   return (
@@ -31,12 +31,15 @@ export function AgentProfileModal() {
             className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0"
             style={{ backgroundColor: agent.avatarColor }}
           >
-            {agent.name.split(' ').slice(-1)[0][0]}
+            {agent.name.split(' ').slice(-1)[0]?.[0] || 'A'}
           </div>
           <div className="min-w-0">
-            <h3 className="font-bold text-sm truncate">{agent.name}</h3>
+            <h3 className="font-bold text-sm truncate">
+              {agent.name}
+              {agent.nickname ? ` (${agent.nickname})` : ''}
+            </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-              {agent.title} · {dept.shortName} (Tầng {agent.floor})
+              {agent.title} · {dept?.shortName || agent.department} (Tầng {agent.floor})
             </p>
           </div>
         </div>
@@ -54,7 +57,10 @@ export function AgentProfileModal() {
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
         <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-500">Trạng thái & Tác vụ</div>
-          <div className="font-semibold mt-0.5 truncate">{runtime?.status || 'idle'}</div>
+          <div className="font-semibold mt-0.5 truncate">
+            {runtime?.isDelayed ? 'TRỄ ETA · ' : ''}
+            {runtime?.status || 'idle'}
+          </div>
           <div className="text-[10px] text-slate-400 truncate">{runtime?.currentTaskTitle || 'Đang trực tại bàn'}</div>
         </div>
         <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
@@ -120,23 +126,24 @@ export function AgentProfileModal() {
           className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer"
         >
           <MessageSquare className="w-3.5 h-3.5" />
-          <span>Chat riêng với {agent.name.split(' ').slice(-2).join(' ')}</span>
+          <span>Chat riêng</span>
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('customizer')}
           className="py-2 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium cursor-pointer"
         >
-          Tùy chỉnh 3D
+          3D
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('rbac')}
           className="py-2 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium cursor-pointer"
         >
-          Quyền
+          Hồ sơ HR
         </button>
       </div>
     </div>
   );
 }
+

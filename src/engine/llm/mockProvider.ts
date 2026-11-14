@@ -9,8 +9,10 @@ export class MockLLMProvider implements LLMProvider {
     const out = runMockVietnameseLlm({
       agentId: request.agentId,
       userPrompt: lastUser,
+      messages: request.messages,
       model: request.model?.includes('reasoner') ? 'deepseek-reasoner' : 'deepseek-chat',
       hasTools: Boolean(request.tools?.length),
+      allowedToolNames: request.tools?.map((t) => t.function.name),
     });
 
     const promptTokens = Math.max(100, Math.round(lastUser.length * 0.45));

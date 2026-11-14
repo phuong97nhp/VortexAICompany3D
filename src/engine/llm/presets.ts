@@ -1,7 +1,26 @@
 import { RoleRouteEntry, RoutingPresetId, RoutingTaskGroup } from '../../types';
+import { getLiveAgentById } from '../liveRegistry';
 
 export function getTaskGroupForAgent(agentId: string, isMemorySummary?: boolean): RoutingTaskGroup {
   if (isMemorySummary) return 'memory_summary';
+  const liveAgent = getLiveAgentById(agentId);
+  if (liveAgent) {
+    if (liveAgent.role === 'CEO' || liveAgent.role === 'Exec' || liveAgent.role === 'Dept Head') {
+      return 'leadership';
+    }
+    if (liveAgent.department === 'marketing') return 'marketing';
+    if (liveAgent.department === 'sales') {
+      if (liveAgent.id.includes('sdr') || liveAgent.id.includes('lead') || liveAgent.id.includes('provisioning')) {
+        return 'sales_sdr';
+      }
+      return 'sales_closing';
+    }
+    if (liveAgent.department === 'backoffice' || liveAgent.department === 'data') {
+      return 'sales_closing';
+    }
+    return 'product_cs';
+  }
+
   if (['secretary', 'coo', 'cmo', 'sales_director', 'tech_lead'].includes(agentId)) {
     return 'leadership';
   }

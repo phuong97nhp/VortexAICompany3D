@@ -10,6 +10,7 @@ import {
   Megaphone,
   MessageSquare,
   Palette,
+  Receipt,
   ScrollText,
   Settings,
   Shield,
@@ -22,7 +23,8 @@ import { CrmPanel } from './panels/CrmPanel';
 import { LogsPanel } from './panels/LogsPanel';
 import { DocsPanel } from './panels/DocsPanel';
 import { ApprovalsPanel } from './panels/ApprovalsPanel';
-import { RbacPanel } from './panels/RbacPanel';
+import { FinanceAccountingPanel } from './panels/FinanceAccountingPanel';
+import { HrManagementPanel } from './panels/HrManagementPanel';
 import { VaultPanel } from './panels/VaultPanel';
 import { TokenKpiPanel } from './panels/TokenKpiPanel';
 import { CharacterCustomizerPanel } from './panels/CharacterCustomizerPanel';
@@ -38,16 +40,17 @@ interface TabDef {
 const PRIMARY_TABS: TabDef[] = [
   { id: 'chat', label: 'Chat', shortLabel: 'Chat', icon: MessageSquare },
   { id: 'marketing', label: 'Kênh & Marketing', shortLabel: 'Marketing', icon: Megaphone },
-  { id: 'tasks', label: 'Task Board', shortLabel: 'Task Board', icon: ListChecks },
+  { id: 'tasks', label: 'Task Board', shortLabel: 'Task', icon: ListChecks },
   { id: 'crm', label: 'CRM & Pipeline', shortLabel: 'CRM', icon: Briefcase },
-  { id: 'approvals', label: 'Phê duyệt', shortLabel: 'Phê duyệt', icon: CheckSquare },
+  { id: 'approvals', label: 'Phê duyệt', shortLabel: 'Duyệt', icon: CheckSquare },
+  { id: 'finance', label: 'Chi phí & Kế toán', shortLabel: 'Chi phí', icon: Receipt },
   { id: 'settings', label: 'Cài đặt', shortLabel: 'Cài đặt', icon: Settings },
 ];
 
 const OVERFLOW_TABS: TabDef[] = [
-  { id: 'logs', label: 'Nhật ký hoạt động', shortLabel: 'Nhật ký', icon: ScrollText },
-  { id: 'docs', label: 'Kho tài liệu', shortLabel: 'Tài liệu', icon: FileText },
   { id: 'rbac', label: 'Nhân sự & Quyền', shortLabel: 'Nhân sự', icon: Shield },
+  { id: 'docs', label: 'Kho tài liệu', shortLabel: 'Tài liệu', icon: FileText },
+  { id: 'logs', label: 'Nhật ký hoạt động', shortLabel: 'Nhật ký', icon: ScrollText },
   { id: 'vault', label: 'Tài khoản & Vault', shortLabel: 'Vault', icon: Key },
   { id: 'tokens', label: 'Chi phí token', shortLabel: 'Token KPI', icon: BarChart3 },
   { id: 'customizer', label: 'Tùy chỉnh 3D', shortLabel: '3D Chibi', icon: Palette },
@@ -59,8 +62,10 @@ export function RightWorkspacePanel() {
   const approvals = useCompanyStore((s) => s.approvals);
   const askCeoQuestions = useCompanyStore((s) => s.askCeoQuestions);
   const marketingChannels = useCompanyStore((s) => s.marketingChannels);
+  const expenses = useCompanyStore((s) => s.expenses);
+  const tasks = useCompanyStore((s) => s.tasks);
 
-  const [width, setWidth] = useState(520);
+  const [width, setWidth] = useState(560);
   const [moreOpen, setMoreOpen] = useState(false);
   const dragging = useRef(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -79,6 +84,16 @@ export function RightWorkspacePanel() {
   const pendingApprovals =
     approvals.filter((a) => a.status === 'pending').length +
     askCeoQuestions.filter((q) => q.status === 'pending' || q.status === 'reminded').length;
+  const pendingExpenses = expenses.filter(
+    (e) => e.status === 'pending_ceo' || e.status === 'pending_accountant'
+  ).length;
+  const now = Date.now();
+  const delayedTasks = tasks.filter(
+    (t) =>
+      t.status !== 'done' &&
+      t.status !== 'failed' &&
+      ((t.etaAt && now > t.etaAt) || Boolean(t.delayNotified))
+  ).length;
 
   const activeOverflowTab = OVERFLOW_TABS.find((t) => t.id === activeTab);
 
@@ -87,7 +102,7 @@ export function RightWorkspacePanel() {
     dragging.current = true;
     const onMove = (ev: MouseEvent) => {
       if (!dragging.current) return;
-      const next = Math.min(820, Math.max(380, window.innerWidth - ev.clientX));
+      const next = Math.min(860, Math.max(400, window.innerWidth - ev.clientX));
       setWidth(next);
     };
     const onUp = () => {
@@ -111,7 +126,7 @@ export function RightWorkspacePanel() {
         className="absolute left-0 top-0 bottom-0 w-1.5 -ml-0.5 cursor-col-resize hover:bg-sky-500/60 transition-colors z-30"
       />
 
-      {/* Tabs Navigation: Primary Tabs + Overflow "Thêm ▾" Dropdown (zero clipping) */}
+      {/* Tabs Navigation */}
       <div className="px-2 py-1.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-1">
         <div className="flex items-center gap-1 flex-wrap min-w-0">
           {PRIMARY_TABS.map((tab) => {
@@ -133,14 +148,24 @@ export function RightWorkspacePanel() {
                 }`}
               >
                 <Icon className="w-3.5 h-3.5 shrink-0" />
-                <span>{width >= 580 ? tab.label : tab.shortLabel}</span>
+                <span>{width >= 660 ? tab.label : tab.shortLabel}</span>
                 {tab.id === 'approvals' && pendingApprovals > 0 && (
-                  <span className="px-1.5 rounded-full bg-rose-600 text-white text-[10px] font-bold">
+                  <span className="px-1.5 rounded-full bg-rose-600 text-white text-[10px] font-bold font-mono-num">
                     {pendingApprovals}
                   </span>
                 )}
+                {tab.id === 'finance' && pendingExpenses > 0 && (
+                  <span className="px-1.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold font-mono-num">
+                    {pendingExpenses}
+                  </span>
+                )}
+                {tab.id === 'tasks' && delayedTasks > 0 && (
+                  <span className="px-1.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold font-mono-num">
+                    {delayedTasks}
+                  </span>
+                )}
                 {tab.id === 'marketing' && waitingOtpCount > 0 && (
-                  <span className="px-1.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold">
+                  <span className="px-1.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold font-mono-num">
                     {waitingOtpCount}
                   </span>
                 )}
@@ -153,7 +178,7 @@ export function RightWorkspacePanel() {
             <button
               type="button"
               onClick={() => setMoreOpen((v) => !v)}
-              title="Các tab quản trị khác (Nhật ký, Tài liệu, Nhân sự, Vault, Token, Tùy chỉnh 3D)"
+              title="Các tab quản trị khác (Nhân sự & Quyền, Tài liệu, Nhật ký, Vault, Token, Tùy chỉnh 3D)"
               className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-[11.5px] font-medium whitespace-nowrap shrink-0 border transition-colors cursor-pointer ${
                 activeOverflowTab
                   ? 'bg-sky-600 text-white border-sky-500'
@@ -203,7 +228,8 @@ export function RightWorkspacePanel() {
         {activeTab === 'logs' && <LogsPanel />}
         {activeTab === 'docs' && <DocsPanel />}
         {activeTab === 'approvals' && <ApprovalsPanel />}
-        {activeTab === 'rbac' && <RbacPanel />}
+        {activeTab === 'finance' && <FinanceAccountingPanel />}
+        {activeTab === 'rbac' && <HrManagementPanel />}
         {activeTab === 'vault' && <VaultPanel />}
         {activeTab === 'tokens' && <TokenKpiPanel />}
         {activeTab === 'customizer' && <CharacterCustomizerPanel />}
@@ -212,3 +238,4 @@ export function RightWorkspacePanel() {
     </aside>
   );
 }
+

@@ -1,22 +1,27 @@
-import { getAgentById } from '../agents';
 import { PRODUCTS, getProductById } from '../config/products';
 import { useCompanyStore } from '../store/useCompanyStore';
 import {
   AdCampaignItem,
   ApprovalType,
   AskCeoQuestion,
+  DepartmentId,
   DocumentCategory,
   LeadItem,
   LeadStage,
   Permission,
   ScheduledSocialPost,
   SocialPlatformId,
+  TaskDeliverableLink,
   TaskPriority,
   ToolName,
 } from '../types';
+import { formatVnd } from './expenseEngine';
+import { buildNewAgentFromSpec } from './hrEngine';
+import { getLiveAgentById } from './liveRegistry';
 import { LlmToolDefinition } from './llm';
 import { buildDefaultBrandLaunchKit, PLATFORM_META } from './marketingSeeds';
 import { authorize, TOOL_PERMISSION_MAP } from './rbac';
+import { ROLE_TEMPLATES } from './roleTemplates';
 
 export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
   create_task: {
@@ -437,7 +442,7 @@ export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
     type: 'function',
     function: {
       name: 'create_ad_campaign',
-      description: 'Đề xuất chiến dịch Ads (đối tượng, ngân sách ngày/tổng, A/B variants) đưa vào hàng đợi CEO duyệt trước khi chạy.',
+      description: 'Tạo chiến dịch Ads trả phí. BẮT BUỘC truyền expenseId của phiếu chi #CP-... đã được Kế toán + CEO duyệt.',
       parameters: {
         type: 'object',
         properties: {
@@ -446,8 +451,128 @@ export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
           audience: { type: 'string' },
           dailyBudgetVnd: { type: 'number' },
           totalBudgetVnd: { type: 'number' },
+          expenseId: { type: 'string' },
         },
-        required: ['name', 'platform', 'dailyBudgetVnd'],
+        required: ['name', 'platform', 'dailyBudgetVnd', 'expenseId'],
+      },
+    },
+  },
+  request_expense: {
+    type: 'function',
+    function: {
+      name: 'request_expense',
+      description: 'Tạo phiếu đề xuất chi phí (#CP-xxx) gửi Kế toán thẩm định tầng 1 trước khi chi tiền.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          category: { type: 'string' },
+          amountVnd: { type: 'number' },
+          vendor: { type: 'string' },
+          justification: { type: 'string' },
+          expectedRoi: { type: 'string' },
+          projectOrCampaign: { type: 'string' },
+          frequency: { type: 'string', enum: ['once', 'recurring'] },
+        },
+        required: ['title', 'category', 'amountVnd', 'vendor', 'justification'],
+      },
+    },
+  },
+  review_expense: {
+    type: 'function',
+    function: {
+      name: 'review_expense',
+      description: 'Kế toán thẩm định phiếu chi tầng 1 (chuyển CEO duyệt, hỏi lại hoặc từ chối). Không được tự duyệt phiếu của mình.',
+      parameters: {
+        type: 'object',
+        properties: {
+          expenseId: { type: 'string' },
+          decision: { type: 'string', enum: ['to_ceo', 'needs_info', 'rejected'] },
+          note: { type: 'string' },
+        },
+        required: ['expenseId', 'decision'],
+      },
+    },
+  },
+  pay_expense: {
+    type: 'function',
+    function: {
+      name: 'pay_expense',
+      description: 'Đánh dấu phiếu chi đã duyệt là Đã thanh toán và ghi nhận chứng từ.',
+      parameters: {
+        type: 'object',
+        properties: {
+          expenseId: { type: 'string' },
+          note: { type: 'string' },
+          attachmentName: { type: 'string' },
+        },
+        required: ['expenseId'],
+      },
+    },
+  },
+  buy_domain: {
+    type: 'function',
+    function: {
+      name: 'buy_domain',
+      description: 'Mua tên miền / hosting (BẮT BUỘC có expenseId phiếu chi đã duyệt).',
+      parameters: {
+        type: 'object',
+        properties: {
+          domain: { type: 'string' },
+          amountVnd: { type: 'number' },
+          expenseId: { type: 'string' },
+        },
+        required: ['domain', 'amountVnd', 'expenseId'],
+      },
+    },
+  },
+  subscribe_tool: {
+    type: 'function',
+    function: {
+      name: 'subscribe_tool',
+      description: 'Đăng ký hoặc gia hạn công cụ SaaS (BẮT BUỘC có expenseId phiếu chi đã duyệt).',
+      parameters: {
+        type: 'object',
+        properties: {
+          toolName: { type: 'string' },
+          amountVnd: { type: 'number' },
+          expenseId: { type: 'string' },
+        },
+        required: ['toolName', 'amountVnd', 'expenseId'],
+      },
+    },
+  },
+  spend: {
+    type: 'function',
+    function: {
+      name: 'spend',
+      description: 'Thực hiện chi khoản đã được duyệt theo phiếu chi (BẮT BUỘC có expenseId).',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: { type: 'string' },
+          amountVnd: { type: 'number' },
+          expenseId: { type: 'string' },
+        },
+        required: ['description', 'amountVnd', 'expenseId'],
+      },
+    },
+  },
+  hire_agent: {
+    type: 'function',
+    function: {
+      name: 'hire_agent',
+      description: 'Tuyển nhân sự AI mới (hoặc trình CEO duyệt tuyển nếu hrAutoDecide đang tắt).',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+          title: { type: 'string' },
+          department: { type: 'string' },
+          personalityNote: { type: 'string' },
+          templateId: { type: 'string' },
+        },
+        required: ['name', 'title', 'department'],
       },
     },
   },
@@ -576,14 +701,22 @@ const SIMULATED_VN_LEADS_POOL: Array<{
   },
 ];
 
+export interface ToolExecutionContext {
+  onDeliverable?: (d: TaskDeliverableLink) => void;
+}
+
 export async function executeAgentTool(
   agentId: string,
   toolName: ToolName,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  ctx?: ToolExecutionContext
 ): Promise<{ ok: boolean; output: Record<string, unknown> }> {
   const store = useCompanyStore.getState();
-  const agent = getAgentById(agentId);
-  if (!agent) return { ok: false, output: { error: 'Agent không tồn tại' } };
+  const agent = getLiveAgentById(agentId);
+  if (!agent) return { ok: false, output: { error: 'Nhân sự không tồn tại trong hệ thống' } };
+  if (agent.employmentStatus === 'archived' || agent.employmentStatus === 'suspended') {
+    return { ok: false, output: { error: `${agent.name} hiện đang tạm nghỉ hoặc đã thôi việc.` } };
+  }
 
   if (store.settings.killSwitchActive) {
     return { ok: false, output: { error: 'KILL SWITCH đang kích hoạt' } };
@@ -663,11 +796,16 @@ export async function executeAgentTool(
     case 'create_task':
     case 'assign_task': {
       const assignedTo = String(args.assignedTo || agentId);
-      const targetAgent = getAgentById(assignedTo) || agent;
+      const targetAgent = getLiveAgentById(assignedTo) || agent;
+      const taskCode = `#T-${101 + store.tasks.length}`;
+      const etaMinutes = Math.max(5, Number(args.etaMinutes || 15));
       const task = {
         id: `task_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        taskCode,
         title: String(args.title || 'Nhiệm vụ mới'),
         description: String(args.description || ''),
+        definitionOfDone: String(args.definitionOfDone || args.description || 'Hoàn thành và lưu kết quả thực tế vào hệ thống.'),
+        expectedDeliverable: String(args.expectedDeliverable || 'Tài liệu / Dữ liệu CRM / Báo cáo'),
         department: targetAgent.department,
         assignedTo: targetAgent.id,
         createdBy: agentId,
@@ -676,12 +814,17 @@ export async function executeAgentTool(
           ? args.priority
           : 'medium') as TaskPriority,
         productId: args.productId ? String(args.productId) : undefined,
+        etaMinutes,
+        etaAt: now + etaMinutes * 60_000,
+        progressPercent: 0,
+        lastProgressAt: now,
+        deliverables: [],
         createdAt: now,
         updatedAt: now,
-        dueLabel: 'Chu kỳ hiện tại',
+        dueLabel: `${etaMinutes} phút`,
       };
       await store.putTask(task);
-      return { ok: true, output: { taskId: task.id, assignedTo: targetAgent.name } };
+      return { ok: true, output: { taskId: task.id, taskCode, assignedTo: targetAgent.name } };
     }
 
     case 'send_message': {
@@ -713,6 +856,7 @@ export async function executeAgentTool(
         updatedAt: now,
       };
       await store.putDocument(doc);
+      ctx?.onDeliverable?.({ type: 'doc', id: doc.id, title: doc.title });
       await store.addMessage({
         channelId: agent.department,
         senderId: agentId,
@@ -781,16 +925,75 @@ export async function executeAgentTool(
 
     case 'find_leads': {
       const productId = String(args.productId || store.settings.priorityProductId || 'edu-center');
-      const count = Math.min(Number(args.count || 3), 5);
+      const requestedCount = Math.min(30, Math.max(1, Number(args.count || 5)));
+      const targetProvince = args.province ? String(args.province) : '';
       const existingNames = new Set(store.leads.map((l) => l.name.toLowerCase()));
-      const candidates = SIMULATED_VN_LEADS_POOL.filter(
-        (c) => (productId ? c.productId === productId || c.productId === 'edu-center' : true) && !existingNames.has(c.name.toLowerCase())
-      ).slice(0, count);
 
+      const poolCandidates = SIMULATED_VN_LEADS_POOL.filter(
+        (c) => (productId ? c.productId === productId || c.productId === 'edu-center' : true) && !existingNames.has(c.name.toLowerCase())
+      );
+
+      const syntheticLeads: typeof SIMULATED_VN_LEADS_POOL = [...poolCandidates];
+      if (syntheticLeads.length < requestedCount) {
+        const prefixes =
+          productId === 'preschool-care'
+            ? ['Trường Mầm non Song ngữ', 'Mầm non Quốc tế', 'Nhà trẻ Montessori', 'Mầm non Họa Mi']
+            : productId === 'warehouse-pro'
+            ? ['Công ty Kho vận', 'Nhà phân phối Hàng tiêu dùng', 'Công ty TM & Logistics', 'Siêu thị Vật tư']
+            : productId === 'web-design'
+            ? ['Phòng khám Nha khoa', 'Công ty Nội thất', 'Thẩm mỹ viện', 'Showroom Kiến trúc']
+            : ['Trung tâm Anh ngữ', 'Học viện Ngoại ngữ', 'Anh ngữ Quốc tế', 'Trung tâm Tiếng Nhật & Hàn'];
+        const brands = ['Ánh Dương', 'Khởi Nguyên', 'Thăng Long', 'Vươn Xa', 'Tâm Việt', 'Phương Nam', 'Hưng Thịnh', 'Sài Gòn Mới', 'Bình Minh', 'Tiên Phong', 'Việt Úc', 'Minh Trí', 'Sao Mai', 'Phát Đạt', 'Hoa Sen', 'Đại Việt', 'Á Châu', 'Toàn Cầu', 'Tri Thức', 'An Bình'];
+        const provinces = targetProvince ? [targetProvince] : ['TP.HCM', 'Hà Nội', 'Đà Nẵng', 'Bình Dương', 'Cần Thơ', 'Hải Phòng'];
+        const streets = ['Nguyễn Trãi', 'Lê Lợi', 'Hai Bà Trưng', 'Trần Hưng Đạo', 'Nguyễn Văn Linh', 'Cầu Giấy', 'Phan Văn Trị', 'Lê Văn Sỹ'];
+
+        let idx = 0;
+        while (syntheticLeads.length < requestedCount && idx < 80) {
+          const pfx = prefixes[idx % prefixes.length];
+          const br = brands[(idx * 3 + Math.floor(now / 1000)) % brands.length];
+          const prov = provinces[idx % provinces.length];
+          const st = streets[(idx * 5) % streets.length];
+          const num = 20 + ((idx * 17) % 340);
+          const candidateName = `${pfx} ${br} (${prov})`;
+          idx++;
+          if (existingNames.has(candidateName.toLowerCase()) || syntheticLeads.some((x) => x.name === candidateName)) {
+            continue;
+          }
+          const domainSlug = candidateName
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/đ/gi, 'd')
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '')
+            .slice(0, 14);
+          syntheticLeads.push({
+            name: candidateName,
+            category:
+              productId === 'preschool-care'
+                ? 'Trường mầm non'
+                : productId === 'warehouse-pro'
+                ? 'Doanh nghiệp kho/bán lẻ'
+                : productId === 'web-design'
+                ? 'Doanh nghiệp SME'
+                : 'Trung tâm ngoại ngữ',
+            address: `${num} ${st}`,
+            province: prov,
+            website: `https://${domainSlug}.vn`,
+            email: `lienhe@${domainSlug}.vn`,
+            phone: `090${(idx % 9) + 1} ${100 + idx} ${210 + idx}`,
+            productId,
+            score: 76 + (idx % 20),
+            reason: 'Phù hợp chân dung khách hàng mục tiêu, đang mở rộng quy mô vận hành (Dữ liệu mô phỏng).',
+            valueVnd: productId === 'edu-center' ? 29880000 : productId === 'warehouse-pro' ? 22680000 : 19080000,
+          });
+        }
+      }
+
+      const selected = syntheticLeads.slice(0, requestedCount);
       const saved: LeadItem[] = [];
-      for (const c of candidates) {
+      for (const c of selected) {
         const lead: LeadItem = {
-          id: `lead_${now}_${Math.random().toString(36).slice(2, 6)}`,
+          id: `lead_${now}_${saved.length}_${Math.random().toString(36).slice(2, 5)}`,
           name: c.name,
           category: c.category,
           address: c.address,
@@ -799,7 +1002,7 @@ export async function executeAgentTool(
           email: c.email,
           phone: c.phone,
           zalo: c.phone.replace(/\s+/g, ''),
-          source: dryRun ? 'Nguồn công khai (Mô phỏng)' : 'Public Search',
+          source: 'Nguồn công khai (Dữ liệu mô phỏng)',
           score: c.score,
           scoreReason: c.reason,
           recommendedProductId: c.productId,
@@ -814,6 +1017,15 @@ export async function executeAgentTool(
         await store.putLead(lead);
         saved.push(lead);
       }
+
+      if (saved.length > 0) {
+        ctx?.onDeliverable?.({
+          type: 'lead',
+          id: saved[0].id,
+          title: `${saved.length} Lead mới trong CRM (${saved[0].name}...)`,
+        });
+      }
+
       return {
         ok: true,
         output: {
@@ -1068,6 +1280,7 @@ export async function executeAgentTool(
         updatedAt: now,
       };
       await store.putDocument(quoteDoc);
+      ctx?.onDeliverable?.({ type: 'quote', id: quoteDoc.id, title: quoteDoc.title });
 
       // Discount outside price list OR Autonomy <= 2 requires CEO approval!
       if (discount > 0 || store.settings.autonomyLevel <= 2) {
@@ -1238,18 +1451,20 @@ export async function executeAgentTool(
         ),
       ].join('\n');
 
-      await store.putDocument({
+      const bkDoc = {
         id: `doc_brand_kit_${now}`,
         title: `Brand Launch Kit – ${kit.brandName} (${kit.handle})`,
-        category: 'strategy',
+        category: 'strategy' as const,
         authorId: agentId,
-        department: 'marketing',
+        department: 'marketing' as DepartmentId,
         content: md,
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      await store.putDocument(bkDoc);
+      ctx?.onDeliverable?.({ type: 'doc', id: bkDoc.id, title: bkDoc.title });
 
-      return { ok: true, output: { brandName: kit.brandName, handle: kit.handle, savedToDocs: true } };
+      return { ok: true, output: { brandName: kit.brandName, handle: kit.handle, documentId: bkDoc.id, savedToDocs: true } };
     }
 
     case 'provision_channel': {
@@ -1376,6 +1591,7 @@ export async function executeAgentTool(
         createdAt: now,
       };
       await store.putScheduledPost(newPost);
+      ctx?.onDeliverable?.({ type: 'post', id: postId, title: `Bài MXH (${meta.shortTag}): ${title}` });
       return { ok: true, output: { postId, status: newPost.status, needsApproval } };
     }
 
@@ -1576,6 +1792,43 @@ export async function executeAgentTool(
 
     case 'create_ad_campaign': {
       const dailyBudget = Number(args.dailyBudgetVnd || 300000);
+      const totalBudget = Number(args.totalBudgetVnd || dailyBudget * 14);
+      const expenseId = String(args.expenseId || '').trim();
+
+      // BỔ SUNG E STRICT GATE: Never run/create paid ads without approved ExpenseItem
+      const approvedExp = store.expenses.find(
+        (e) =>
+          (e.id === expenseId || e.expenseCode.toUpperCase() === expenseId.toUpperCase()) &&
+          (e.status === 'approved' || e.status === 'paid' || e.status === 'reconciled')
+      );
+      if (!approvedExp) {
+        await store.addAuditLog({
+          id: `aud_gate_${now}`,
+          agentId,
+          agentName: agent.name,
+          action: 'create_ad_campaign',
+          permission: 'ads:manage',
+          resource: 'expense_gate',
+          result: 'denied',
+          reason: 'Thiếu phiếu chi #CP-... đã được Kế toán + CEO phê duyệt.',
+          timestamp: now,
+        });
+        return {
+          ok: false,
+          output: {
+            error: `Bị chặn chi tiền: Bắt buộc phải có phiếu chi #CP-... đã được Kế toán + CEO duyệt (expenseId) trước khi tạo chiến dịch Ads (${formatVnd(totalBudget)}). Hãy gọi request_expense trước.`,
+          },
+        };
+      }
+      if (approvedExp.amountVnd < totalBudget) {
+        return {
+          ok: false,
+          output: {
+            error: `Phiếu chi ${approvedExp.expenseCode} chỉ duyệt ${formatVnd(approvedExp.amountVnd)}, không đủ cho chiến dịch ${formatVnd(totalBudget)}.`,
+          },
+        };
+      }
+
       const maxDaily = store.settings.marketingDailyAdBudgetVnd || 500000;
       if (dailyBudget > maxDaily) {
         return {
@@ -1587,7 +1840,6 @@ export async function executeAgentTool(
       }
       const platform = (String(args.platform || 'facebook') as AdCampaignItem['platform']);
       const adId = `ad_${now}_${Math.random().toString(36).slice(2, 5)}`;
-      const aprId = `apr_ad_${now}`;
 
       const ad: AdCampaignItem = {
         id: adId,
@@ -1596,7 +1848,8 @@ export async function executeAgentTool(
         objective: 'Leads',
         audience: String(args.audience || 'Chủ Trung tâm Ngoại ngữ & Doanh nghiệp SME Việt Nam (25–48 tuổi)'),
         dailyBudgetVnd: dailyBudget,
-        totalBudgetVnd: Number(args.totalBudgetVnd || dailyBudget * 14),
+        totalBudgetVnd: totalBudget,
+        expenseId: approvedExp.id,
         variants: [
           {
             label: 'Biến thể A (Tiết kiệm thời gian)',
@@ -1609,8 +1862,7 @@ export async function executeAgentTool(
             primaryText: 'Không bỏ sót bất kỳ khách hàng tiềm năng nào từ Fanpage hay Website.',
           },
         ],
-        status: 'pending_approval',
-        approvalId: aprId,
+        status: 'active',
         impressions: 0,
         clicks: 0,
         leads: 0,
@@ -1618,21 +1870,185 @@ export async function executeAgentTool(
         createdAt: now,
       };
       await store.putAdCampaign(ad);
+      ctx?.onDeliverable?.({ type: 'expense', id: approvedExp.id, title: `Ads ${ad.name} (${approvedExp.expenseCode})` });
 
-      await store.putApproval({
-        id: aprId,
-        type: 'budget',
-        title: `Duyệt Ads ${platform.toUpperCase()}: ${ad.name} (${dailyBudget.toLocaleString('vi-VN')}đ/ngày)`,
-        description: `Đối tượng: ${ad.audience}\nTổng ngân sách dự kiến: ${ad.totalBudgetVnd.toLocaleString('vi-VN')}đ · Gồm 2 biến thể A/B. Không tự chi tiền khi chưa duyệt.`,
-        requestedBy: agentId,
-        department: 'marketing',
-        amountVnd: ad.totalBudgetVnd,
-        payload: { adCampaignId: adId },
-        status: 'pending',
-        createdAt: now,
+      return { ok: true, output: { adCampaignId: adId, expenseCode: approvedExp.expenseCode, status: 'active' } };
+    }
+
+    case 'request_expense': {
+      const amountVnd = Math.max(1000, Math.round(Number(args.amountVnd || 0)));
+      const exp = await store.createExpense({
+        requesterId: agentId,
+        department: agent.department,
+        projectOrCampaign: String(args.projectOrCampaign || 'Chiến dịch vận hành'),
+        category: String(args.category || 'Công cụ / SaaS'),
+        title: String(args.title || 'Đề xuất chi phí'),
+        amountVnd,
+        frequency: args.frequency === 'recurring' ? 'recurring' : 'once',
+        justification: String(args.justification || 'Phục vụ vận hành theo chỉ đạo CEO.'),
+        expectedRoi: String(args.expectedRoi || 'Tăng hiệu suất & Lead đầu vào.'),
+        vendor: String(args.vendor || 'Nhà cung cấp Việt Nam'),
+      });
+      ctx?.onDeliverable?.({ type: 'expense', id: exp.id, title: `${exp.expenseCode}: ${exp.title}` });
+      return {
+        ok: true,
+        output: {
+          expenseId: exp.id,
+          expenseCode: exp.expenseCode,
+          status: exp.status,
+          flags: exp.flags,
+          autoApproved: exp.status === 'approved',
+        },
+      };
+    }
+
+    case 'review_expense': {
+      const expId = String(args.expenseId || '');
+      const targetExp = store.expenses.find(
+        (e) => e.id === expId || e.expenseCode.toUpperCase() === expId.toUpperCase()
+      );
+      if (!targetExp) return { ok: false, output: { error: `Không tìm thấy phiếu chi "${expId}".` } };
+      const res = await store.accountantReviewExpense({
+        expenseId: targetExp.id,
+        reviewerId: agentId,
+        decision: (['to_ceo', 'needs_info', 'rejected'].includes(String(args.decision))
+          ? args.decision
+          : 'to_ceo') as 'to_ceo' | 'needs_info' | 'rejected',
+        note: args.note ? String(args.note) : undefined,
+      });
+      if (!res.ok) return { ok: false, output: { error: res.error } };
+      const fresh = useCompanyStore.getState().expenses.find((e) => e.id === targetExp.id);
+      return { ok: true, output: { expenseCode: targetExp.expenseCode, status: fresh?.status || 'pending_ceo' } };
+    }
+
+    case 'pay_expense': {
+      const expId = String(args.expenseId || '');
+      const targetExp = store.expenses.find(
+        (e) => e.id === expId || e.expenseCode.toUpperCase() === expId.toUpperCase()
+      );
+      if (!targetExp) return { ok: false, output: { error: `Không tìm thấy phiếu chi "${expId}".` } };
+      if (targetExp.status !== 'approved') {
+        return { ok: false, output: { error: `Phiếu ${targetExp.expenseCode} chưa được CEO/Quy tắc duyệt (status: ${targetExp.status}).` } };
+      }
+      await store.markExpensePaid({
+        expenseId: targetExp.id,
+        actorId: agentId,
+        note: args.note ? String(args.note) : undefined,
+        attachmentName: args.attachmentName ? String(args.attachmentName) : undefined,
+      });
+      return { ok: true, output: { expenseCode: targetExp.expenseCode, status: 'paid' } };
+    }
+
+    case 'buy_domain':
+    case 'subscribe_tool':
+    case 'spend': {
+      const expenseId = String(args.expenseId || '').trim();
+      const amountVnd = Number(args.amountVnd || 0);
+      const approvedExp = store.expenses.find(
+        (e) =>
+          (e.id === expenseId || e.expenseCode.toUpperCase() === expenseId.toUpperCase()) &&
+          (e.status === 'approved' || e.status === 'paid' || e.status === 'reconciled')
+      );
+      if (!approvedExp) {
+        await store.addAuditLog({
+          id: `aud_gate_${now}`,
+          agentId,
+          agentName: agent.name,
+          action: toolName,
+          permission: 'budget:spend',
+          resource: 'expense_gate',
+          result: 'denied',
+          reason: `Công cụ ${toolName} bị chặn do thiếu phiếu chi #CP-... đã duyệt.`,
+          timestamp: now,
+        });
+        return {
+          ok: false,
+          output: {
+            error: `Bị chặn chi tiền (${toolName}): Bắt buộc phải có phiếu chi #CP-... đã duyệt (truyền expenseId). Hãy gọi request_expense trước.`,
+          },
+        };
+      }
+      if (amountVnd > approvedExp.amountVnd) {
+        return {
+          ok: false,
+          output: { error: `Số tiền vượt hạn mức đã duyệt trên ${approvedExp.expenseCode} (${formatVnd(approvedExp.amountVnd)}).` },
+        };
+      }
+      if (approvedExp.status === 'approved') {
+        await store.markExpensePaid({
+          expenseId: approvedExp.id,
+          actorId: agentId,
+          note: `Thực chi qua tool ${toolName}`,
+        });
+      }
+      return {
+        ok: true,
+        output: {
+          executed: true,
+          dryRun,
+          expenseCode: approvedExp.expenseCode,
+          amountVnd,
+          target: args.domain || args.toolName || args.description,
+        },
+      };
+    }
+
+    case 'hire_agent': {
+      const name = String(args.name || '').trim();
+      const title = String(args.title || 'Chuyên viên AI').trim();
+      const dept = (String(args.department || 'sales') as DepartmentId);
+      const tpl = ROLE_TEMPLATES.find((t) => t.id === args.templateId || t.department === dept);
+      const spec = buildNewAgentFromSpec({
+        name: name || 'Nhân sự AI mới',
+        title,
+        department: dept,
+        role: tpl?.role || 'Specialist',
+        personalityNote: String(args.personalityNote || `Đảm nhiệm vị trí ${title} tại phòng ${dept}.`),
+        templateId: tpl?.id,
+        existingAgents: store.agents,
+        departments: store.departments,
       });
 
-      return { ok: true, output: { adCampaignId: adId, approvalId: aprId, status: 'pending_approval' } };
+      if (!store.settings.hrAutoDecide) {
+        const aprId = `apr_hr_${now}`;
+        await store.putApproval({
+          id: aprId,
+          type: 'hr_hire',
+          title: `Đề xuất tuyển mới: ${spec.name} – ${spec.title}`,
+          description: `Phòng ${dept} | Quyền: ${spec.defaultPermissions.length} quyền | Chi phí token dự kiến ~120.000–250.000đ/tháng.`,
+          requestedBy: agentId,
+          department: dept,
+          payload: {
+            specs: [
+              {
+                name: spec.name,
+                title: spec.title,
+                department: spec.department,
+                role: spec.role,
+                personalityNote: spec.personalityNote || spec.bio,
+                templateId: spec.templateId,
+              },
+            ],
+          },
+          status: 'pending',
+          createdAt: now,
+        });
+        return { ok: true, output: { requiresApproval: true, approvalId: aprId, candidateName: spec.name } };
+      }
+
+      const hired = await store.hireAgent({
+        name: spec.name,
+        title: spec.title,
+        department: spec.department,
+        role: spec.role,
+        personalityNote: spec.personalityNote || spec.bio,
+        templateId: spec.templateId,
+        existingAgents: store.agents,
+        departments: store.departments,
+        actor: agent.name,
+      });
+      ctx?.onDeliverable?.({ type: 'agent', id: hired.id, title: `Nhân sự mới: ${hired.name} (${hired.title})` });
+      return { ok: true, output: { agentId: hired.id, name: hired.name, title: hired.title, requiresApproval: false } };
     }
 
     case 'read_memory': {
@@ -1646,7 +2062,7 @@ export async function executeAgentTool(
     }
 
     case 'generate_report': {
-      const kpi = await executeAgentTool(agentId, 'get_kpis', {});
+      const kpi = await executeAgentTool(agentId, 'get_kpis', {}, ctx);
       return { ok: true, output: { title: String(args.title || 'Báo cáo tổng hợp'), kpis: kpi.output } };
     }
 

@@ -1,4 +1,4 @@
-import { DEPARTMENTS } from '../config/departments';
+import { getLiveDepartmentById } from './liveRegistry';
 import {
   AccessoryId,
   AgentAppearance,
@@ -67,7 +67,7 @@ function hashSeed(str: string): number {
 
 export function getDefaultAppearance(agent: AgentProfile): AgentAppearance {
   const seed = hashSeed(agent.id);
-  const deptColor = DEPARTMENTS[agent.department]?.color || agent.avatarColor;
+  const deptColor = getLiveDepartmentById(agent.department)?.color || agent.avatarColor;
 
   let hairStyle = HAIR_STYLES[seed % HAIR_STYLES.length].id;
   let outfitStyle: OutfitStyleId = 'shirt';

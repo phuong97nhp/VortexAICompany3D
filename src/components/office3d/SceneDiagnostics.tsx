@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { X } from 'lucide-react';
-import { ROOMS } from '../../config/departments';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { RoomMeshStat } from '../../types';
 
@@ -14,8 +13,8 @@ interface ProbeProps {
   buildingRootRef: React.RefObject<THREE.Group | null>;
 }
 
-const ROOM_NAME_MAP: Record<string, string> = {
-  ...Object.fromEntries(ROOMS.map((r) => [r.id, r.name])),
+const STATIC_ROOM_NAMES: Record<string, string> = {
+  'room-meeting': 'Phòng Họp',
   'shared-structure': 'Kết cấu tòa nhà, Sảnh & Cầu thang',
   'shared-furniture': 'Bàn ghế, Màn hình & Tiện ích (Instanced)',
   unassigned: 'Khác / Ngoài phòng',
@@ -43,6 +42,7 @@ export function SceneDiagnosticsProbe({
   const setScene3dStats = useCompanyStore((s) => s.setScene3dStats);
   const graphicsQuality = useCompanyStore((s) => s.settings.graphicsQuality);
   const updateSettings = useCompanyStore((s) => s.updateSettings);
+  const departments = useCompanyStore((s) => s.departments);
 
   const frameCountRef = useRef(0);
   const fpsWindowStartRef = useRef(performance.now());
@@ -53,13 +53,19 @@ export function SceneDiagnosticsProbe({
   const loggedFloorRef = useRef<string>('');
 
   const collectStats = (forceConsoleLog: boolean) => {
+    const liveDepts = useCompanyStore.getState().departments;
+    const roomNameMap: Record<string, string> = {
+      ...STATIC_ROOM_NAMES,
+      ...Object.fromEntries(liveDepts.map((d) => [d.roomId, d.name])),
+    };
+
     const roomMap = new Map<string, RoomMeshStat>();
     const ensureRoom = (roomId: string) => {
       let entry = roomMap.get(roomId);
       if (!entry) {
         entry = {
           roomId,
-          roomName: ROOM_NAME_MAP[roomId] || roomId,
+          roomName: roomNameMap[roomId] || roomId,
           meshCount: 0,
           instanceCount: 0,
           characterCount: 0,
@@ -69,10 +75,13 @@ export function SceneDiagnosticsProbe({
       return entry;
     };
 
-    for (const r of ROOMS) {
-      if (visibleFloor === 'all' || r.floor === visibleFloor) {
-        ensureRoom(r.id);
+    for (const d of liveDepts) {
+      if (visibleFloor === 'all' || d.floor === visibleFloor) {
+        ensureRoom(d.roomId);
       }
+    }
+    if (visibleFloor === 'all' || visibleFloor === 1) {
+      ensureRoom('room-meeting');
     }
     ensureRoom('shared-structure');
     ensureRoom('shared-furniture');
@@ -182,7 +191,7 @@ export function SceneDiagnosticsProbe({
     }, 220);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleFloor, rendererInfo, webglError]);
+  }, [visibleFloor, rendererInfo, webglError, departments.length]);
 
   useFrame(() => {
     const now = performance.now();

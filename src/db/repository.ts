@@ -4,13 +4,20 @@ import {
   AgentAccount,
   AgentAppearance,
   AgentMemory,
+  AgentProfile,
   ApprovalRequest,
   AskCeoQuestion,
   AuditLogEntry,
   BrandLaunchKit,
   ChatMessage,
   CompanySettings,
+  DepartmentConfig,
   DocumentItem,
+  ExpenseBudget,
+  ExpenseCategoryConfig,
+  ExpenseItem,
+  ExpenseRule,
+  HrAuditEntry,
   LeadItem,
   MarketingChannelRecord,
   OutreachLogEntry,
@@ -22,10 +29,17 @@ import {
   VaultAccountStatus,
   WorkflowTrace,
 } from '../types';
-import { AGENTS } from '../agents';
 import { generateHashedAgentToken, generateSalt, hashPasswordPBKDF2 } from '../engine/auth';
 import { getDefaultAppearance } from '../engine/characterAppearance';
 import { buildRoutingPreset } from '../engine/llm/presets';
+import { buildSeedAgents, buildSeedDepartments } from '../engine/liveRegistry';
+import {
+  buildSeedExpenseBudgets,
+  buildSeedExpenseRules,
+  buildSeedExpenses,
+  createDefaultSpendingPolicy,
+  DEFAULT_EXPENSE_CATEGORIES,
+} from '../engine/expenseEngine';
 import {
   buildDefaultBrandLaunchKit,
   buildInitialAdCampaigns,
@@ -45,6 +59,14 @@ export interface CompanyMemoryRecord {
 export interface IDataRepository {
   getSettings(): Promise<CompanySettings>;
   saveSettings(settings: CompanySettings): Promise<void>;
+  getAgents(): Promise<AgentProfile[]>;
+  putAgent(agent: AgentProfile): Promise<void>;
+  deleteAgent(agentId: string): Promise<void>;
+  getDepartments(): Promise<DepartmentConfig[]>;
+  putDepartment(dept: DepartmentConfig): Promise<void>;
+  deleteDepartment(deptId: string): Promise<void>;
+  getHrAudits(): Promise<HrAuditEntry[]>;
+  addHrAudit(entry: HrAuditEntry): Promise<void>;
   getTasks(): Promise<TaskItem[]>;
   putTask(task: TaskItem): Promise<void>;
   getLeads(): Promise<LeadItem[]>;
@@ -63,6 +85,7 @@ export interface IDataRepository {
   addOutreachLog(entry: OutreachLogEntry): Promise<void>;
   getAccounts(): Promise<AgentAccount[]>;
   putAccount(acc: AgentAccount): Promise<void>;
+  deleteAccount(agentId: string): Promise<void>;
   getVaultStatuses(): Promise<VaultAccountStatus[]>;
   putVaultStatus(status: VaultAccountStatus): Promise<void>;
   getTokenUsage(): Promise<TokenUsageRecord[]>;
@@ -87,11 +110,23 @@ export interface IDataRepository {
   putSocialComment(cmt: SocialCommentInboxItem): Promise<void>;
   getSocialLogs(): Promise<SocialPostLogEntry[]>;
   addSocialLog(entry: SocialPostLogEntry): Promise<void>;
+  getExpenses(): Promise<ExpenseItem[]>;
+  putExpense(exp: ExpenseItem): Promise<void>;
+  getExpenseRules(): Promise<ExpenseRule[]>;
+  putExpenseRule(rule: ExpenseRule): Promise<void>;
+  deleteExpenseRule(ruleId: string): Promise<void>;
+  getExpenseBudgets(): Promise<ExpenseBudget[]>;
+  putExpenseBudget(budget: ExpenseBudget): Promise<void>;
+  getExpenseCategories(): Promise<ExpenseCategoryConfig[]>;
+  putExpenseCategory(cat: ExpenseCategoryConfig): Promise<void>;
   resetAll(): Promise<void>;
 }
 
 class AICompanyDexieDB extends Dexie {
   settings!: Table<CompanySettings, string>;
+  agents!: Table<AgentProfile, string>;
+  departments!: Table<DepartmentConfig, string>;
+  hrAudits!: Table<HrAuditEntry, string>;
   tasks!: Table<TaskItem, string>;
   leads!: Table<LeadItem, string>;
   messages!: Table<ChatMessage, string>;
@@ -113,6 +148,10 @@ class AICompanyDexieDB extends Dexie {
   adCampaigns!: Table<AdCampaignItem, string>;
   socialComments!: Table<SocialCommentInboxItem, string>;
   socialLogs!: Table<SocialPostLogEntry, string>;
+  expenses!: Table<ExpenseItem, string>;
+  expenseRules!: Table<ExpenseRule, string>;
+  expenseBudgets!: Table<ExpenseBudget, string>;
+  expenseCategories!: Table<ExpenseCategoryConfig, string>;
 
   constructor() {
     super('AICompany3D_DB_v1');
@@ -177,6 +216,38 @@ class AICompanyDexieDB extends Dexie {
       socialComments: 'id, platform, status, createdAt',
       socialLogs: 'id, platform, agentId, timestamp',
     });
+
+    this.version(4).stores({
+      settings: 'id',
+      agents: 'id, department, employmentStatus, createdAt',
+      departments: 'id, floor, isCustom',
+      hrAudits: 'id, targetId, action, timestamp',
+      tasks: 'id, taskCode, department, assignedTo, status, createdAt',
+      leads: 'id, stage, recommendedProductId, score, province, createdAt',
+      messages: 'id, channelId, senderId, timestamp',
+      documents: 'id, category, authorId, department, createdAt',
+      approvals: 'id, status, type, requestedBy, createdAt',
+      askCeoQuestions: 'id, status, agentId, urgency, createdAt',
+      auditLogs: 'id, agentId, result, timestamp',
+      outreachLogs: 'id, agentId, leadId, channel, timestamp',
+      accounts: 'agentId, role, department, status',
+      vaultStatuses: 'id, platform, status',
+      tokenUsage: 'id, dateKey, agentId, provider, model, timestamp',
+      agentMemories: 'agentId, updatedAt',
+      companyMemories: 'id, key',
+      workflows: 'id, createdAt',
+      agentAppearances: 'agentId',
+      brandKits: 'id, createdAt',
+      marketingChannels: 'id, status, updatedAt',
+      scheduledPosts: 'id, platform, dayNumber, status, createdAt',
+      adCampaigns: 'id, platform, status, createdAt',
+      socialComments: 'id, platform, status, createdAt',
+      socialLogs: 'id, platform, agentId, timestamp',
+      expenses: 'id, expenseCode, status, department, category, requesterId, vendor, createdAt',
+      expenseRules: 'id, ruleCode, enabled, category, createdAt',
+      expenseBudgets: 'id, monthKey, department, category',
+      expenseCategories: 'id, name',
+    });
   }
 }
 
@@ -235,6 +306,11 @@ export async function createDefaultSettings(): Promise<CompanySettings> {
     marketingPostsPerWeek: 3,
     marketingDailyPostCap: 2,
     marketingDailyAdBudgetVnd: 500000,
+    hrAutoDecide: false,
+    sleepIdleAgents: false,
+    maxConcurrentAgents: 8,
+    spendingPolicy: createDefaultSpendingPolicy(),
+    dailyDigestEnabled: true,
   };
 }
 
@@ -250,16 +326,60 @@ async function ensureMarketingSeeded(companyName: string): Promise<void> {
   }
 }
 
+async function ensureV4Seeded(): Promise<void> {
+  const deptCount = await db.departments.count();
+  if (deptCount === 0) {
+    await db.departments.bulkPut(buildSeedDepartments());
+  }
+  const agentCount = await db.agents.count();
+  if (agentCount === 0) {
+    await db.agents.bulkPut(buildSeedAgents());
+  }
+  const catCount = await db.expenseCategories.count();
+  if (catCount === 0) {
+    await db.expenseCategories.bulkPut(DEFAULT_EXPENSE_CATEGORIES);
+  }
+  const budgetCount = await db.expenseBudgets.count();
+  if (budgetCount === 0) {
+    await db.expenseBudgets.bulkPut(buildSeedExpenseBudgets());
+  }
+  const ruleCount = await db.expenseRules.count();
+  if (ruleCount === 0) {
+    await db.expenseRules.bulkPut(buildSeedExpenseRules());
+  }
+  const expCount = await db.expenses.count();
+  if (expCount === 0) {
+    await db.expenses.bulkPut(buildSeedExpenses());
+  }
+  // Ensure CFO & HR have new permissions
+  const cfoAcc = await db.accounts.get('cfo');
+  if (cfoAcc && !cfoAcc.permissions.includes('expense:review')) {
+    await db.accounts.put({
+      ...cfoAcc,
+      permissions: Array.from(
+        new Set([...cfoAcc.permissions, 'expense:request', 'expense:review', 'expense:rule_manage', 'expense:mark_paid'])
+      ),
+    });
+  }
+  const hrAcc = await db.accounts.get('hr');
+  if (hrAcc && !hrAcc.permissions.includes('hr:manage')) {
+    await db.accounts.put({
+      ...hrAcc,
+      permissions: Array.from(new Set([...hrAcc.permissions, 'hr:manage', 'expense:request'])),
+    });
+  }
+}
+
 export async function seedInitialDatabase(): Promise<void> {
   const existingSettings = await db.settings.get('default');
   if (existingSettings) {
-    // Ensure new v2 appearances exist if upgrading from v1
+    const seedAgents = buildSeedAgents();
     const appCount = await db.agentAppearances.count();
     if (appCount === 0) {
-      await db.agentAppearances.bulkPut(AGENTS.map((a) => getDefaultAppearance(a)));
+      await db.agentAppearances.bulkPut(seedAgents.map((a) => getDefaultAppearance(a)));
     }
-    // Ensure v3 marketing data & social_media / ads permissions exist if upgrading from v2
     await ensureMarketingSeeded(existingSettings.companyName || 'AI COMPANY VIỆT NAM');
+    await ensureV4Seeded();
     const smAcc = await db.accounts.get('social_media');
     if (smAcc && !smAcc.permissions.includes('post:publish')) {
       await db.accounts.put({ ...smAcc, permissions: [...smAcc.permissions, 'post:publish', 'lead:write'] });
@@ -277,15 +397,23 @@ export async function seedInitialDatabase(): Promise<void> {
   const settings = await createDefaultSettings();
   await db.settings.put(settings);
 
+  const seedDepts = buildSeedDepartments();
+  const seedAgents = buildSeedAgents();
+  await db.departments.bulkPut(seedDepts);
+  await db.agents.bulkPut(seedAgents);
+
   // Seed 30 Chibi 3D agent appearances
-  await db.agentAppearances.bulkPut(AGENTS.map((a) => getDefaultAppearance(a)));
+  await db.agentAppearances.bulkPut(seedAgents.map((a) => getDefaultAppearance(a)));
 
   // Seed v3 Marketing Channels, Brand Launch Kit, Calendar, Ads & Comments
   await ensureMarketingSeeded(settings.companyName);
 
+  // Seed v4 Expenses, Rules, Budgets, Categories
+  await ensureV4Seeded();
+
   // Seed 30 agent RBAC accounts with SHA-256 hashed internal tokens
   const accounts: AgentAccount[] = [];
-  for (const agent of AGENTS) {
+  for (const agent of seedAgents) {
     const token = await generateHashedAgentToken(agent.id);
     accounts.push({
       agentId: agent.id,
@@ -303,7 +431,7 @@ export async function seedInitialDatabase(): Promise<void> {
 
   // Seed initial agent memories
   await db.agentMemories.bulkPut(
-    AGENTS.map((a) => ({
+    seedAgents.map((a) => ({
       agentId: a.id,
       shortTerm: [`Nhận bàn làm việc tại ${a.roomId}`, `Sản phẩm ưu tiên hiện tại: EduCenter Pro`],
       longTermSummary: `${a.name} (${a.title}) sẵn sàng phối hợp theo quy trình RBAC và DRY_RUN mặc định.`,
@@ -494,12 +622,15 @@ export async function seedInitialDatabase(): Promise<void> {
   ];
   await db.leads.bulkPut(initialLeads);
 
-  // Seed initial tasks
+  // Seed initial structured tasks (BỔ SUNG F)
   await db.tasks.bulkPut([
     {
       id: 'task_1',
+      taskCode: '#T-101',
       title: 'Chuẩn bị buổi Demo 1-1 cho Anh ngữ SunLight Academy',
       description: 'Dùng dữ liệu sandbox 3 cơ sở + tính năng chấm công giáo viên bản ngữ.',
+      definitionOfDone: 'Hoàn tất kịch bản demo + tài liệu checklist gửi CEO duyệt.',
+      expectedDeliverable: 'Kịch bản Demo & Sandbox checklist',
       department: 'sales',
       assignedTo: 'account_executive',
       createdBy: 'sales_director',
@@ -507,14 +638,23 @@ export async function seedInitialDatabase(): Promise<void> {
       priority: 'high',
       productId: 'edu-center',
       relatedLeadId: 'lead_1',
+      etaMinutes: 20,
+      etaAt: now + 15 * 60000,
+      startedAt: now - 5 * 60000,
+      progressPercent: 45,
+      lastProgressAt: now - 60000,
+      deliverables: [],
       createdAt: now - 7200000,
-      updatedAt: now - 3600000,
+      updatedAt: now - 60000,
       dueLabel: 'Hôm nay 14:00',
     },
     {
       id: 'task_2',
+      taskCode: '#T-102',
       title: 'Soạn báo giá Gói Trường Chuẩn cho Mầm non Hoa Hướng Dương',
       description: 'Tính ưu đãi thanh toán 12 tháng + miễn phí import danh sách bé.',
+      definitionOfDone: 'Có báo giá PDF nháp + phiếu xin duyệt giảm 10%.',
+      expectedDeliverable: 'Báo giá & Tờ trình ưu đãi',
       department: 'sales',
       assignedTo: 'pricing_proposal',
       createdBy: 'account_executive',
@@ -522,40 +662,64 @@ export async function seedInitialDatabase(): Promise<void> {
       priority: 'medium',
       productId: 'preschool-care',
       relatedLeadId: 'lead_3',
+      etaMinutes: 15,
+      etaAt: now + 3600000,
+      startedAt: now - 1800000,
+      progressPercent: 90,
+      lastProgressAt: now - 1800000,
+      deliverables: [],
       createdAt: now - 10800000,
       updatedAt: now - 1800000,
       dueLabel: 'Chờ CEO duyệt',
     },
     {
       id: 'task_3',
+      taskCode: '#T-103',
       title: 'Khảo sát từ khóa SEO "phần mềm quản lý trung tâm tiếng Anh"',
       description: 'Lập bộ 20 từ khóa long-tail có tỷ lệ chuyển đổi cao.',
+      definitionOfDone: 'Lưu bảng từ khóa vào Kho tài liệu.',
+      expectedDeliverable: 'Bộ từ khóa SEO Trọng tâm Q4',
       department: 'marketing',
       assignedTo: 'seo_specialist',
       createdBy: 'cmo',
       status: 'done',
       priority: 'medium',
       productId: 'edu-center',
+      etaMinutes: 10,
+      etaAt: now - 18000000,
+      startedAt: now - 22000000,
+      completedAt: now - 20000000,
+      progressPercent: 100,
+      lastProgressAt: now - 20000000,
+      deliverables: [{ type: 'doc', id: 'doc_seed_1', title: 'Bộ từ khóa SEO Trọng tâm Q4 – EduCenter Pro' }],
       createdAt: now - 86400000,
       updatedAt: now - 20000000,
       dueLabel: 'Đã xong',
     },
     {
       id: 'task_4',
+      taskCode: '#T-104',
       title: 'Thiết lập tài khoản Zalo OA & kiểm tra webhook',
       description: 'Chuẩn hóa kênh gửi tin tự động theo Playbook worker/playbooks/zalo_oa.ts.',
+      definitionOfDone: 'Kênh Zalo OA ở trạng thái sẵn sàng hoặc đã gửi OTP cho CEO.',
+      expectedDeliverable: 'Trạng thái kênh Zalo OA trong Kho kênh',
       department: 'sales',
       assignedTo: 'account_provisioning',
       createdBy: 'sales_director',
       status: 'todo',
       priority: 'high',
+      etaMinutes: 15,
+      etaAt: now + 900000,
+      progressPercent: 0,
+      lastProgressAt: now - 3600000,
+      deliverables: [],
       createdAt: now - 3600000,
       updatedAt: now - 3600000,
       dueLabel: 'Chu kỳ hiện tại',
     },
   ]);
 
-  // Seed Vault account statuses (NO SECRETS EVER STORED HERE)
+  // Seed Vault account statuses
   await db.vaultStatuses.bulkPut([
     {
       id: 'v_email',
@@ -667,7 +831,7 @@ export async function seedInitialDatabase(): Promise<void> {
       senderTitle: 'Thư ký CEO',
       department: 'exec',
       content:
-        'Chào mừng Chủ tịch đã vào **Văn phòng ảo 3D – AI Company**! Toàn bộ 30 nhân sự AI Chibi ở 2 tầng đã sẵn sàng.\n\n- Hệ thống AI mặc định sử dụng **Gemini** (tự nhận key từ AI Studio) và hỗ trợ **DeepSeek**, **Local AI (Ollama/LM Studio)** và **Chế độ mô phỏng**.\n- Chủ tịch có thể **chat trực tiếp với em** tại đây, mở tab **Tùy chỉnh 3D** để thay đổi ngoại hình nhân vật, hoặc bấm **Chạy demo 30 ngày**.',
+        'Chào mừng Chủ tịch đã vào **Văn phòng ảo 3D – AI Company**! Toàn bộ nhân sự AI Chibi ở 2 tầng đã sẵn sàng.\n\n- Chủ tịch có thể **giao việc trực tiếp** hoặc dùng `@tên` (vd: `@Trịnh Gia Huy tìm 10 trung tâm ngoại ngữ`) để giao đúng người.\n- Hỗ trợ **Quản lý Nhân sự động (1–60 người)** trong tab Nhân sự & Quyền, và **Quy trình Chi phí – Kế toán 2 tầng** trong tab Chi phí & Kế toán.',
       timestamp: now - 600000,
       busType: 'chat',
     },
@@ -679,7 +843,7 @@ export async function seedInitialDatabase(): Promise<void> {
       senderTitle: 'Giám đốc Kinh doanh',
       department: 'sales',
       content:
-        'Báo cáo nhanh Phòng Sales (Tầng 1): Hiện đang có **6 Lead** trong phễu (1 Đã chốt, 1 Đang demo, 1 Chờ duyệt báo giá). Bật **Autopilot** bất cứ lúc nào để đội Lead Hunter & SDR tự động tìm 30 khách/ngày (ưu tiên Trung tâm Ngoại ngữ).',
+        'Báo cáo nhanh Phòng Sales (Tầng 1): Hiện đang có **6 Lead** trong phễu (1 Đã chốt, 1 Đang demo, 1 Chờ duyệt báo giá). Bật **Autopilot** bất cứ lúc nào để đội Lead Hunter & SDR tự động tìm 30 khách/ngày.',
       timestamp: now - 300000,
       busType: 'report',
     },
@@ -695,6 +859,20 @@ export async function seedInitialDatabase(): Promise<void> {
       busType: 'approval_needed',
       cardType: 'approval',
       cardData: { approvalId: 'apr_seed_1' },
+    },
+    {
+      id: 'msg_welcome_4',
+      channelId: 'backoffice',
+      senderId: 'cfo',
+      senderName: 'Hồ Thảo Nhi',
+      senderTitle: 'CFO / Kế toán Trưởng',
+      department: 'backoffice',
+      content:
+        'Phòng Kế toán đã nhận đề xuất **#CP-101** (1.800.000đ chạy Lead Ads EduCenter Pro) từ Ngô Bảo Nam. Đang chờ Kế toán thẩm định tầng 1 trong tab **Chi phí & Kế toán**.',
+      timestamp: now - 150000,
+      busType: 'approval_needed',
+      cardType: 'expense',
+      cardData: { expenseId: 'exp_seed_1' },
     },
   ]);
 
@@ -744,7 +922,6 @@ export class DexieRepository implements IDataRepository {
     const defaults = await createDefaultSettings();
     const stored = await db.settings.get('default');
     if (!stored) return defaults;
-    // Merge any missing Phase 2 multi-provider fields seamlessly
     const rawGraphics = String((stored as { graphicsQuality?: string }).graphicsQuality || 'medium');
     const normalizedQuality =
       rawGraphics === 'eco' ? 'low' : rawGraphics === 'balanced' ? 'medium' : (rawGraphics as CompanySettings['graphicsQuality']);
@@ -761,11 +938,39 @@ export class DexieRepository implements IDataRepository {
         ...defaults.providerBudgets,
         ...(stored.providerBudgets || {}),
       },
+      spendingPolicy: {
+        ...defaults.spendingPolicy,
+        ...(stored.spendingPolicy || {}),
+      },
       roleRoutes: Array.isArray(stored.roleRoutes) && stored.roleRoutes.length > 0 ? stored.roleRoutes : defaults.roleRoutes,
     };
   }
   async saveSettings(settings: CompanySettings) {
     await db.settings.put(settings);
+  }
+  async getAgents() {
+    return db.agents.toArray();
+  }
+  async putAgent(agent: AgentProfile) {
+    await db.agents.put(agent);
+  }
+  async deleteAgent(agentId: string) {
+    await db.agents.delete(agentId);
+  }
+  async getDepartments() {
+    return db.departments.toArray();
+  }
+  async putDepartment(dept: DepartmentConfig) {
+    await db.departments.put(dept);
+  }
+  async deleteDepartment(deptId: string) {
+    await db.departments.delete(deptId);
+  }
+  async getHrAudits() {
+    return db.hrAudits.orderBy('timestamp').reverse().limit(300).toArray();
+  }
+  async addHrAudit(entry: HrAuditEntry) {
+    await db.hrAudits.put(entry);
   }
   async getTasks() {
     return db.tasks.orderBy('createdAt').reverse().toArray();
@@ -820,6 +1025,9 @@ export class DexieRepository implements IDataRepository {
   }
   async putAccount(acc: AgentAccount) {
     await db.accounts.put(acc);
+  }
+  async deleteAccount(agentId: string) {
+    await db.accounts.delete(agentId);
   }
   async getVaultStatuses() {
     return db.vaultStatuses.toArray();
@@ -892,6 +1100,33 @@ export class DexieRepository implements IDataRepository {
   }
   async addSocialLog(entry: SocialPostLogEntry) {
     await db.socialLogs.put(entry);
+  }
+  async getExpenses() {
+    return db.expenses.orderBy('createdAt').reverse().toArray();
+  }
+  async putExpense(exp: ExpenseItem) {
+    await db.expenses.put(exp);
+  }
+  async getExpenseRules() {
+    return db.expenseRules.orderBy('createdAt').reverse().toArray();
+  }
+  async putExpenseRule(rule: ExpenseRule) {
+    await db.expenseRules.put(rule);
+  }
+  async deleteExpenseRule(ruleId: string) {
+    await db.expenseRules.delete(ruleId);
+  }
+  async getExpenseBudgets() {
+    return db.expenseBudgets.toArray();
+  }
+  async putExpenseBudget(budget: ExpenseBudget) {
+    await db.expenseBudgets.put(budget);
+  }
+  async getExpenseCategories() {
+    return db.expenseCategories.toArray();
+  }
+  async putExpenseCategory(cat: ExpenseCategoryConfig) {
+    await db.expenseCategories.put(cat);
   }
   async resetAll() {
     await db.delete();

@@ -61,9 +61,9 @@ export function ChibiModel({
     const t = state.clock.elapsedTime + phaseSeed;
     const d = Math.min(delta, 0.05);
 
-    // 1. Eye Blinking (every ~3.6 seconds)
-    const blinkCycle = (t % 3.6);
-    const blinkScaleY = blinkCycle > 3.46 ? 0.1 : 1;
+    // 1. Eye Blinking (or closed when sleeping)
+    const blinkCycle = t % 3.6;
+    const blinkScaleY = status === 'sleeping' ? 0.1 : blinkCycle > 3.46 ? 0.1 : 1;
     if (leftEyeRef.current && rightEyeRef.current) {
       leftEyeRef.current.scale.y = THREE.MathUtils.damp(leftEyeRef.current.scale.y, blinkScaleY, 28, d);
       rightEyeRef.current.scale.y = THREE.MathUtils.damp(rightEyeRef.current.scale.y, blinkScaleY, 28, d);
@@ -79,6 +79,9 @@ export function ChibiModel({
       } else if (status === 'thinking') {
         targetScaleY = 0.95;
         targetScaleX = 0.55;
+      } else if (status === 'sleeping') {
+        targetScaleY = 0.45 + Math.sin(t * 1.6) * 0.25;
+        targetScaleX = 0.6;
       } else if (status === 'done') {
         targetScaleY = 1.35;
         targetScaleX = 1.3;
@@ -102,6 +105,9 @@ export function ChibiModel({
       } else if (status === 'typing') {
         targetY = Math.sin(t * 2.5) * 0.01;
         targetLeanX = 0.12;
+      } else if (status === 'sleeping') {
+        targetY = -0.05 + Math.sin(t * 1.3) * 0.008;
+        targetLeanX = 0.22;
       } else if (status === 'blocked') {
         targetY = -0.02;
         targetLeanX = 0.08;
@@ -124,6 +130,10 @@ export function ChibiModel({
         headYaw = 0.18;
         headPitch = -0.1;
         headRoll = 0.12;
+      } else if (status === 'sleeping') {
+        headYaw = 0.05;
+        headPitch = 0.28 + Math.sin(t * 1.3) * 0.04;
+        headRoll = 0.15;
       } else if (status === 'talking') {
         headYaw = Math.sin(t * 4) * 0.16;
         headPitch = Math.sin(t * 7) * 0.08;
@@ -164,6 +174,13 @@ export function ChibiModel({
       rArmX = -0.65;
       lForeX = -0.7 + Math.sin(t * 18) * 0.25;
       rForeX = -0.7 + Math.cos(t * 18) * 0.25;
+    } else if (status === 'sleeping') {
+      lArmX = -0.4;
+      rArmX = -0.4;
+      lArmZ = 0.04;
+      rArmZ = -0.04;
+      lForeX = -1.1;
+      rForeX = -1.1;
     } else if (status === 'thinking') {
       rArmX = -1.15;
       rArmZ = 0.28;

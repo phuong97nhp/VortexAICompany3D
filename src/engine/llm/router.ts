@@ -4,6 +4,7 @@ import { GeminiLLMProvider } from './geminiProvider';
 import { LocalLLMProvider } from './localProvider';
 import { MockLLMProvider } from './mockProvider';
 import { getTaskGroupForAgent } from './presets';
+import { getLiveAgentById } from '../liveRegistry';
 import {
   LLMProvider,
   LlmChatMessage,
@@ -23,7 +24,6 @@ export class LLMRouter implements LLMProvider {
 
   private cache = new Map<string, CacheEntry>();
   private activeCount = 0;
-  private readonly maxConcurrency = 2;
   private queue: Array<() => void> = [];
   private requestTimestamps: number[] = [];
   private readonly maxPerMinute = 36;
@@ -113,7 +113,8 @@ export class LLMRouter implements LLMProvider {
   }
 
   private async acquireSlot(): Promise<void> {
-    while (this.activeCount >= this.maxConcurrency) {
+    const maxCap = Math.max(1, Math.min(12, this.getSettingsFn?.().maxConcurrentAgents || 4));
+    while (this.activeCount >= maxCap) {
       await new Promise<void>((resolve) => this.queue.push(resolve));
     }
     const now = Date.now();
@@ -166,6 +167,19 @@ export class LLMRouter implements LLMProvider {
   ): { provider: ProviderId; model: string } {
     if (settings.primaryProvider === 'mock') {
       return { provider: 'mock', model: 'mock-vn' };
+    }
+
+    // Per-agent override (BỔ SUNG D)
+    const liveAgent = getLiveAgentById(request.agentId);
+    if (liveAgent?.providerOverride && liveAgent.providerOverride !== 'company_default') {
+      const prov = liveAgent.providerOverride;
+      return {
+        provider: prov,
+        model:
+          request.model ||
+          liveAgent.modelOverride ||
+          this.defaultModelForProvider(prov, request.agentId, settings, Boolean(request.tools?.length)),
+      };
     }
 
     const group = getTaskGroupForAgent(request.agentId, request.isMemorySummary);

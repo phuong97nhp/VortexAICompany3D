@@ -1,5 +1,7 @@
+import { getLiveDepartments } from './liveRegistry';
+
 /**
- * Waypoint pathfinding graph for the 2-floor 3D virtual office.
+ * Waypoint pathfinding graph for the dynamic 2-floor 3D virtual office.
  * Floor 1 (y = 0) & Floor 2 (y = 3.8) connected by central staircase at x = [-3.8, -1.8], z = [-1.1, 1.1].
  */
 
@@ -35,14 +37,24 @@ export const MEETING_SEATS: Vec3[] = [
   [4.2, 0, -3.55],
 ];
 
+function getDynamicCorridorPoint(roomId: string, floor: 1 | 2): Vec3 | undefined {
+  const staticMap = floor === 1 ? CORRIDOR_F1 : CORRIDOR_F2;
+  if (staticMap[roomId]) return staticMap[roomId];
+  const dept = getLiveDepartments().find((d) => d.roomId === roomId);
+  if (!dept) return undefined;
+  const y = dept.floor === 2 ? 3.8 : 0;
+  const zDoor = dept.roomCenter[2] < 0 ? dept.roomCenter[2] + dept.roomSize[1] / 2 - 0.5 : dept.roomCenter[2] - dept.roomSize[1] / 2 + 0.5;
+  return [dept.roomCenter[0], y, Math.max(-1.2, Math.min(1.2, zDoor))];
+}
+
 export function buildWalkWaypoints(
   fromPos: Vec3,
   fromRoomId: string,
   toPos: Vec3,
   toRoomId: string
 ): Vec3[] {
-  const fromFloor = fromPos[1] > 1.9 ? 2 : 1;
-  const toFloor = toPos[1] > 1.9 ? 2 : 1;
+  const fromFloor: 1 | 2 = fromPos[1] > 1.9 ? 2 : 1;
+  const toFloor: 1 | 2 = toPos[1] > 1.9 ? 2 : 1;
 
   if (fromRoomId === toRoomId && fromFloor === toFloor) {
     return [toPos];
@@ -50,13 +62,8 @@ export function buildWalkWaypoints(
 
   const points: Vec3[] = [];
 
-  if (fromFloor === 1) {
-    const exit = CORRIDOR_F1[fromRoomId];
-    if (exit) points.push(exit);
-  } else {
-    const exit = CORRIDOR_F2[fromRoomId];
-    if (exit) points.push(exit);
-  }
+  const exit = getDynamicCorridorPoint(fromRoomId, fromFloor);
+  if (exit) points.push(exit);
 
   if (fromFloor !== toFloor) {
     if (fromFloor === 2 && toFloor === 1) {
@@ -65,17 +72,11 @@ export function buildWalkWaypoints(
       points.push(STAIR_BOTTOM, STAIR_MID, STAIR_TOP);
     }
   } else {
-    // Travel along central corridor
     points.push(fromFloor === 1 ? [0, 0, 0] : [0, 3.8, 0]);
   }
 
-  if (toFloor === 1) {
-    const enter = CORRIDOR_F1[toRoomId];
-    if (enter) points.push(enter);
-  } else {
-    const enter = CORRIDOR_F2[toRoomId];
-    if (enter) points.push(enter);
-  }
+  const enter = getDynamicCorridorPoint(toRoomId, toFloor);
+  if (enter) points.push(enter);
 
   points.push(toPos);
   return points;

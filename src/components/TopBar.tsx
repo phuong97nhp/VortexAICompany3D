@@ -33,6 +33,7 @@ export function TopBar({
   const serverHealth = useCompanyStore((s) => s.serverHealth);
   const approvals = useCompanyStore((s) => s.approvals);
   const askCeoQuestions = useCompanyStore((s) => s.askCeoQuestions);
+  const expenses = useCompanyStore((s) => s.expenses);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const clearNotifications = useCompanyStore((s) => s.clearNotifications);
 
@@ -40,7 +41,8 @@ export function TopBar({
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length;
   const pendingQuestions = askCeoQuestions.filter((q) => q.status === 'pending' || q.status === 'reminded').length;
-  const totalAlerts = pendingApprovals + pendingQuestions;
+  const pendingCeoExpenses = expenses.filter((e) => e.status === 'pending_ceo').length;
+  const totalAlerts = pendingApprovals + pendingQuestions + pendingCeoExpenses;
 
   const geminiReady = Boolean(serverHealth?.hasGeminiEnvKey || settings.geminiApiKey?.trim());
   const deepseekReady = Boolean(serverHealth?.hasDeepSeekEnvKey || settings.deepseekApiKey?.trim());

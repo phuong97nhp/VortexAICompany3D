@@ -9,6 +9,7 @@ import { ChibiModel } from './ChibiModel';
 
 const STATUS_VI: Record<string, { label: string; color: string }> = {
   idle: { label: 'Sẵn sàng', color: '#94A3B8' },
+  sleeping: { label: 'Nghỉ tiết kiệm', color: '#64748B' },
   thinking: { label: 'Đang suy nghĩ', color: '#F59E0B' },
   typing: { label: 'Đang gõ...', color: '#38BDF8' },
   talking: { label: 'Đang trao đổi', color: '#10B981' },
@@ -38,6 +39,10 @@ export function AgentCharacter({
   const appearance = useCompanyStore((s) => s.agentAppearances[agent.id]) || getDefaultAppearance(agent);
   const selectedAgentId = useCompanyStore((s) => s.selectedAgentId);
   const selectAgent = useCompanyStore((s) => s.selectAgent);
+  const setActiveTab = useCompanyStore((s) => s.setActiveTab);
+  const pendingAccountantCount = useCompanyStore(
+    (s) => s.expenses.filter((e) => e.status === 'pending_accountant').length
+  );
   const graphicsQuality = useCompanyStore((s) => s.settings.graphicsQuality);
   const paused = useCompanyStore((s) => s.settings.paused || s.settings.killSwitchActive);
 
@@ -46,6 +51,12 @@ export function AgentCharacter({
   const statusInfo = STATUS_VI[status] || STATUS_VI.idle;
   const bubbleText = runtime?.bubbleText;
   const progressPct = runtime?.progressPercent ?? 0;
+  const isDelayed = Boolean(runtime?.isDelayed);
+  const isExiting = Boolean(runtime?.exiting);
+  const isAccountantRole =
+    agent.id === 'cfo' || agent.defaultPermissions.includes('expense:review');
+  const pendingReviewCount =
+    runtime?.pendingReviewCount ?? (isAccountantRole ? pendingAccountantCount : 0);
 
   useFrame((_, delta) => {
     if (!groupRef.current || !runtime) return;
@@ -91,11 +102,14 @@ export function AgentCharacter({
     hovered ||
     status === 'blocked' ||
     status === 'error' ||
+    isDelayed ||
+    isExiting ||
+    pendingReviewCount > 0 ||
     Boolean(bubbleText) ||
     (showLabels && !isVeryFarHud);
 
   const showDetailedHud = isSelected || hovered || !isFarLod;
-  const shortName = agent.name.split(' ').slice(-2).join(' ');
+  const shortName = agent.nickname || agent.name.split(' ').slice(-2).join(' ');
 
   return (
     <group
@@ -119,19 +133,37 @@ export function AgentCharacter({
     >
       {/* Selection / Status Glow Ring at Feet */}
       <mesh position={[0, 0.028, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.36, isSelected ? 0.56 : runtime?.isPostingSocial ? 0.56 : hovered ? 0.48 : 0.43, 24]} />
+        <ringGeometry
+          args={[
+            0.36,
+            isSelected || runtime?.isPostingSocial || isDelayed ? 0.56 : hovered ? 0.48 : 0.43,
+            24,
+          ]}
+        />
         <meshBasicMaterial
           color={
-            runtime?.isPostingSocial
+            isDelayed
+              ? '#F59E0B'
+              : runtime?.isPostingSocial
               ? '#EC4899'
               : isSelected
               ? '#38BDF8'
               : status === 'blocked' || status === 'error'
               ? '#EF4444'
+              : status === 'sleeping'
+              ? '#64748B'
               : agent.avatarColor
           }
           transparent
-          opacity={runtime?.isPostingSocial || isSelected ? 0.95 : hovered ? 0.85 : 0.6}
+          opacity={
+            runtime?.isPostingSocial || isSelected || isDelayed
+              ? 0.95
+              : hovered
+              ? 0.85
+              : status === 'sleeping'
+              ? 0.35
+              : 0.6
+          }
           depthWrite={false}
           side={THREE.DoubleSide}
         />
@@ -154,9 +186,36 @@ export function AgentCharacter({
           center
           distanceFactor={16}
           zIndexRange={[8, 0]}
-          style={{ pointerEvents: 'none' }}
+          style={{ pointerEvents: pendingReviewCount > 0 ? 'auto' : 'none' }}
         >
           <div className="flex flex-col items-center gap-1 select-none whitespace-nowrap">
+            {isExiting && (
+              <div className="px-2 py-0.5 rounded-lg bg-slate-800 text-amber-300 text-[10px] font-semibold border border-amber-500/60 shadow">
+                Bàn giao & rời văn phòng
+              </div>
+            )}
+            {status === 'sleeping' && !isExiting && (
+              <div className="px-2 py-0.5 rounded-lg bg-slate-900/90 text-slate-400 text-[9.5px] font-mono border border-slate-700 shadow">
+                Zzz · Chế độ nghỉ
+              </div>
+            )}
+            {isDelayed && (
+              <div className="px-2 py-0.5 rounded-lg bg-amber-500 text-slate-950 text-[10px] font-bold shadow border border-amber-300">
+                TRỄ HẠN · Đang kiểm tra
+              </div>
+            )}
+            {pendingReviewCount > 0 && isAccountantRole && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveTab('finance');
+                }}
+                className="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold shadow border border-indigo-300/70 cursor-pointer"
+              >
+                {pendingReviewCount} phiếu chi chờ kiểm tra
+              </button>
+            )}
             {/* Speech Bubble / Blocked Alert with tail */}
             {status === 'blocked' && (
               <div className="relative px-2 py-0.5 rounded-lg bg-rose-600 text-white text-[10px] font-bold shadow-lg border border-rose-300/70">
@@ -178,7 +237,7 @@ export function AgentCharacter({
               </div>
             )}
 
-            {/* Rounded Head HUD Card (compact when far, detailed when zoomed in) */}
+            {/* Rounded Head HUD Card */}
             <div
               className={`flex items-center gap-1 rounded-lg shadow-md border transition-colors ${
                 isSelected
@@ -199,7 +258,7 @@ export function AgentCharacter({
                   />
                 </div>
                 {showDetailedHud && (
-                  <div className="flex items-center gap-1 text-[8.5px] text-slate-300 max-w-[125px] truncate">
+                  <div className="flex items-center gap-1 text-[8.5px] text-slate-300 max-w-[130px] truncate">
                     <span className="truncate">{agent.title}</span>
                     <span>·</span>
                     <span style={{ color: statusInfo.color }}>{statusInfo.label}</span>

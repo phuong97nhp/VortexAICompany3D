@@ -2,11 +2,11 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Download, FileText } from 'lucide-react';
-import { getAgentById } from '../../agents';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { DocumentItem } from '../../types';
 
 export function DocsPanel() {
+  const agents = useCompanyStore((s) => s.agents);
   const documents = useCompanyStore((s) => s.documents);
   const [category, setCategory] = useState('all');
   const [selectedDoc, setSelectedDoc] = useState<DocumentItem | null>(documents[0] || null);
@@ -57,7 +57,7 @@ export function DocsPanel() {
       <div className="flex-1 grid grid-cols-1 md:grid-cols-5 gap-3 overflow-hidden">
         <div className="md:col-span-2 overflow-y-auto space-y-1.5 pr-1">
           {filtered.map((doc) => {
-            const author = getAgentById(doc.authorId);
+            const author = agents.find((a) => a.id === doc.authorId);
             const isSel = selectedDoc?.id === doc.id;
             return (
               <button

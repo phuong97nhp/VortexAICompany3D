@@ -15,9 +15,16 @@ export const ALL_PERMISSIONS: Array<{ key: Permission; label: string; group: str
   { key: 'task:assign', label: 'Giao việc cho Agent khác', group: 'Vận hành' },
   { key: 'meeting:call', label: 'Triệu tập cuộc họp', group: 'Vận hành' },
   { key: 'kpi:read', label: 'Đọc số liệu KPI', group: 'Vận hành' },
-  { key: 'budget:spend', label: 'Đề xuất chi ngân sách', group: 'Tài chính & Quản trị' },
-  { key: 'approval:request', label: 'Gửi yêu cầu phê duyệt', group: 'Tài chính & Quản trị' },
-  { key: 'settings:write', label: 'Thay đổi cài đặt hệ thống', group: 'Tài chính & Quản trị' },
+  { key: 'hr:manage', label: 'Quản lý nhân sự (tuyển/sửa/cho nghỉ)', group: 'Nhân sự & Quản trị' },
+  { key: 'budget:spend', label: 'Đề xuất chi ngân sách', group: 'Tài chính & Kế toán' },
+  { key: 'expense:request', label: 'Tạo phiếu xin chi phí', group: 'Tài chính & Kế toán' },
+  { key: 'expense:review', label: 'Kế toán thẩm định chi phí (tầng 1)', group: 'Tài chính & Kế toán' },
+  { key: 'expense:approve_final', label: 'Duyệt chi cuối cùng (tầng 2 CEO)', group: 'Tài chính & Kế toán' },
+  { key: 'expense:rule_manage', label: 'Tạo & sửa Quy tắc tự duyệt', group: 'Tài chính & Kế toán' },
+  { key: 'expense:mark_paid', label: 'Đánh dấu đã chi & đối soát chứng từ', group: 'Tài chính & Kế toán' },
+  { key: 'policy:write', label: 'Chỉnh Chính sách chi tiêu (CEO)', group: 'Tài chính & Kế toán' },
+  { key: 'approval:request', label: 'Gửi yêu cầu phê duyệt', group: 'Tài chính & Kế toán' },
+  { key: 'settings:write', label: 'Thay đổi cài đặt hệ thống', group: 'Nhân sự & Quản trị' },
   { key: 'memory:read', label: 'Đọc bộ nhớ Agent', group: 'Bộ nhớ' },
   { key: 'memory:write', label: 'Ghi bộ nhớ Agent', group: 'Bộ nhớ' },
   { key: 'post:publish', label: 'Đăng bài lên Kênh MXH', group: 'Marketing & Kênh' },
@@ -49,6 +56,13 @@ export const TOOL_PERMISSION_MAP: Partial<Record<ToolName, Permission>> = {
   publish_social_post: 'post:publish',
   reply_social_comment: 'post:publish',
   create_ad_campaign: 'ads:manage',
+  hire_agent: 'hr:manage',
+  request_expense: 'expense:request',
+  review_expense: 'expense:review',
+  pay_expense: 'expense:mark_paid',
+  buy_domain: 'budget:spend',
+  subscribe_tool: 'budget:spend',
+  spend: 'budget:spend',
 };
 
 export const ROLE_LABELS: Record<RoleType, string> = {
@@ -57,6 +71,35 @@ export const ROLE_LABELS: Record<RoleType, string> = {
   'Dept Head': 'Trưởng phòng',
   Specialist: 'Chuyên viên',
   'Read-only': 'Chỉ xem',
+};
+
+export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
+  CEO: ALL_PERMISSIONS.map((p) => p.key),
+  Exec: [
+    'lead:read',
+    'doc:write',
+    'task:assign',
+    'meeting:call',
+    'kpi:read',
+    'approval:request',
+    'expense:request',
+    'memory:read',
+    'memory:write',
+  ],
+  'Dept Head': [
+    'lead:read',
+    'lead:write',
+    'doc:write',
+    'task:assign',
+    'meeting:call',
+    'kpi:read',
+    'approval:request',
+    'expense:request',
+    'memory:read',
+    'memory:write',
+  ],
+  Specialist: ['lead:read', 'doc:write', 'kpi:read', 'expense:request', 'memory:read', 'memory:write'],
+  'Read-only': ['lead:read', 'kpi:read', 'memory:read'],
 };
 
 export interface AuthorizationResult {
@@ -85,13 +128,13 @@ export function authorize(
   });
 
   if (!account) {
-    const reason = 'Tài khoản agent không tồn tại trong hệ thống RBAC.';
+    const reason = 'Tài khoản agent không tồn tại hoặc đã bị thu hồi token trong hệ thống RBAC.';
     onAudit?.(mkLog('denied', reason));
     return { allowed: false, reason };
   }
 
   if (account.status === 'suspended') {
-    const reason = `Tài khoản ${account.username} đang bị tạm khóa.`;
+    const reason = `Tài khoản ${account.username} đang bị tạm khóa hoặc đã thôi việc.`;
     onAudit?.(mkLog('denied', reason));
     return { allowed: false, reason };
   }

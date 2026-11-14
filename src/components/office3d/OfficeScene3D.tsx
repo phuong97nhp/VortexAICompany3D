@@ -1,12 +1,10 @@
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Bounds, OrbitControls, useBounds } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Activity, Eye, Focus } from 'lucide-react';
-import { AGENTS } from '../../agents';
-import { ROOMS } from '../../config/departments';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { AgentCharacter } from './AgentCharacter';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
@@ -16,6 +14,16 @@ import { SceneDiagnosticsOverlay, SceneDiagnosticsProbe } from './SceneDiagnosti
 const OVERVIEW_CAM_POS: [number, number, number] = [20, 17, 21];
 const OVERVIEW_LOOK_AT: [number, number, number] = [0, 1.8, 0];
 
+const MEETING_MINIMAP_ROOM = {
+  id: 'room-meeting',
+  name: 'Phòng Họp Lớn',
+  shortName: 'Phòng Họp',
+  floor: 1 as const,
+  center: [5.75, 0, -5.1] as [number, number, number],
+  size: [14.5, 7.8] as [number, number],
+  color: '#EAB308',
+};
+
 function SimulationTicker() {
   const advanceAgentPositions = useCompanyStore((s) => s.advanceAgentPositions);
   useFrame((_, delta) => {
@@ -24,10 +32,6 @@ function SimulationTicker() {
   return null;
 }
 
-/**
- * Generates procedural RoomEnvironment PMREM on GPU so Standard/Toon materials
- * have crisp reflections & soft fill without external HDR assets.
- */
 function EnvironmentRig() {
   const { gl, scene } = useThree();
 
@@ -56,10 +60,6 @@ function EnvironmentRig() {
   return null;
 }
 
-/**
- * Fits oblique overview nicely on initial mount using drei <Bounds>,
- * then yields smoothly to OrbitControls & flyCameraTo targets.
- */
 function AutoFitOnMount({ buildingRootRef }: { buildingRootRef: React.RefObject<THREE.Group | null> }) {
   const bounds = useBounds();
   const fittedRef = useRef(false);
@@ -67,7 +67,6 @@ function AutoFitOnMount({ buildingRootRef }: { buildingRootRef: React.RefObject<
   useEffect(() => {
     if (fittedRef.current || !buildingRootRef.current) return;
     fittedRef.current = true;
-    // Slight delay ensures InstancedMesh matrices & floor slabs are computed
     const t = window.setTimeout(() => {
       if (!buildingRootRef.current) return;
       bounds.refresh(buildingRootRef.current).clip();
@@ -142,7 +141,7 @@ function CameraRig() {
       enableDamping
       dampingFactor={0.07}
       minDistance={5}
-      maxDistance={54}
+      maxDistance={68}
       minPolarAngle={0.22}
       maxPolarAngle={Math.PI / 2.12}
       onStart={() => {
@@ -158,6 +157,8 @@ export function OfficeScene3D() {
   const dayNightMode = useCompanyStore((s) => s.settings.dayNightMode);
   const graphicsQuality = useCompanyStore((s) => s.settings.graphicsQuality);
   const updateSettings = useCompanyStore((s) => s.updateSettings);
+  const agents = useCompanyStore((s) => s.agents);
+  const departments = useCompanyStore((s) => s.departments);
   const runtimes = useCompanyStore((s) => s.runtimes);
   const selectedAgentId = useCompanyStore((s) => s.selectedAgentId);
   const followAgentMode = useCompanyStore((s) => s.followAgentMode);
@@ -188,13 +189,58 @@ export function OfficeScene3D() {
 
   const enableShadows = effectiveQuality !== 'low';
 
-  const filteredAgents = AGENTS.filter((a) => {
-    if (visibleFloor === 'all') return true;
-    const rt = runtimes[a.id];
-    const y = rt ? rt.currentPosition[1] : a.deskPosition[1];
-    const currentFloor = y > 1.9 ? 2 : 1;
-    return currentFloor === visibleFloor;
-  });
+  const activeAgents = useMemo(
+    () => agents.filter((a) => a.employmentStatus !== 'archived'),
+    [agents]
+  );
+
+  const filteredAgents = useMemo(
+    () =>
+      activeAgents.filter((a) => {
+        if (visibleFloor === 'all') return true;
+        const rt = runtimes[a.id];
+        const y = rt ? rt.currentPosition[1] : a.deskPosition[1];
+        const currentFloor = y > 1.9 ? 2 : 1;
+        return currentFloor === visibleFloor;
+      }),
+    [activeAgents, visibleFloor, runtimes]
+  );
+
+  const minimapRooms = useMemo(
+    () => [
+      ...departments.map((d) => ({
+        id: d.roomId,
+        name: d.name,
+        shortName: d.shortName,
+        floor: d.floor,
+        center: d.roomCenter,
+        size: d.roomSize,
+        color: d.color,
+      })),
+      MEETING_MINIMAP_ROOM,
+    ],
+    [departments]
+  );
+
+  const mapBounds = useMemo(() => {
+    let minX = -13.2;
+    let maxX = 13.2;
+    let minZ = -9.2;
+    let maxZ = 9.2;
+    for (const r of minimapRooms) {
+      minX = Math.min(minX, r.center[0] - r.size[0] / 2 - 0.3);
+      maxX = Math.max(maxX, r.center[0] + r.size[0] / 2 + 0.3);
+      minZ = Math.min(minZ, r.center[2] - r.size[1] / 2 - 0.3);
+      maxZ = Math.max(maxZ, r.center[2] + r.size[1] / 2 + 0.3);
+    }
+    for (const a of activeAgents) {
+      minX = Math.min(minX, a.deskPosition[0] - 1.2);
+      maxX = Math.max(maxX, a.deskPosition[0] + 1.2);
+      minZ = Math.min(minZ, a.deskPosition[2] - 1.2);
+      maxZ = Math.max(maxZ, a.deskPosition[2] + 1.2);
+    }
+    return { minX, maxX, minZ, maxZ, w: maxX - minX, h: maxZ - minZ };
+  }, [minimapRooms, activeAgents]);
 
   const isFocused = Boolean(selectedAgentId || followAgentMode);
   const bgHex = isNight ? '#162033' : '#D8E4F0';
@@ -210,7 +256,6 @@ export function OfficeScene3D() {
         </div>
       )}
 
-      {/* Subtle Cinema Focus Vignette when following/focusing an agent */}
       {isFocused && (
         <div
           className="pointer-events-none absolute inset-0 z-[2]"
@@ -225,7 +270,7 @@ export function OfficeScene3D() {
           frameloop="always"
           shadows={enableShadows}
           dpr={dpr}
-          camera={{ position: OVERVIEW_CAM_POS, fov: 42, near: 0.4, far: 160 }}
+          camera={{ position: OVERVIEW_CAM_POS, fov: 42, near: 0.4, far: 180 }}
           gl={{
             antialias: effectiveQuality !== 'low',
             powerPreference: 'high-performance',
@@ -256,11 +301,10 @@ export function OfficeScene3D() {
           }}
         >
           <color attach="background" args={[bgHex]} />
-          <fog attach="fog" args={[bgHex, 44, 110]} />
+          <fog attach="fog" args={[bgHex, 48, 125]} />
 
           <EnvironmentRig />
 
-          {/* Guaranteed Multi-Layer Studio & Warm Room Lighting */}
           <ambientLight intensity={isNight ? 0.55 : 0.72} color={isNight ? '#CBD5E1' : '#FFFFFF'} />
           <hemisphereLight
             args={[isNight ? '#93C5FD' : '#FFFBEB', isNight ? '#1E293B' : '#94A3B8', isNight ? 0.65 : 0.85]}
@@ -271,40 +315,18 @@ export function OfficeScene3D() {
             color={isNight ? '#FDE68A' : '#FFFDF5'}
             castShadow={enableShadows}
             shadow-mapSize={[1024, 1024]}
-            shadow-camera-left={-20}
-            shadow-camera-right={20}
-            shadow-camera-top={20}
-            shadow-camera-bottom={-20}
+            shadow-camera-left={-22}
+            shadow-camera-right={22}
+            shadow-camera-top={22}
+            shadow-camera-bottom={-22}
             shadow-bias={-0.0005}
           />
-          {/* Cool Rim Light */}
           <directionalLight position={[-18, 14, -14]} intensity={isNight ? 0.5 : 0.45} color="#BAE6FD" />
 
-          {/* Warm Interior Room Lights */}
-          <pointLight
-            position={[-7.5, 3.0, 4.5]}
-            intensity={isNight ? 11 : 4}
-            distance={18}
-            color="#FDE68A"
-          />
-          <pointLight
-            position={[5.0, 3.0, -4.5]}
-            intensity={isNight ? 11 : 4}
-            distance={18}
-            color="#FDBA74"
-          />
-          <pointLight
-            position={[3.5, 6.8, 3.5]}
-            intensity={isNight ? 11 : 4}
-            distance={20}
-            color="#FDE68A"
-          />
-          <pointLight
-            position={[-8.0, 6.8, -4.5]}
-            intensity={isNight ? 10 : 4}
-            distance={18}
-            color="#F9A8D4"
-          />
+          <pointLight position={[-7.5, 3.0, 4.5]} intensity={isNight ? 11 : 4} distance={18} color="#FDE68A" />
+          <pointLight position={[5.0, 3.0, -4.5]} intensity={isNight ? 11 : 4} distance={18} color="#FDBA74" />
+          <pointLight position={[3.5, 6.8, 3.5]} intensity={isNight ? 11 : 4} distance={20} color="#FDE68A" />
+          <pointLight position={[-8.0, 6.8, -4.5]} intensity={isNight ? 10 : 4} distance={18} color="#F9A8D4" />
 
           <Suspense fallback={null}>
             <Bounds clip margin={1.15}>
@@ -332,7 +354,6 @@ export function OfficeScene3D() {
 
       <SceneDiagnosticsOverlay />
 
-      {/* Top-Left Cinema Camera & Diagnostics Bar */}
       <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 pointer-events-auto">
         <button
           type="button"
@@ -376,13 +397,12 @@ export function OfficeScene3D() {
         )}
       </div>
 
-      {/* Bottom-Left 3D Controls & Mini-map */}
       <div className="absolute bottom-3 left-3 z-10 flex flex-col gap-2 pointer-events-auto">
         {showMinimap && (
           <div className="w-60 rounded-xl bg-slate-950/95 border border-slate-700/80 p-2.5 shadow-xl text-slate-100">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-semibold text-slate-300">
-                Mini-map · {visibleFloor === 'all' ? 'Cả 2 tầng' : `Tầng ${visibleFloor}`}
+                Mini-map · {visibleFloor === 'all' ? 'Cả 2 tầng' : `Tầng ${visibleFloor}`} ({activeAgents.length} NV)
               </span>
               <button
                 type="button"
@@ -396,37 +416,41 @@ export function OfficeScene3D() {
               </button>
             </div>
             <div className="relative w-full h-36 rounded-lg bg-slate-900 border border-slate-800 overflow-hidden">
-              {ROOMS.filter((r) => (visibleFloor === 'all' ? r.floor === 1 : r.floor === visibleFloor)).map((room) => {
-                const leftPct = ((room.center[0] + 13.2) / 26.4) * 100;
-                const topPct = ((room.center[2] + 9.2) / 18.4) * 100;
-                const wPct = (room.size[0] / 26.4) * 100;
-                const hPct = (room.size[1] / 18.4) * 100;
-                return (
-                  <button
-                    key={room.id}
-                    type="button"
-                    onClick={() => selectRoom(room.id)}
-                    title={room.name}
-                    className="absolute rounded border text-[8.5px] font-medium flex items-center justify-center truncate px-1 cursor-pointer hover:brightness-125"
-                    style={{
-                      left: `${leftPct - wPct / 2}%`,
-                      top: `${topPct - hPct / 2}%`,
-                      width: `${wPct}%`,
-                      height: `${hPct}%`,
-                      backgroundColor: `${room.color}28`,
-                      borderColor: `${room.color}88`,
-                      color: '#F1F5F9',
-                    }}
-                  >
-                    <span className="truncate">{room.shortName}</span>
-                  </button>
-                );
-              })}
+              {minimapRooms
+                .filter((r) => (visibleFloor === 'all' ? r.floor === 1 : r.floor === visibleFloor))
+                .map((room) => {
+                  const leftPct = ((room.center[0] - mapBounds.minX) / mapBounds.w) * 100;
+                  const topPct = ((room.center[2] - mapBounds.minZ) / mapBounds.h) * 100;
+                  const wPct = (room.size[0] / mapBounds.w) * 100;
+                  const hPct = (room.size[1] / mapBounds.h) * 100;
+                  return (
+                    <button
+                      key={room.id}
+                      type="button"
+                      onClick={() => selectRoom(room.id)}
+                      title={room.name}
+                      className="absolute rounded border text-[8.5px] font-medium flex items-center justify-center truncate px-1 cursor-pointer hover:brightness-125"
+                      style={{
+                        left: `${leftPct - wPct / 2}%`,
+                        top: `${topPct - hPct / 2}%`,
+                        width: `${wPct}%`,
+                        height: `${hPct}%`,
+                        backgroundColor: `${room.color}28`,
+                        borderColor: `${room.color}88`,
+                        color: '#F1F5F9',
+                      }}
+                    >
+                      <span className="truncate">{room.shortName}</span>
+                    </button>
+                  );
+                })}
               {filteredAgents.map((a) => {
                 const pos = runtimes[a.id]?.currentPosition || a.deskPosition;
-                const leftPct = ((pos[0] + 13.2) / 26.4) * 100;
-                const topPct = ((pos[2] + 9.2) / 18.4) * 100;
-                const isBlocked = runtimes[a.id]?.status === 'blocked';
+                const leftPct = ((pos[0] - mapBounds.minX) / mapBounds.w) * 100;
+                const topPct = ((pos[2] - mapBounds.minZ) / mapBounds.h) * 100;
+                const rtStatus = runtimes[a.id]?.status;
+                const isBlocked = rtStatus === 'blocked';
+                const isDelayed = runtimes[a.id]?.isDelayed;
                 return (
                   <button
                     key={a.id}
@@ -437,7 +461,7 @@ export function OfficeScene3D() {
                     style={{
                       left: `${leftPct}%`,
                       top: `${topPct}%`,
-                      backgroundColor: isBlocked ? '#EF4444' : a.avatarColor,
+                      backgroundColor: isBlocked ? '#EF4444' : isDelayed ? '#F59E0B' : a.avatarColor,
                     }}
                   />
                 );

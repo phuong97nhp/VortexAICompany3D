@@ -10,6 +10,8 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
   const leads = useCompanyStore((s) => s.leads);
   const outreachLogs = useCompanyStore((s) => s.outreachLogs);
   const tokenUsage = useCompanyStore((s) => s.tokenUsage);
+  const expenses = useCompanyStore((s) => s.expenses);
+  const expenseBudgets = useCompanyStore((s) => s.expenseBudgets);
 
   const canvas = useMemo(() => {
     const c = document.createElement('canvas');
@@ -36,9 +38,24 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
     const won = leads.filter((l) => l.stage === 'won');
     const revenueM = (won.reduce((s, l) => s + l.estimatedValueVnd, 0) / 1_000_000).toFixed(1);
     const todayKey = new Date().toISOString().slice(0, 10);
+    const monthKey = todayKey.slice(0, 7);
     const todayTok = tokenUsage
       .filter((t) => t.dateKey === todayKey)
       .reduce((s, t) => s + t.totalTokens, 0);
+
+    const monthSpentVnd = expenses
+      .filter(
+        (e) =>
+          (e.status === 'approved' || e.status === 'paid' || e.status === 'reconciled') &&
+          new Date(e.createdAt).toISOString().slice(0, 7) === monthKey
+      )
+      .reduce((s, e) => s + e.amountVnd, 0);
+    const monthBudgetVnd = expenseBudgets
+      .filter((b) => b.monthKey === monthKey)
+      .reduce((s, b) => s + b.limitVnd, 0);
+    const pendingExp = expenses.filter(
+      (e) => e.status === 'pending_accountant' || e.status === 'pending_ceo'
+    ).length;
 
     // Draw background
     ctx.fillStyle = '#0B1324';
@@ -55,10 +72,10 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
     const tiles = [
       { label: 'TỔNG LEAD CRM', val: String(totalLeads), color: '#38BDF8' },
       { label: 'TIN ĐÃ GỬI', val: String(sent), color: '#34D399' },
-      { label: 'TỈ LỆ PHẢN HỒI', val: `${replyRate}%`, color: '#FBBF24' },
-      { label: 'LỊCH DEMO', val: String(demos), color: '#A78BFA' },
+      { label: 'PHẢN HỒI / DEMO', val: `${replyRate}% · ${demos}`, color: '#FBBF24' },
       { label: 'DEAL THÀNH CÔNG', val: String(won.length), color: '#10B981' },
       { label: 'DOANH THU (TR.Đ)', val: `${revenueM}M`, color: '#F472B6' },
+      { label: 'CHI PHÍ THÁNG', val: `${(monthSpentVnd / 1_000_000).toFixed(1)}M`, color: '#FB923C' },
     ];
 
     tiles.forEach((t, i) => {
@@ -77,16 +94,20 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
       ctx.fillText(t.label, x + 10, y + 20);
 
       ctx.fillStyle = t.color;
-      ctx.font = 'bold 26px monospace';
+      ctx.font = 'bold 24px monospace';
       ctx.fillText(t.val, x + 10, y + 54);
     });
 
-    ctx.fillStyle = '#64748B';
+    ctx.fillStyle = '#94A3B8';
     ctx.font = '12px monospace';
-    ctx.fillText(`TOKEN HÔM NAY: ${todayTok.toLocaleString('vi-VN')}`, 18, 240);
+    ctx.fillText(
+      `TOKEN: ${todayTok.toLocaleString('vi-VN')}  ·  NGÂN SÁCH: ${(monthBudgetVnd / 1_000_000).toFixed(0)}M  ·  CHỜ DUYỆT CHI: ${pendingExp}`,
+      18,
+      240
+    );
 
     texture.needsUpdate = true;
-  }, [canvas, texture, leads, outreachLogs, tokenUsage]);
+  }, [canvas, texture, leads, outreachLogs, tokenUsage, expenses, expenseBudgets]);
 
   useEffect(() => {
     return () => texture.dispose();

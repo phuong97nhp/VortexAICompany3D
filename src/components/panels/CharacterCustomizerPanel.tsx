@@ -1,8 +1,7 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { RotateCcw, Save, Shuffle } from 'lucide-react';
-import { AGENTS } from '../../agents';
 import {
   ACCESSORIES,
   generateRandomAppearance,
@@ -41,28 +40,46 @@ const PREVIEW_STATUSES: Array<{ id: AgentStatus; label: string }> = [
 ];
 
 export function CharacterCustomizerPanel() {
+  const agents = useCompanyStore((s) => s.agents);
   const selectedAgentId = useCompanyStore((s) => s.selectedAgentId);
   const agentAppearances = useCompanyStore((s) => s.agentAppearances);
   const saveAgentAppearance = useCompanyStore((s) => s.saveAgentAppearance);
   const resetAgentAppearance = useCompanyStore((s) => s.resetAgentAppearance);
 
-  const [targetId, setTargetId] = useState<string>(selectedAgentId || 'secretary');
+  const activeAgents = useMemo(
+    () => agents.filter((a) => a.employmentStatus !== 'archived'),
+    [agents]
+  );
+
+  const [targetId, setTargetId] = useState<string>(selectedAgentId || activeAgents[0]?.id || 'secretary');
   const [previewStatus, setPreviewStatus] = useState<AgentStatus>('idle');
   const [savedFlag, setSavedFlag] = useState(false);
 
-  const targetAgent = AGENTS.find((a) => a.id === targetId) || AGENTS[0];
-  const storedAppearance = agentAppearances[targetAgent.id] || getDefaultAppearance(targetAgent);
-  const [draft, setDraft] = useState<AgentAppearance>(storedAppearance);
+  const targetAgent = activeAgents.find((a) => a.id === targetId) || activeAgents[0];
+  const storedAppearance = targetAgent
+    ? agentAppearances[targetAgent.id] || getDefaultAppearance(targetAgent)
+    : undefined;
+  const [draft, setDraft] = useState<AgentAppearance | undefined>(storedAppearance);
 
   useEffect(() => {
-    if (selectedAgentId && AGENTS.some((a) => a.id === selectedAgentId)) {
+    if (selectedAgentId && activeAgents.some((a) => a.id === selectedAgentId)) {
       setTargetId(selectedAgentId);
     }
-  }, [selectedAgentId]);
+  }, [selectedAgentId, activeAgents]);
 
   useEffect(() => {
-    setDraft(agentAppearances[targetAgent.id] || getDefaultAppearance(targetAgent));
-  }, [targetAgent.id, agentAppearances]);
+    if (targetAgent) {
+      setDraft(agentAppearances[targetAgent.id] || getDefaultAppearance(targetAgent));
+    }
+  }, [targetAgent?.id, agentAppearances]);
+
+  if (!targetAgent || !draft) {
+    return (
+      <div className="p-4 text-xs text-slate-400">
+        Chưa có nhân sự hoạt động để tùy chỉnh ngoại hình 3D.
+      </div>
+    );
+  }
 
   const handleSave = async () => {
     await saveAgentAppearance(draft);
@@ -89,7 +106,7 @@ export function CharacterCustomizerPanel() {
           onChange={(e) => setTargetId(e.target.value)}
           className="flex-1 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2.5 py-1.5 font-semibold"
         >
-          {AGENTS.map((a) => (
+          {activeAgents.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name} — {a.title}
             </option>

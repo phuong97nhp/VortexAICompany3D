@@ -1,18 +1,36 @@
 import { useState } from 'react';
-import { getAgentById } from '../../agents';
 import { executeAgentTool } from '../../engine/tools';
 import { useCompanyStore } from '../../store/useCompanyStore';
 
 export function ApprovalsPanel() {
+  const agents = useCompanyStore((s) => s.agents);
   const approvals = useCompanyStore((s) => s.approvals);
   const resolveApproval = useCompanyStore((s) => s.resolveApproval);
   const askCeoQuestions = useCompanyStore((s) => s.askCeoQuestions);
   const answerAskCeo = useCompanyStore((s) => s.answerAskCeo);
+  const expenses = useCompanyStore((s) => s.expenses);
+  const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const [noteInputs, setNoteInputs] = useState<Record<string, string>>({});
   const [askInputs, setAskInputs] = useState<Record<string, string>>({});
 
+  const pendingCeoExpenses = expenses.filter((e) => e.status === 'pending_ceo').length;
+
   return (
     <div className="flex flex-col h-full p-3 gap-4 overflow-y-auto">
+      {pendingCeoExpenses > 0 && (
+        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/40 flex items-center justify-between gap-2 text-xs">
+          <span className="font-semibold text-amber-500">
+            Có {pendingCeoExpenses} phiếu chi đã qua Kế toán đang chờ CEO duyệt chi
+          </span>
+          <button
+            type="button"
+            onClick={() => setActiveTab('finance')}
+            className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-semibold cursor-pointer shrink-0"
+          >
+            Mở Chi phí & Kế toán
+          </button>
+        </div>
+      )}
       {/* Hỏi CEO qua Zalo Section */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
@@ -37,7 +55,7 @@ export function ApprovalsPanel() {
           </div>
         ) : (
           askCeoQuestions.map((q) => {
-            const ag = getAgentById(q.agentId);
+            const ag = agents.find((a) => a.id === q.agentId);
             return (
               <div
                 key={q.id}
@@ -104,7 +122,7 @@ export function ApprovalsPanel() {
       <section className="space-y-2">
         <h3 className="text-xs font-bold">Danh sách Phê duyệt ({approvals.length})</h3>
         {approvals.map((apr) => {
-          const ag = getAgentById(apr.requestedBy);
+          const ag = agents.find((a) => a.id === apr.requestedBy);
           return (
             <div
               key={apr.id}

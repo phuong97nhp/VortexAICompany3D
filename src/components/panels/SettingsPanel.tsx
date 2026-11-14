@@ -86,6 +86,9 @@ export function SettingsPanel() {
     if (!raw) return;
     setZaloReplyInput('');
 
+    const handled = await useCompanyStore.getState().handleZaloCommand(raw);
+    if (handled) return;
+
     const match = raw.match(/#(CEO-\d+)/i);
     const targetId = match ? match[1].toUpperCase() : pendingQ?.id;
     const cleanText = raw.replace(/#CEO-\d+/i, '').trim() || raw;
@@ -470,7 +473,9 @@ export function SettingsPanel() {
             onChange={(e) => setZaloReplyInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleZaloSimReply()}
             placeholder={
-              pendingQ ? `Gõ trả lời cho #${pendingQ.id} (vd: 1 hoặc Đồng ý)...` : 'Nhắn thử tin từ Zalo CEO...'
+              pendingQ
+                ? `Gõ trả lời #${pendingQ.id} hoặc duyệt chi "1 #CP-102"...`
+                : 'Nhắn Zalo (vd: "1 #CP-102" duyệt chi, "2 #CP-102 lý do" từ chối)...'
             }
             className="flex-1 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2.5 py-1.5"
           />
@@ -586,6 +591,53 @@ export function SettingsPanel() {
               className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1.5 font-mono-num"
             />
           </div>
+        </div>
+
+        {/* BỔ SUNG D & F: HR Guardrails & Watchdog Digest */}
+        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
+          <div className="font-semibold">Điều phối Nhân sự Động & Watchdog</div>
+          <div className="grid grid-cols-2 gap-2 items-center">
+            <div>
+              <label className="block text-[11px] text-slate-400 mb-1">Số Agent chạy song song tối đa</label>
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={settings.maxConcurrentAgents}
+                onChange={(e) =>
+                  updateSettings({ maxConcurrentAgents: Math.min(30, Math.max(1, Number(e.target.value) || 8)) })
+                }
+                className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1.5 font-mono-num"
+              />
+            </div>
+            <label className="flex items-center gap-2 pt-4 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.sleepIdleAgents}
+                onChange={(e) => updateSettings({ sleepIdleAgents: e.target.checked })}
+                className="w-4 h-4 accent-sky-600"
+              />
+              <span>Ngủ đông Agent 3D khi rảnh</span>
+            </label>
+          </div>
+          <label className="flex items-center justify-between cursor-pointer">
+            <span>Tuyển nhân sự nhanh qua Chat không cần bước duyệt</span>
+            <input
+              type="checkbox"
+              checked={settings.hrAutoDecide}
+              onChange={(e) => updateSettings({ hrAutoDecide: e.target.checked })}
+              className="w-4 h-4 accent-sky-600"
+            />
+          </label>
+          <label className="flex items-center justify-between cursor-pointer">
+            <span>Gửi Digest tiến độ & phiếu chi hằng ngày qua Zalo Giả lập</span>
+            <input
+              type="checkbox"
+              checked={settings.dailyDigestEnabled}
+              onChange={(e) => updateSettings({ dailyDigestEnabled: e.target.checked })}
+              className="w-4 h-4 accent-sky-600"
+            />
+          </label>
         </div>
       </section>
 

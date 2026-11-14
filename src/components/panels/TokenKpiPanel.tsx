@@ -1,5 +1,5 @@
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { DEPARTMENTS } from '../../config/departments';
+import { formatVnd } from '../../engine/expenseEngine';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { ProviderId } from '../../types';
 
@@ -11,6 +11,9 @@ const PROVIDER_META: Record<ProviderId, { label: string; color: string }> = {
 };
 
 export function TokenKpiPanel() {
+  const departments = useCompanyStore((s) => s.departments);
+  const expenses = useCompanyStore((s) => s.expenses);
+  const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const tokenUsage = useCompanyStore((s) => s.tokenUsage);
   const settings = useCompanyStore((s) => s.settings);
   const leads = useCompanyStore((s) => s.leads);
@@ -45,16 +48,19 @@ export function TokenKpiPanel() {
     color: PROVIDER_META[p].color,
   }));
 
-  // Group token usage by department
+  // Group token usage by live department
   const deptMap: Record<string, { name: string; tokens: number; color: string }> = {};
   for (const t of tokenUsage) {
-    const dept = DEPARTMENTS[t.department];
+    const dept = departments.find((d) => d.id === t.department);
     if (!deptMap[t.department]) {
       deptMap[t.department] = { name: dept?.shortName || t.department, tokens: 0, color: dept?.color || '#38BDF8' };
     }
     deptMap[t.department].tokens += t.totalTokens;
   }
   const deptChartData = Object.values(deptMap);
+  const tokenExpenseVnd = expenses
+    .filter((e) => e.category === 'Token AI')
+    .reduce((sum, e) => sum + e.amountVnd, 0);
 
   // Real Business KPIs
   const replied = leads.filter((l) => ['replied', 'demo', 'proposal', 'won'].includes(l.stage)).length;
@@ -104,9 +110,18 @@ export function TokenKpiPanel() {
         </div>
       </div>
 
-      {/* Per-Provider Daily Budgets */}
+      {/* Per-Provider Daily Budgets + Finance Expense Bridge */}
       <div className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-        <div className="text-xs font-semibold">Ngân sách & Chi phí theo từng Provider AI (Hôm nay)</div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold">Ngân sách & Chi phí theo từng Provider AI (Hôm nay)</span>
+          <button
+            type="button"
+            onClick={() => setActiveTab('finance')}
+            className="text-[11px] font-semibold text-sky-500 hover:underline cursor-pointer font-mono-num"
+          >
+            Sổ chi Token AI: {formatVnd(tokenExpenseVnd)} →
+          </button>
+        </div>
         {(['gemini', 'deepseek', 'local', 'mock'] as ProviderId[]).map((prov) => {
           const used = providerStats[prov].todayTokens;
           const budget = settings.providerBudgets?.[prov] ?? 500000;

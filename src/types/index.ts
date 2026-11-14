@@ -1,4 +1,4 @@
-export type DepartmentId =
+export type BuiltinDepartmentId =
   | 'exec'
   | 'marketing'
   | 'sales'
@@ -7,6 +7,9 @@ export type DepartmentId =
   | 'data'
   | 'backoffice'
   | 'reception';
+
+// Dynamic DepartmentId allows builtin + CEO-created custom departments (BỔ SUNG D)
+export type DepartmentId = BuiltinDepartmentId | (string & {});
 
 export type RoleType = 'CEO' | 'Exec' | 'Dept Head' | 'Specialist' | 'Read-only';
 
@@ -31,10 +34,18 @@ export type Permission =
   | 'memory:write'
   | 'browser:use'
   | 'post:publish'
-  | 'ads:manage';
+  | 'ads:manage'
+  | 'hr:manage'
+  | 'expense:request'
+  | 'expense:review'
+  | 'expense:approve_final'
+  | 'expense:rule_manage'
+  | 'policy:write'
+  | 'expense:mark_paid';
 
 export type AgentStatus =
   | 'idle'
+  | 'sleeping'
   | 'thinking'
   | 'typing'
   | 'talking'
@@ -73,11 +84,22 @@ export type ToolName =
   | 'schedule_social_post'
   | 'publish_social_post'
   | 'reply_social_comment'
-  | 'create_ad_campaign';
+  | 'create_ad_campaign'
+  | 'hire_agent'
+  | 'request_expense'
+  | 'review_expense'
+  | 'pay_expense'
+  | 'buy_domain'
+  | 'subscribe_tool'
+  | 'spend';
+
+export type EmploymentStatus = 'active' | 'suspended' | 'archived';
 
 export interface AgentProfile {
   id: string;
   name: string;
+  nickname?: string;
+  gender?: 'male' | 'female' | 'other';
   title: string;
   department: DepartmentId;
   floor: 1 | 2;
@@ -87,11 +109,83 @@ export interface AgentProfile {
   avatarColor: string;
   accentColor: string;
   role: RoleType;
+  reportsTo?: string;
   usesReasoner?: boolean;
   allowedTools: ToolName[];
   defaultPermissions: Permission[];
   systemPrompt: string;
   bio: string;
+  personalityNote?: string;
+  toneStyle?: string;
+  templateId?: string;
+  providerOverride?: ProviderId | 'company_default';
+  modelOverride?: string;
+  sleepWhenIdle?: boolean;
+  employmentStatus?: EmploymentStatus;
+  archivedAt?: number;
+  archivedReason?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface DepartmentConfig {
+  id: string;
+  name: string;
+  shortName: string;
+  floor: 1 | 2;
+  color: string;
+  bgTint: string;
+  badgeText: string;
+  description: string;
+  roomId: string;
+  roomCenter: [number, number, number];
+  roomSize: [number, number];
+  cameraOffset: [number, number, number];
+  isCustom?: boolean;
+  collapsed?: boolean;
+}
+
+export interface RoleTemplate {
+  id: string;
+  title: string;
+  department: DepartmentId;
+  role: RoleType;
+  usesReasoner?: boolean;
+  defaultTools: ToolName[];
+  defaultPermissions: Permission[];
+  defaultTone: string;
+  promptTemplate: string;
+  bioTemplate: string;
+  gender: 'male' | 'female';
+  hairStyle: HairStyleId;
+  outfitStyle: OutfitStyleId;
+  accessory: AccessoryId;
+}
+
+export interface HrAuditEntry {
+  id: string;
+  action:
+    | 'hire'
+    | 'batch_hire'
+    | 'update'
+    | 'rename'
+    | 'move_dept'
+    | 'clone'
+    | 'suspend'
+    | 'resume'
+    | 'offboard'
+    | 'rehire'
+    | 'delete'
+    | 'dept_create'
+    | 'dept_update'
+    | 'dept_delete';
+  actor: string;
+  targetId: string;
+  targetName: string;
+  summary: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  timestamp: number;
 }
 
 export interface AgentRuntimeState {
@@ -105,6 +199,9 @@ export interface AgentRuntimeState {
   currentTaskTitle?: string;
   progressPercent?: number;
   isPostingSocial?: boolean;
+  isDelayed?: boolean;
+  pendingReviewCount?: number;
+  exiting?: boolean;
   lastHeartbeatAt: number;
 }
 
@@ -120,13 +217,31 @@ export interface AgentAccount {
   lastActiveAt: number;
 }
 
-export type TaskStatus = 'todo' | 'in_progress' | 'waiting_approval' | 'done' | 'blocked';
+export type TaskStatus =
+  | 'todo'
+  | 'in_progress'
+  | 'waiting_approval'
+  | 'review'
+  | 'blocked'
+  | 'done'
+  | 'failed'
+  | 'waiting_resume';
+
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export interface TaskDeliverableLink {
+  type: 'doc' | 'lead' | 'quote' | 'expense' | 'post' | 'report' | 'agent';
+  id: string;
+  title: string;
+}
 
 export interface TaskItem {
   id: string;
+  taskCode: string;
   title: string;
   description: string;
+  definitionOfDone: string;
+  expectedDeliverable: string;
   department: DepartmentId;
   assignedTo: string;
   createdBy: string;
@@ -134,6 +249,19 @@ export interface TaskItem {
   priority: TaskPriority;
   productId?: string;
   relatedLeadId?: string;
+  etaMinutes: number;
+  etaAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  progressPercent: number;
+  lastProgressAt: number;
+  lastNotifiedPct?: number;
+  delayNotified?: boolean;
+  escalatedLevel?: number;
+  deliverables: TaskDeliverableLink[];
+  failureReason?: string;
+  ceoFeedback?: string;
+  channelId?: ChatChannelId;
   createdAt: number;
   updatedAt: number;
   dueLabel?: string;
@@ -198,7 +326,14 @@ export type MessageCardType =
   | 'lead'
   | 'meeting_minutes'
   | 'kpi'
-  | 'timeline';
+  | 'timeline'
+  | 'task_ack'
+  | 'task_progress'
+  | 'task_report'
+  | 'system_blocker'
+  | 'hr_proposal'
+  | 'expense'
+  | 'expense_rule';
 
 export interface ChatMessage {
   id: string;
@@ -240,7 +375,7 @@ export interface DocumentItem {
   updatedAt: number;
 }
 
-export type ApprovalType = 'budget' | 'quote' | 'contract' | 'public_post' | 'outreach' | 'permission';
+export type ApprovalType = 'budget' | 'quote' | 'contract' | 'public_post' | 'outreach' | 'permission' | 'expense' | 'hr_hire';
 
 export interface ApprovalRequest {
   id: string;
@@ -265,12 +400,14 @@ export interface AskCeoQuestion {
   options: string[];
   urgency: 'normal' | 'urgent';
   context: string;
-  stepType?: 'otp' | 'captcha' | '2fa' | 'kyc' | 'payment' | 'general';
+  stepType?: 'otp' | 'captcha' | '2fa' | 'kyc' | 'payment' | 'expense_confirm' | 'general';
   resumeAction?: {
-    type: 'channel_setup' | 'social_escalation';
+    type: 'channel_setup' | 'social_escalation' | 'expense_approval' | 'expense_rule_confirm';
     channelId?: string;
     nextStep?: number;
     commentId?: string;
+    expenseId?: string;
+    ruleId?: string;
   };
   status: 'pending' | 'answered' | 'reminded' | 'expired';
   answer?: string;
@@ -402,13 +539,134 @@ export interface AgentAppearance {
 export type AutonomyLevel = 1 | 2 | 3;
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 
+// === BỔ SUNG E: EXPENSE MANAGEMENT, ACCOUNTING & AUTO-APPROVAL RULES ===
+export type ExpenseStatus =
+  | 'draft'
+  | 'pending_accountant'
+  | 'needs_info'
+  | 'pending_ceo'
+  | 'rejected'
+  | 'approved'
+  | 'paid'
+  | 'reconciled';
+
+export type ExpenseFrequency = 'once' | 'recurring';
+
+export interface ExpenseAuditStep {
+  at: number;
+  actorId: string;
+  actorName: string;
+  fromStatus: ExpenseStatus;
+  toStatus: ExpenseStatus;
+  note?: string;
+}
+
+export interface ExpenseItem {
+  id: string;
+  expenseCode: string; // e.g. #CP-101
+  requesterId: string;
+  department: DepartmentId;
+  projectOrCampaign: string;
+  category: string;
+  title: string;
+  amountVnd: number;
+  frequency: ExpenseFrequency;
+  recurringCycleDays?: number;
+  nextDueAt?: number;
+  justification: string;
+  expectedRoi: string;
+  vendor: string;
+  dueDate: string;
+  attachmentName?: string;
+  attachmentDataUrl?: string;
+  receiptNote?: string;
+  status: ExpenseStatus;
+  accountantId?: string;
+  accountantNote?: string;
+  accountantCheckedAt?: number;
+  ceoDecisionNote?: string;
+  ceoDecidedAt?: number;
+  paidAt?: number;
+  paidNote?: string;
+  reconciledAt?: number;
+  autoApprovedByRuleId?: string;
+  autoApprovedByRuleName?: string;
+  autoBypassReason?: string;
+  flags: string[];
+  simulated: boolean;
+  history: ExpenseAuditStep[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ExpenseRuleType = 'accountant_auto' | 'full_auto';
+
+export interface ExpenseRule {
+  id: string;
+  ruleCode: string; // #QT-01
+  name: string;
+  ruleType: ExpenseRuleType;
+  category: string; // exact category or '*'
+  vendorPattern: string; // substring/regex or '*'
+  department: DepartmentId | 'all';
+  requesterId: string | 'all';
+  maxPerExpenseVnd: number;
+  maxPerMonthVnd: number;
+  maxCountPerMonth: number;
+  requiresAttachment: boolean;
+  expiresAt: number;
+  enabled: boolean;
+  revokedByCeo?: boolean;
+  ceoConfirmedOnce: boolean;
+  createdBy: string;
+  usageMonthKey: string;
+  usedCountMonth: number;
+  usedAmountMonthVnd: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ExpenseBudget {
+  id: string; // e.g. 2025-05::marketing::Quảng cáo
+  monthKey: string; // YYYY-MM
+  department: DepartmentId | 'all';
+  category: string;
+  limitVnd: number;
+  proposedBy: string;
+  ceoApproved: boolean;
+  unlockedOverLimit?: boolean;
+  warned80?: boolean;
+  warned100?: boolean;
+  updatedAt: number;
+}
+
+export interface ExpenseCategoryConfig {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+  blockedForAutoDefault?: boolean;
+}
+
+export interface SpendingPolicy {
+  autoApproveMaxPerTxVnd: number;
+  autoApproveMaxPerMonthVnd: number;
+  mandatoryCeoThresholdVnd: number;
+  allowedAutoCategories: string[];
+  blockedAutoCategories: string[];
+  requireOneTimeCeoRuleConfirm: boolean;
+  blockBudgetAt100Percent: boolean;
+  anomalyThresholdPercent: number; // default 30
+  overdueReminderHours: number;
+  updatedAt: number;
+}
+
 export interface CompanySettings {
   id: 'default';
   companyName: string;
   // Multi-Provider AI Brain settings
   primaryProvider: ProviderId;
   fallbackProvider: ProviderId;
-  geminiApiKey: string; // Optional manual fallback if env GEMINI_API_KEY not provided
+  geminiApiKey: string;
   deepseekApiKey: string;
   deepseekMode: 'proxy' | 'direct';
   localBaseUrl: string;
@@ -453,6 +711,14 @@ export interface CompanySettings {
   marketingPostsPerWeek: number;
   marketingDailyPostCap: number;
   marketingDailyAdBudgetVnd: number;
+  // BỔ SUNG D: HR & Resource Guardrails
+  hrAutoDecide: boolean;
+  sleepIdleAgents: boolean;
+  maxConcurrentAgents: number;
+  // BỔ SUNG E: Spending Policy
+  spendingPolicy: SpendingPolicy;
+  // BỔ SUNG F: Daily digest summary toggle
+  dailyDigestEnabled: boolean;
 }
 
 export type SocialPlatformId =
@@ -521,8 +787,8 @@ export type SocialPostStatus = 'draft' | 'waiting_approval' | 'approved' | 'publ
 export interface ScheduledSocialPost {
   id: string;
   platform: SocialPlatformId;
-  dayNumber: number; // 1..30 on the 30-day calendar
-  scheduledTime: string; // e.g. '19:30'
+  dayNumber: number;
+  scheduledTime: string;
   title: string;
   content: string;
   hashtags: string[];
@@ -557,6 +823,7 @@ export interface AdCampaignItem {
   audience: string;
   dailyBudgetVnd: number;
   totalBudgetVnd: number;
+  expenseId?: string;
   variants: Array<{ label: string; headline: string; primaryText: string }>;
   status: 'pending_approval' | 'approved' | 'active' | 'paused' | 'rejected';
   approvalId?: string;
