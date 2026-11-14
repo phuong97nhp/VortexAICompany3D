@@ -60,10 +60,10 @@ export function allocateDeskForDepartment(
   existingAgents: AgentProfile[],
   departments: DepartmentConfig[],
   excludeAgentId?: string
-): { floor: 1 | 2; roomId: string; deskPosition: [number, number, number]; deskRotationY: number; isOverflow: boolean } {
+): { floor: 1 | 2 | 3; roomId: string; deskPosition: [number, number, number]; deskRotationY: number; isOverflow: boolean } {
   const dept = departments.find((d) => d.id === deptId) || departments[0];
-  const floor: 1 | 2 = dept?.floor || 1;
-  const y = floor === 2 ? 3.8 : 0;
+  const floor: 1 | 2 | 3 = dept?.floor || 1;
+  const y = floor === 3 ? 7.6 : floor === 2 ? 3.8 : 0;
   const roomId = dept?.roomId || `room-${deptId}`;
   const cx = dept?.roomCenter?.[0] ?? 0;
   const cz = dept?.roomCenter?.[2] ?? 0;
@@ -136,10 +136,10 @@ export function allocateDeskForDepartment(
 }
 
 export function allocateCustomDepartmentLayout(
-  floor: 1 | 2,
+  floor: 1 | 2 | 3,
   existingDepts: DepartmentConfig[]
 ): { roomCenter: [number, number, number]; roomSize: [number, number]; cameraOffset: [number, number, number] } {
-  const y = floor === 2 ? 3.8 : 0;
+  const y = floor === 3 ? 7.6 : floor === 2 ? 3.8 : 0;
   // Modular East/South expansion bays aligned tightly with main building walls (main x in [-13.2, 13.2], z in [-9.2, 9.2])
   const candidateSlots: Array<{ cx: number; cz: number; w: number; d: number }> = [
     { cx: 17.5, cz: -5.1, w: 8.6, d: 8.2 },

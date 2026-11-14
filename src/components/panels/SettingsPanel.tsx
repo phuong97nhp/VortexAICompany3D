@@ -1,15 +1,19 @@
 import { useState } from 'react';
 import {
   AlertTriangle,
+  BellRing,
   CheckCircle2,
   Cpu,
   KeyRound,
+  Lock,
   MessageCircle,
   Palette,
   RefreshCw,
   RotateCcw,
   Save,
   Server,
+  ShieldCheck,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import {
@@ -44,10 +48,16 @@ export function SettingsPanel() {
   const toggle3dDiagnostics = useCompanyStore((s) => s.toggle3dDiagnostics);
   const updateBrandSettings = useCompanyStore((s) => s.updateBrandSettings);
   const applyUniformToCompany = useCompanyStore((s) => s.applyUniformToCompany);
+  const updateAffiliateSettings = useCompanyStore((s) => s.updateAffiliateSettings);
+  const sendTestCeoAlert = useCompanyStore((s) => s.sendTestCeoAlert);
+  const setActiveTab = useCompanyStore((s) => s.setActiveTab);
 
   const [geminiKeyDraft, setGeminiKeyDraft] = useState(settings.geminiApiKey);
   const [deepseekKeyDraft, setDeepseekKeyDraft] = useState(settings.deepseekApiKey);
   const [brandNotice, setBrandNotice] = useState<string | null>(null);
+  const [affNotice, setAffNotice] = useState<string | null>(null);
+  const [alertNotice, setAlertNotice] = useState<string | null>(null);
+  const [confirmHardReset, setConfirmHardReset] = useState(false);
   const [localTestStatus, setLocalTestStatus] = useState<{
     loading: boolean;
     ok?: boolean;
@@ -843,6 +853,288 @@ export function SettingsPanel() {
         </div>
 
         {brandNotice && <div className="text-[11px] text-emerald-500 font-medium">{brandNotice}</div>}
+      </section>
+
+      {/* 5. Cấu hình Affiliate & Aff ID (Ưu tiên Shopee - Agent AI bị chặn sửa Aff ID) */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-bold text-sm flex items-center gap-1.5">
+            <Lock className="w-4 h-4 text-emerald-500" />
+            <span>5. Affiliate Tầng 3 & Aff ID (Ưu tiên Shopee)</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('affiliate')}
+            className="px-2 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold cursor-pointer"
+          >
+            Mở Tầng 3 Affiliate
+          </button>
+        </div>
+
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-600 dark:text-amber-300 flex items-center gap-1.5">
+          <ShieldCheck className="w-4 h-4 shrink-0" />
+          <span>
+            <strong>Khóa bảo vệ CEO:</strong> Chỉ CEO mới được nhập/sửa Aff ID. Toàn bộ AI Agent bị chặn cứng không thể sửa hoặc thay Aff ID khi tạo link.
+          </span>
+        </div>
+
+        <div className="space-y-2">
+          {(settings.affiliate?.networks || []).map((net) => (
+            <div
+              key={net.id}
+              className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2"
+            >
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 font-semibold text-xs cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={net.enabled}
+                    onChange={(e) => {
+                      const nextNets = settings.affiliate.networks.map((n) =>
+                        n.id === net.id ? { ...n, enabled: e.target.checked } : n
+                      );
+                      updateAffiliateSettings({ networks: nextNets });
+                    }}
+                    className="accent-emerald-600"
+                  />
+                  <span>{net.name}</span>
+                  {net.id === 'shopee' && (
+                    <span className="px-1.5 py-0.5 rounded bg-orange-500/15 text-orange-500 text-[10px] font-bold">
+                      ƯU TIÊN #1
+                    </span>
+                  )}
+                </label>
+                <span className="text-[10.5px] text-slate-400 font-mono-num">{net.id}</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-0.5">Aff ID của CEO</label>
+                  <input
+                    type="text"
+                    value={net.affId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const nextNets = settings.affiliate.networks.map((n) =>
+                        n.id === net.id ? { ...n, affId: val } : n
+                      );
+                      updateAffiliateSettings({ networks: nextNets });
+                      setAffNotice(`Đã lưu Aff ID cho ${net.name}.`);
+                    }}
+                    placeholder={`Nhập Aff ID ${net.name}...`}
+                    className="w-full rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-0.5">Tiền tố sub_id</label>
+                  <input
+                    type="text"
+                    value={net.defaultSubIdPrefix}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const nextNets = settings.affiliate.networks.map((n) =>
+                        n.id === net.id ? { ...n, defaultSubIdPrefix: val } : n
+                      );
+                      updateAffiliateSettings({ networks: nextNets });
+                    }}
+                    className="w-full rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 mb-0.5">Endpoint đổi link (tuỳ chọn)</label>
+                  <input
+                    type="text"
+                    value={net.converterApiUrl || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const nextNets = settings.affiliate.networks.map((n) =>
+                        n.id === net.id ? { ...n, converterApiUrl: val } : n
+                      );
+                      updateAffiliateSettings({ networks: nextNets });
+                    }}
+                    placeholder="https://..."
+                    className="w-full rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Domain link rút gọn riêng</label>
+            <input
+              type="text"
+              value={settings.affiliate?.shortlinkDomain || ''}
+              onChange={(e) => updateAffiliateSettings({ shortlinkDomain: e.target.value })}
+              placeholder="go.chuyenweb.com"
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2.5 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Tự cắt chiến dịch lỗ ROI sau (ngày)</label>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={settings.affiliate?.autoCutNegativeRoiDays ?? 5}
+              onChange={(e) =>
+                updateAffiliateSettings({ autoCutNegativeRoiDays: Math.max(1, Number(e.target.value) || 5) })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2.5 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        <label className="flex items-center justify-between cursor-pointer pt-1">
+          <span>Bắt buộc gắn nhãn công khai #quangcao / Tiếp thị liên kết</span>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.affiliate?.requireDisclosureLabel)}
+            onChange={(e) => updateAffiliateSettings({ requireDisclosureLabel: e.target.checked })}
+            className="w-4 h-4 accent-emerald-600"
+          />
+        </label>
+
+        <div>
+          <label className="block text-[10.5px] text-slate-400 mb-0.5">Mẫu câu công khai affiliate</label>
+          <input
+            type="text"
+            value={settings.affiliate?.disclosureTemplate || ''}
+            onChange={(e) => updateAffiliateSettings({ disclosureTemplate: e.target.value })}
+            className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2.5 py-1"
+          />
+        </div>
+
+        {affNotice && <div className="text-[11px] text-emerald-500 font-medium">{affNotice}</div>}
+      </section>
+
+      {/* 6. Cảnh báo 24/7 & Đặt lại dữ liệu cục bộ (BỔ SUNG J + Crash Recovery) */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="font-bold text-sm flex items-center gap-1.5">
+            <BellRing className="w-4 h-4 text-sky-500" />
+            <span>6. Cảnh báo 24/7 & Đặt lại dữ liệu cục bộ</span>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await sendTestCeoAlert();
+              setAlertNotice(`Đã gửi cảnh báo kiểm thử qua ${res.channel} (${res.ok ? 'Thành công' : 'Lưu cục bộ'}).`);
+              setTimeout(() => setAlertNotice(null), 3500);
+            }}
+            className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-semibold cursor-pointer"
+          >
+            Gửi cảnh báo test
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Webhook Zalo Alert (tuỳ chọn)</label>
+            <input
+              type="text"
+              value={settings.zaloAlertWebhookUrl || ''}
+              onChange={(e) => updateSettings({ zaloAlertWebhookUrl: e.target.value })}
+              placeholder="https://..."
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Telegram Bot Token (tuỳ chọn)</label>
+            <input
+              type="password"
+              value={settings.telegramBotToken || ''}
+              onChange={(e) => updateSettings({ telegramBotToken: e.target.value })}
+              placeholder="123456:ABC..."
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Telegram Chat ID</label>
+            <input
+              type="text"
+              value={settings.telegramChatId || ''}
+              onChange={(e) => updateSettings({ telegramChatId: e.target.value })}
+              placeholder="-100..."
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Giờ bắt đầu làm việc (VN)</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={settings.workingHourStart ?? 8}
+              onChange={(e) => updateSettings({ workingHourStart: Number(e.target.value) })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Giờ kết thúc làm việc (VN)</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={settings.workingHourEnd ?? 21}
+              onChange={(e) => updateSettings({ workingHourEnd: Number(e.target.value) })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        {alertNotice && <div className="text-[11px] text-emerald-500 font-medium">{alertNotice}</div>}
+
+        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+          <span className="text-[11px] text-slate-500 dark:text-slate-400">
+            Nếu IndexedDB lỗi hoặc muốn xóa sạch dữ liệu cục bộ để khởi động lại từ đầu:
+          </span>
+          {!confirmHardReset ? (
+            <button
+              type="button"
+              onClick={() => setConfirmHardReset(true)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-600/15 text-rose-500 border border-rose-500/40 hover:bg-rose-600 hover:text-white font-semibold cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Đặt lại dữ liệu cục bộ</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    localStorage.clear();
+                    await new Promise<void>((resolve) => {
+                      const req = indexedDB.deleteDatabase('AICompany3D_DB_v1');
+                      req.onsuccess = () => resolve();
+                      req.onerror = () => resolve();
+                      req.onblocked = () => resolve();
+                    });
+                  } catch {
+                    // ignore cleanup fallback
+                  }
+                  window.location.reload();
+                }}
+                className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold cursor-pointer"
+              >
+                Xác nhận xóa sạch & Tải lại
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmHardReset(false)}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 cursor-pointer"
+              >
+                Hủy
+              </button>
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );

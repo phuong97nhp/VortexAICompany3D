@@ -131,5 +131,21 @@ Gói `/worker` dùng chung cấu hình AI đa nhà cung cấp (`LLM_PROVIDER`, `
 5. **Tham khảo tài liệu API & Kiểm thử:**
    - Xem `HUBCW_API_MAP.md` để đối chiếu danh sách 19 module, giả định endpoint và các điểm CEO cần xác nhận với đội kỹ thuật Hub.ChuyenWeb.
    - Chạy kiểm thử cổng Write Gate: `npx tsx src/integrations/hubcw/writeGate.test.ts`.
+   - Chạy kiểm thử toàn hệ thống (Crash Fix, Affiliate Tầng 3, 24/7 Ops & Pháp chế): `npx tsx src/tests/fullSystem.test.ts`.
 
+---
 
+## 9. Mở rộng Tầng 3 (Affiliate), Phòng Pháp chế (Tầng 2) & Vận hành 24/7
+
+- **Tòa nhà 3D Ba Tầng (`y=0`, `y=3.8`, `y=7.6`)**:
+  - Thêm cầu thang bộ tầng 2↔3 và **thang máy kính chuyển động thực (`AnimatedElevator`)**, bộ chọn **3 Tầng** + mini-map, nhân sự động hỗ trợ Tầng 1/2/3.
+- **Tầng 3 — Khối Affiliate (Tiếp thị liên kết)**:
+  - 5 phòng ban & 15 Agent: *Điều hành Affiliate, Săn hàng Win (Nghiên cứu sản phẩm), Phân tích dữ liệu & Sub_ID, Studio Sáng tạo & Tuân thủ, Vận hành Kênh*.
+  - **Khóa Aff ID của CEO**: Cấu hình trong **Cài đặt → 5. Affiliate Tầng 3 & Aff ID** (ưu tiên Shopee #1); Agent AI bị chặn RBAC tuyệt đối, mọi tracked link sinh ra đều được kiểm chứng chứa đúng Aff ID & `sub_id`.
+  - **Chống bịa số liệu**: Thuộc tính thiếu hiển thị `"chưa có"` (`null`); KPI hoa hồng thật hiển thị `"—"` khi chưa nhập báo cáo CSV; **Compliance Agent** chặn mọi tuyên bố thổi phồng công dụng/y tế, trải nghiệm cá nhân giả hoặc thiếu nhãn `#quangcao` / tiếp thị liên kết.
+- **Tầng 2 — Phòng Pháp chế & Hợp đồng VN (`room-legal`)**:
+  - 5 Agent pháp chế (*Legal Lead, Tra cứu Luật VN, Soạn thảo Hợp đồng, Rà soát Tuân thủ & DPO, Quản lý Vòng đời HĐ*), Kho 16 văn bản pháp luật VN, 11 mẫu hợp đồng × 3 biến thể, lệnh `/soan-hop-dong`.
+  - **Chống bịa đặt pháp lý**: Thiếu thông tin Bên A/B tự gắn `[CẦN BỔ SUNG]` đỏ rực; trích dẫn thiếu 1 trong 6 trường hoặc thiếu link `vbpl.vn` gắn `"CHƯA XÁC MINH - CẦN LUẬT SƯ XÁC NHẬN"` và bị loại khỏi kết luận cuối; xuất **`.docx` và `.pdf` tiếng Việt UTF-8 thật**; quyền `contract:send` chỉ dành cho CEO (hỗ trợ duyệt nhanh Zalo `1/2/3 #HD-...`).
+- **Vận hành 24/7, Go-Live & Sẵn sàng thực tế (`RUNBOOK.md`)**:
+  - Cổng khởi động `bootStatus` (`AppErrorBoundary` + khôi phục dữ liệu hỏng vào `localStorage` + nút **Đặt lại dữ liệu cục bộ**).
+  - Hàng đợi **Durable Jobs** (tự khôi phục job `leased` sau reload), **Circuit Breaker** theo provider/tích hợp, cảnh báo token 70%/90%/100%, **Wizard 9 bước** + Xóa dữ liệu demo 1 chạm, **Go-Live Checklist 10 mục** chặn chuyển `LIVE`, và Sao lưu/Khôi phục JSON.

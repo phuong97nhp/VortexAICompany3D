@@ -4,7 +4,7 @@ export interface DepartmentMeta {
   id: DepartmentId;
   name: string;
   shortName: string;
-  floor: 1 | 2;
+  floor: 1 | 2 | 3;
   color: string;
   bgTint: string;
   badgeText: string;
@@ -16,7 +16,7 @@ export interface RoomMeta {
   name: string;
   shortName: string;
   department: DepartmentId | 'shared';
-  floor: 1 | 2;
+  floor: 1 | 2 | 3;
   center: [number, number, number];
   size: [number, number]; // width (x), depth (z)
   cameraOffset: [number, number, number];
@@ -24,7 +24,7 @@ export interface RoomMeta {
   subtitle: string;
 }
 
-export const DEPARTMENTS: Record<DepartmentId, DepartmentMeta> = {
+export const DEPARTMENTS: Record<string, DepartmentMeta> = {
   exec: {
     id: 'exec',
     name: 'Ban Giám đốc',
@@ -87,13 +87,23 @@ export const DEPARTMENTS: Record<DepartmentId, DepartmentMeta> = {
   },
   backoffice: {
     id: 'backoffice',
-    name: 'Tài chính – Pháp chế – NS',
-    shortName: 'Tài chính',
+    name: 'Tài chính – Kế toán – NS',
+    shortName: 'Tài chính & NS',
     floor: 2,
     color: '#8B5CF6',
     bgTint: 'rgba(139, 92, 246, 0.14)',
     badgeText: 'Tầng 2',
-    description: 'Kiểm soát ngân sách, hợp đồng pháp lý và nhân sự RBAC.',
+    description: 'CFO, Kế toán tổng hợp kiểm soát ngân sách, chi phí & nhân sự RBAC.',
+  },
+  legal: {
+    id: 'legal',
+    name: 'Phòng Pháp chế',
+    shortName: 'Pháp chế',
+    floor: 2,
+    color: '#7C3AED',
+    bgTint: 'rgba(124, 58, 237, 0.16)',
+    badgeText: 'Tầng 2',
+    description: 'Tra cứu luật VN, soạn hợp đồng, bảo vệ dữ liệu trẻ em & báo cáo pháp lý.',
   },
   reception: {
     id: 'reception',
@@ -105,11 +115,62 @@ export const DEPARTMENTS: Record<DepartmentId, DepartmentMeta> = {
     badgeText: 'Tầng 1',
     description: 'Tiếp đón khách tham quan, phân luồng thông tin vào công ty.',
   },
+  // Tầng 3: Khối Affiliate (Tiếp thị liên kết)
+  aff_exec: {
+    id: 'aff_exec',
+    name: 'Điều hành Affiliate',
+    shortName: 'ĐH Affiliate',
+    floor: 3,
+    color: '#F43F5E',
+    bgTint: 'rgba(244, 63, 94, 0.14)',
+    badgeText: 'Tầng 3',
+    description: 'Affiliate Manager lập mục tiêu tuần/tháng, điều phối liên khối & báo cáo CEO.',
+  },
+  aff_research: {
+    id: 'aff_research',
+    name: 'Nghiên cứu SP & Khách hàng',
+    shortName: 'Săn hàng Win',
+    floor: 3,
+    color: '#14B8A6',
+    bgTint: 'rgba(20, 184, 166, 0.14)',
+    badgeText: 'Tầng 3',
+    description: 'Product Scout x2, Trend Analyst, Audience Researcher & Competitor Analyst.',
+  },
+  aff_creative: {
+    id: 'aff_creative',
+    name: 'Sáng tạo Affiliate & Link',
+    shortName: 'Studio Aff',
+    floor: 3,
+    color: '#FB923C',
+    bgTint: 'rgba(251, 146, 60, 0.14)',
+    badgeText: 'Tầng 3',
+    description: 'Review Writer, Video Script, Landing/SEO & Link Ops quản lý sub_id.',
+  },
+  aff_channel: {
+    id: 'aff_channel',
+    name: 'Kênh & Chuyển đổi Aff',
+    shortName: 'Kênh Aff',
+    floor: 3,
+    color: '#0EA5E9',
+    bgTint: 'rgba(14, 165, 233, 0.14)',
+    badgeText: 'Tầng 3',
+    description: 'Channel Manager, Community Agent & Conversion Optimizer A/B test.',
+  },
+  aff_analytics: {
+    id: 'aff_analytics',
+    name: 'Tuân thủ & Phân tích Aff',
+    shortName: 'Tuân thủ & EPC',
+    floor: 3,
+    color: '#22C55E',
+    bgTint: 'rgba(34, 197, 94, 0.14)',
+    badgeText: 'Tầng 3',
+    description: 'Compliance Agent kiểm soát nhãn liên kết & Affiliate Analyst đo EPC/CR/ROI thật.',
+  },
 };
 
 /**
- * Compact 26m x 18m 2-floor building layout (X in [-13, 13], Z in [-9, 9], corridor Z in [-1.2, 1.2])
- * Floor 1 y = 0, Floor 2 y = 3.8
+ * Compact 26m x 18m 3-floor building layout (X in [-13, 13], Z in [-9, 9], corridor Z in [-1.2, 1.2])
+ * Floor 1 y = 0, Floor 2 y = 3.8, Floor 3 y = 7.6
  */
 export const ROOMS: RoomMeta[] = [
   // Tầng 1 (y = 0)
@@ -159,7 +220,7 @@ export const ROOMS: RoomMeta[] = [
     size: [14.5, 7.8],
     cameraOffset: [14.0, 8.8, 4.2],
     color: '#EAB308',
-    subtitle: 'Tầng 1 · Họp liên phòng ban',
+    subtitle: 'Tầng 1 · Họp liên khối',
   },
   // Tầng 2 (y = 3.8)
   {
@@ -204,22 +265,95 @@ export const ROOMS: RoomMeta[] = [
     shortName: 'Data KPI',
     department: 'data',
     floor: 2,
-    center: [-0.25, 3.8, 5.1],
-    size: [7.5, 7.8],
-    cameraOffset: [6.8, 11.4, 13.0],
+    center: [-0.8, 3.8, 5.1],
+    size: [6.4, 7.8],
+    cameraOffset: [6.0, 11.4, 13.0],
     color: '#3B82F6',
     subtitle: 'Tầng 2 · Màn hình KPI trực tiếp',
   },
   {
     id: 'room-backoffice',
-    name: 'Tài chính – Pháp chế – NS',
-    shortName: 'Tài chính',
+    name: 'Tài chính – Kế toán – NS',
+    shortName: 'Tài chính & NS',
     department: 'backoffice',
     floor: 2,
-    center: [8.25, 3.8, 5.1],
-    size: [9.5, 7.8],
-    cameraOffset: [15.5, 11.8, 13.5],
+    center: [5.5, 3.8, 5.1],
+    size: [6.2, 7.8],
+    cameraOffset: [12.5, 11.8, 13.5],
     color: '#8B5CF6',
-    subtitle: 'Tầng 2 · CFO, Legal, HR',
+    subtitle: 'Tầng 2 · CFO, Kế toán, HR',
+  },
+  {
+    id: 'room-legal',
+    name: 'Phòng Pháp chế',
+    shortName: 'Pháp chế',
+    department: 'legal',
+    floor: 2,
+    center: [10.8, 3.8, 5.1],
+    size: [4.4, 7.8],
+    cameraOffset: [17.5, 11.8, 13.0],
+    color: '#7C3AED',
+    subtitle: 'Tầng 2 · Luật VN, Hợp đồng & DPO',
+  },
+  // Tầng 3 (y = 7.6) — Khối Affiliate
+  {
+    id: 'room-aff-exec',
+    name: 'Điều hành Affiliate',
+    shortName: 'ĐH Affiliate',
+    department: 'aff_exec',
+    floor: 3,
+    center: [-9.0, 7.6, -5.1],
+    size: [8.0, 7.8],
+    cameraOffset: [-1.5, 15.8, 3.5],
+    color: '#F43F5E',
+    subtitle: 'Tầng 3 · Affiliate Manager',
+  },
+  {
+    id: 'room-aff-research',
+    name: 'Phòng Nghiên cứu & Săn Win',
+    shortName: 'Săn hàng Win',
+    department: 'aff_research',
+    floor: 3,
+    center: [-0.5, 7.6, -5.1],
+    size: [9.0, 7.8],
+    cameraOffset: [7.5, 15.8, 4.0],
+    color: '#14B8A6',
+    subtitle: 'Tầng 3 · Xu hướng & Sản phẩm',
+  },
+  {
+    id: 'room-aff-analytics',
+    name: 'Tuân thủ, Phân tích & Chọn hàng',
+    shortName: 'Tuân thủ & EPC',
+    department: 'aff_analytics',
+    floor: 3,
+    center: [8.5, 7.6, -5.1],
+    size: [9.0, 7.8],
+    cameraOffset: [16.5, 15.8, 4.0],
+    color: '#22C55E',
+    subtitle: 'Tầng 3 · Hoa hồng thật & Họp sáng',
+  },
+  {
+    id: 'room-aff-creative',
+    name: 'Studio Sáng tạo Affiliate',
+    shortName: 'Studio Aff',
+    department: 'aff_creative',
+    floor: 3,
+    center: [-6.5, 7.6, 5.1],
+    size: [13.0, 7.8],
+    cameraOffset: [2.0, 15.8, 13.8],
+    color: '#FB923C',
+    subtitle: 'Tầng 3 · Studio quay & Link Ops',
+  },
+  {
+    id: 'room-aff-channel',
+    name: 'Phòng Kênh & Chuyển đổi',
+    shortName: 'Kênh Aff',
+    department: 'aff_channel',
+    floor: 3,
+    center: [6.5, 7.6, 5.1],
+    size: [13.0, 7.8],
+    cameraOffset: [15.0, 15.8, 13.8],
+    color: '#0EA5E9',
+    subtitle: 'Tầng 3 · Đa kênh & A/B CRO',
   },
 ];

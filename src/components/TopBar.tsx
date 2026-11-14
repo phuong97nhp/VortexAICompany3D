@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Activity,
   Bell,
   Bot,
   ChevronDown,
@@ -261,6 +262,20 @@ export function TopBar({
           title="Đổi giao diện Sáng / Tối"
         >
           {settings.theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('health')}
+          className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium whitespace-nowrap cursor-pointer ${
+            settings.envMode === 'live'
+              ? 'border-emerald-500/40 text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20'
+              : 'border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+          title="Mở Bảng Sức khỏe 24/7, Go-Live Checklist & Sao lưu"
+        >
+          <Activity className="w-3.5 h-3.5" />
+          <span className="hidden xl:inline">24/7</span>
         </button>
 
         <button

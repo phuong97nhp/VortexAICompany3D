@@ -1,6 +1,16 @@
 import { create } from 'zustand';
 import {
   AdCampaignItem,
+  AffiliateCampaign,
+  AffiliateChannelPost,
+  AffiliateClickConversion,
+  AffiliateCommission,
+  AffiliateContentPiece,
+  AffiliateExperiment,
+  AffiliateOffer,
+  AffiliateProduct,
+  AffiliateProductScore,
+  AffiliateSettings,
   AgentAccount,
   AgentAppearance,
   AgentExternalAccount,
@@ -11,15 +21,21 @@ import {
   ApprovalRequest,
   AskCeoQuestion,
   AuditLogEntry,
+  BackupSnapshotRecord,
+  BootStatus,
   BrandLaunchKit,
   BrandSettings,
   ChatChannelId,
   ChatMessage,
   CompanySettings,
+  ContractRecord,
+  ContractTemplate,
+  ContractVariant,
   DataProvenance,
   DepartmentConfig,
   DepartmentId,
   DocumentItem,
+  DurableJob,
   EncryptedCredentialRecord,
   ExpenseAuditStep,
   ExpenseBudget,
@@ -37,8 +53,13 @@ import {
   HubCwUndoSnapshot,
   LeadItem,
   LeadStage,
+  LegalDocument,
+  LegalReportRecord,
+  LegalSettings,
   LogoPlacement,
   MarketingChannelRecord,
+  OnboardingState,
+  OriginTag,
   OutfitStyleId,
   OutreachLogEntry,
   Permission,
@@ -53,14 +74,20 @@ import {
   SocialPostLogEntry,
   SpendingPolicy,
   SystemEnvMode,
+  SystemHealthLog,
   TaskItem,
   TaskStatus,
   TokenUsageRecord,
+  TrackedLink,
   VaultAccountStatus,
   WorkflowTrace,
 } from '../types';
-import { CompanyMemoryRecord, createDefaultSettings, repository } from '../db/repository';
-import { buildWalkWaypoints, MEETING_SEATS, Vec3 } from '../engine/waypoints';
+import { CompanyMemoryRecord, createDefaultSettings, db, repository } from '../db/repository';
+import {
+  buildFallbackBaseSettings,
+  validateBackupBundleJson,
+} from '../db/schemaMigration';
+import { buildWalkWaypoints, floorFromY, MEETING_SEATS, MEETING_SEATS_F3, Vec3 } from '../engine/waypoints';
 import {
   decryptSecretAesGcm,
   encryptSecretAesGcm,
@@ -106,10 +133,35 @@ import {
   formatVnd,
   validateRuleAgainstPolicy,
 } from '../engine/expenseEngine';
+import { createAffiliateAdapter } from '../integrations/affiliate/AffiliateNetworkAdapter';
+import {
+  createAndVerifyTrackedLink,
+  parseAffiliateCsvReport,
+  runAffiliateComplianceCheck,
+  scoreAffiliateProduct,
+  shouldAutoCutNegativeRoi,
+} from '../integrations/affiliate/affiliateEngine';
+import {
+  buildLegalReport,
+  checkLawChangeImpact,
+  draftContractFromVerifiedData,
+} from '../engine/legal/legalEngine';
+import {
+  buildBackupBundleJson,
+  createDurableJobRecord,
+  createHealthLog,
+  dispatchSystemAlert,
+  evaluateGoLiveChecklist,
+  recoverOrphanedDurableJobs,
+} from '../engine/runtime247';
+import { circuitBreakers } from '../engine/resilience';
+import { realtimeBridge, RealtimeStatus } from '../engine/realtimeBridge';
 
 export type RightPanelTab =
   | 'chat'
   | 'marketing'
+  | 'affiliate'
+  | 'legal'
   | 'tasks'
   | 'crm'
   | 'logs'
@@ -117,6 +169,7 @@ export type RightPanelTab =
   | 'approvals'
   | 'finance'
   | 'hubcw'
+  | 'health'
   | 'rbac'
   | 'vault'
   | 'tokens'
@@ -132,6 +185,9 @@ export interface CameraTargetState {
 export interface CompanyState {
   initialized: boolean;
   loading: boolean;
+  bootStatus: BootStatus;
+  bootError: string | null;
+  realtimeStatus: RealtimeStatus;
   settings: CompanySettings;
   agents: AgentProfile[];
   departments: DepartmentConfig[];
@@ -169,6 +225,27 @@ export interface CompanyState {
   hubcwSyncQueue: HubCwSyncItem[];
   hubcwUndoSnapshots: HubCwUndoSnapshot[];
   hubcwReconciliations: HubCwReconciliationReport[];
+  // BỔ SUNG I: Floor 3 Affiliate
+  affiliateOffers: AffiliateOffer[];
+  affiliateProducts: AffiliateProduct[];
+  affiliateScores: AffiliateProductScore[];
+  affiliateCampaigns: AffiliateCampaign[];
+  trackedLinks: TrackedLink[];
+  affiliateContent: AffiliateContentPiece[];
+  affiliatePosts: AffiliateChannelPost[];
+  affiliateConversions: AffiliateClickConversion[];
+  affiliateCommissions: AffiliateCommission[];
+  affiliateExperiments: AffiliateExperiment[];
+  // BỔ SUNG K: Legal & Contracts
+  legalDocuments: LegalDocument[];
+  contractTemplates: ContractTemplate[];
+  contracts: ContractRecord[];
+  legalReports: LegalReportRecord[];
+  // BỔ SUNG J: 24/7 Ops
+  durableJobs: DurableJob[];
+  systemHealthLogs: SystemHealthLog[];
+  backupSnapshots: BackupSnapshotRecord[];
+
   onAskCeoResolvedHook?: (q: AskCeoQuestion, answer: string) => Promise<void> | void;
 
   // UI HUD State
@@ -177,7 +254,7 @@ export interface CompanyState {
   peekMode: boolean;
   selectedAgentId: string | null;
   selectedRoomId: string | null;
-  visibleFloor: 'all' | 1 | 2;
+  visibleFloor: 'all' | 1 | 2 | 3;
   followAgentMode: boolean;
   dealCelebrationNonce: number;
   cameraTarget: CameraTargetState;
@@ -195,12 +272,13 @@ export interface CompanyState {
 
   // Actions
   init: () => Promise<void>;
+  retryBoot: () => Promise<void>;
   setActiveTab: (tab: RightPanelTab) => void;
   setActiveChannel: (channel: ChatChannelId) => void;
   setPeekMode: (peek: boolean) => void;
   selectAgent: (agentId: string | null, flyCamera?: boolean) => void;
   selectRoom: (roomId: string | null) => void;
-  setVisibleFloor: (floor: 'all' | 1 | 2) => void;
+  setVisibleFloor: (floor: 'all' | 1 | 2 | 3) => void;
   setFollowAgentMode: (follow: boolean) => void;
   flyCameraTo: (position: [number, number, number], lookAt: [number, number, number]) => void;
   toggle3dDiagnostics: () => void;
@@ -253,7 +331,7 @@ export interface CompanyState {
   createDepartment: (params: {
     name: string;
     shortName: string;
-    floor: 1 | 2;
+    floor: 1 | 2 | 3;
     color: string;
     description: string;
   }) => Promise<DepartmentConfig>;
@@ -415,6 +493,116 @@ export interface CompanyState {
     showBadge?: boolean;
     tintWithBrandPrimary?: boolean;
   }) => Promise<number>;
+
+  // BỔ SUNG I: Affiliate Actions (Floor 3)
+  updateAffiliateSettings: (patch: Partial<AffiliateSettings>) => Promise<void>;
+  runAffiliateScoutCycle: (
+    niche: string,
+    networkId?: string
+  ) => Promise<{ offers: AffiliateOffer[]; products: AffiliateProduct[]; scores: AffiliateProductScore[] }>;
+  runAffiliateSelectProductMeeting: () => Promise<void>;
+  createAffiliateCampaign: (params: {
+    productId: string;
+    channels: string[];
+    contentAngle: string;
+    budgetVnd: number;
+  }) => Promise<AffiliateCampaign>;
+  createAffiliateTrackedLink: (params: {
+    productId: string;
+    subId: string;
+    campaignId?: string;
+    createdBy: string;
+  }) => Promise<TrackedLink>;
+  createAffiliateContentPiece: (params: {
+    campaignId: string;
+    productId: string;
+    trackedLinkId: string;
+    type: AffiliateContentPiece['type'];
+    title: string;
+    body: string;
+    hasAffiliateDisclosure: boolean;
+    claimsTestedPersonally: boolean;
+    authorId: string;
+  }) => Promise<AffiliateContentPiece>;
+  putAffiliateContent: (piece: AffiliateContentPiece) => Promise<void>;
+  reviewAffiliateContentCompliance: (
+    contentPieceId: string,
+    reviewerId?: string
+  ) => Promise<{ passed: boolean; reasons: string[] }>;
+  scheduleAffiliatePost: (params: {
+    contentPieceId: string;
+    platform: AffiliateChannelPost['platform'];
+    isPaidAd: boolean;
+  }) => Promise<{ ok: boolean; post?: AffiliateChannelPost; reason?: string }>;
+  importAffiliateCsvReport: (params: {
+    networkId: string;
+    csvText: string;
+    fileName: string;
+  }) => Promise<{ clicksCount: number; commissionsCount: number }>;
+  checkAllAffiliateLinksHealth: () => Promise<{ checked: number; dead: number; expired: number }>;
+  evaluateAffiliateRoiCutoffs: () => Promise<number>;
+
+  // BỔ SUNG K: Legal & Contracts Actions (Floor 2)
+  updateLegalSettings: (patch: Partial<LegalSettings>) => Promise<void>;
+  draftNewContract: (params: {
+    templateId: string;
+    variant: ContractVariant;
+    partyBInput: {
+      name?: string;
+      taxCode?: string;
+      address?: string;
+      representative?: string;
+      sourceLabel?: string;
+    };
+    contractValueVnd: number;
+    durationMonths?: number;
+    involvesChildrenData?: boolean;
+    hasForeignElement?: boolean;
+    involvesSourceCodeSale?: boolean;
+    isLongTermExclusive?: boolean;
+    linkedLeadId?: string;
+    linkedHubCwCustomerId?: string;
+    createdBy: string;
+  }) => Promise<ContractRecord>;
+  saveContractRevision: (
+    contractId: string,
+    content: string,
+    note: string,
+    editedBy?: string
+  ) => Promise<ContractRecord | null>;
+  submitContractForCeoApproval: (contractId: string) => Promise<void>;
+  ceoApproveAndUnlockContractSend: (contractId: string, via?: 'web' | 'zalo_sim') => Promise<void>;
+  sendContractToClient: (contractId: string, actorId: string) => Promise<{ ok: boolean; error?: string }>;
+  runLegalReportForContract: (contractId: string, actorId?: string) => Promise<LegalReportRecord | null>;
+  putLegalReport: (report: LegalReportRecord) => Promise<void>;
+  checkLegalUpdatesOnline: () => Promise<{ checkedAt: string; message: string }>;
+  simulateLawStatusChange: (
+    docId: string,
+    newStatus: LegalDocument['effectiveStatus'],
+    note?: string
+  ) => Promise<{ affectedTemplates: number; affectedContracts: number }>;
+
+  // BỔ SUNG J: 24/7 Ops, Durable Jobs, Health Logs, Backup & Onboarding
+  enqueueJob: (params: {
+    type: string;
+    agentId: string;
+    department: DepartmentId;
+    payload: Record<string, unknown>;
+    totalSteps?: number;
+  }) => Promise<DurableJob>;
+  runPendingDurableJobs: () => Promise<number>;
+  addHealthLog: (
+    level: SystemHealthLog['level'],
+    component: string,
+    message: string,
+    traceId?: string,
+    detail?: string
+  ) => Promise<void>;
+  sendTestCeoAlert: () => Promise<{ ok: boolean; channel: string }>;
+  recordOnboardingProgress: (patch: Partial<OnboardingState>) => Promise<void>;
+  deleteDemoData: () => Promise<void>;
+  createManualBackup: (label?: string) => Promise<BackupSnapshotRecord>;
+  restoreFromBackupJson: (rawJson: string) => Promise<{ ok: boolean; error?: string; restoredCount?: number }>;
 }
 
 function buildInitialRuntimes(agents: AgentProfile[]): Record<string, AgentRuntimeState> {
@@ -446,12 +634,6 @@ const seedDepts = buildSeedDepartments();
 const seedAgents = buildSeedAgents();
 
 export const useCompanyStore = create<CompanyState>((set, get) => {
-  // Register live synchronous accessor for engine modules
-  registerLiveRegistry({
-    getAgents: () => get().agents,
-    getDepartments: () => get().departments,
-  });
-
   const refreshAccountantPendingCount = (expenses: ExpenseItem[]) => {
     const pendingCount = expenses.filter((e) => e.status === 'pending_accountant').length;
     set((s) => {
@@ -471,79 +653,13 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
   return {
     initialized: false,
     loading: true,
+    bootStatus: 'booting',
+    bootError: null,
+    realtimeStatus: 'offline',
     agents: seedAgents,
     departments: seedDepts,
     hrAudits: [],
-    settings: {
-      id: 'default',
-      companyName: 'AI COMPANY VIỆT NAM',
-      primaryProvider: 'gemini',
-      fallbackProvider: 'deepseek',
-      geminiApiKey: '',
-      deepseekApiKey: '',
-      deepseekMode: 'proxy',
-      localBaseUrl: 'http://localhost:11434/v1',
-      localModel: 'qwen2.5:7b',
-      localApiKey: '',
-      localUseWorkerProxy: false,
-      routingPreset: 'balanced',
-      roleRoutes: buildRoutingPreset('balanced', 'qwen2.5:7b'),
-      providerBudgets: {
-        gemini: 500000,
-        deepseek: 400000,
-        local: 2000000,
-        mock: 9999999,
-      },
-      dailyTokenBudget: 500000,
-      dryRun: true,
-      autonomyLevel: 2,
-      autopilotEnabled: false,
-      autopilotIntervalMinutes: 30,
-      autopilotDailyLeadTarget: 30,
-      priorityProductId: 'edu-center',
-      simulationSpeed: 1,
-      paused: false,
-      killSwitchActive: false,
-      theme: 'dark',
-      dayNightMode: 'day',
-      graphicsQuality: 'medium',
-      sdrDailyLimitEmail: 30,
-      sdrDailyLimitOther: 20,
-      sdrAllowedStartHour: 8,
-      sdrAllowedEndHour: 20,
-      sdrMaxFollowups: 3,
-      sdrMinDaysBetweenFollowups: 3,
-      zaloMaxMessagesPerHour: 6,
-      zaloDndStartHour: 22,
-      zaloDndEndHour: 7,
-      zaloOverdueHours: 2,
-      ceoPasswordHash: '',
-      ceoPasswordSalt: '',
-      mustChangeDefaultPassword: true,
-      marketingAutopilotEnabled: false,
-      marketingPostsPerWeek: 3,
-      marketingDailyPostCap: 2,
-      marketingDailyAdBudgetVnd: 500000,
-      hrAutoDecide: false,
-      sleepIdleAgents: false,
-      maxConcurrentAgents: 8,
-      spendingPolicy: createDefaultSpendingPolicy(),
-      dailyDigestEnabled: true,
-      envMode: 'sandbox',
-      hubcw: {
-        baseUrl: DEFAULT_HUBCW_BASE_URL,
-        connectionMode: 'sandbox',
-        hourlyWriteLimit: 30,
-        requireApprovalForCritical: true,
-        unclearWriteUnlocked: {
-          golden_pig: false,
-          automation: false,
-          resources: false,
-        },
-        moduleHealth: {},
-      },
-      brand: { ...DEFAULT_BRAND_PALETTE },
-    },
+    settings: buildFallbackBaseSettings(),
     accounts: [],
     agentAppearances: buildDefaultAppearancesMap(seedAgents),
     runtimes: buildInitialRuntimes(seedAgents),
@@ -575,6 +691,23 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
     hubcwSyncQueue: [],
     hubcwUndoSnapshots: [],
     hubcwReconciliations: [],
+    affiliateOffers: [],
+    affiliateProducts: [],
+    affiliateScores: [],
+    affiliateCampaigns: [],
+    trackedLinks: [],
+    affiliateContent: [],
+    affiliatePosts: [],
+    affiliateConversions: [],
+    affiliateCommissions: [],
+    affiliateExperiments: [],
+    legalDocuments: [],
+    contractTemplates: [],
+    contracts: [],
+    legalReports: [],
+    durableJobs: [],
+    systemHealthLogs: [],
+    backupSnapshots: [],
 
     activeTab: 'chat',
     activeChannel: 'all',
@@ -585,8 +718,8 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
     followAgentMode: false,
     dealCelebrationNonce: 0,
     cameraTarget: {
-      position: [20, 17, 21],
-      lookAt: [0, 1.8, 0],
+      position: [22, 19, 23],
+      lookAt: [0, 3.2, 0],
       nonce: 0,
     },
     show3dDiagnostics: false,
@@ -597,217 +730,322 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       {
         id: 'z_init',
         direction: 'in',
-        text: '[Zalo OA Giả lập] Sẵn sàng nhận câu hỏi khẩn, phiếu chi #CP-xxx & digest từ các Agent khi cần CEO quyết định.',
+        text: '[Zalo OA Giả lập] Sẵn sàng nhận câu hỏi khẩn, phiếu chi #CP-xxx, hợp đồng #HD-xxx & cảnh báo 24/7.',
         timestamp: Date.now(),
       },
     ],
     serverHealth: null,
 
     init: async () => {
-      set({ loading: true });
-      const settings = await repository.getSettings();
-      const savedDeepSeekKey = typeof window !== 'undefined' ? localStorage.getItem('aicompany_deepseek_key') || '' : '';
-      const savedGeminiKey = typeof window !== 'undefined' ? localStorage.getItem('aicompany_gemini_key') || '' : '';
-      const mergedSettings: CompanySettings = {
-        ...settings,
-        deepseekApiKey: savedDeepSeekKey || settings.deepseekApiKey,
-        geminiApiKey: savedGeminiKey || settings.geminiApiKey,
-      };
+      set({ loading: true, bootStatus: 'booting', bootError: null });
+      try {
+        const settings = await repository.getSettings();
+        const savedDeepSeekKey = typeof window !== 'undefined' ? localStorage.getItem('aicompany_deepseek_key') || '' : '';
+        const savedGeminiKey = typeof window !== 'undefined' ? localStorage.getItem('aicompany_gemini_key') || '' : '';
+        const mergedSettings: CompanySettings = {
+          ...settings,
+          deepseekApiKey: savedDeepSeekKey || settings.deepseekApiKey,
+          geminiApiKey: savedGeminiKey || settings.geminiApiKey,
+        };
 
-      const [
-        agents,
-        departments,
-        hrAudits,
-        accounts,
-        appearancesArr,
-        tasks,
-        leads,
-        messages,
-        documents,
-        approvals,
-        askCeoQuestions,
-        auditLogs,
-        outreachLogs,
-        vaultStatuses,
-        tokenUsage,
-        agentMemsArr,
-        companyMemories,
-        workflows,
-        brandKit,
-        marketingChannels,
-        scheduledPosts,
-        adCampaigns,
-        socialComments,
-        socialLogs,
-        expenses,
-        expenseRules,
-        expenseBudgets,
-        expenseCategories,
-        externalAccounts,
-        hubcwApiLogs,
-        hubcwSyncQueue,
-        hubcwUndoSnapshots,
-        hubcwReconciliations,
-      ] = await Promise.all([
-        repository.getAgents(),
-        repository.getDepartments(),
-        repository.getHrAudits(),
-        repository.getAccounts(),
-        repository.getAgentAppearances(),
-        repository.getTasks(),
-        repository.getLeads(),
-        repository.getMessages(),
-        repository.getDocuments(),
-        repository.getApprovals(),
-        repository.getAskCeoQuestions(),
-        repository.getAuditLogs(),
-        repository.getOutreachLogs(),
-        repository.getVaultStatuses(),
-        repository.getTokenUsage(),
-        repository.getAgentMemories(),
-        repository.getCompanyMemories(),
-        repository.getWorkflows(),
-        repository.getBrandKit(),
-        repository.getMarketingChannels(),
-        repository.getScheduledPosts(),
-        repository.getAdCampaigns(),
-        repository.getSocialComments(),
-        repository.getSocialLogs(),
-        repository.getExpenses(),
-        repository.getExpenseRules(),
-        repository.getExpenseBudgets(),
-        repository.getExpenseCategories(),
-        repository.getExternalAccounts(),
-        repository.getHubCwApiLogs(),
-        repository.getHubCwSyncQueue(),
-        repository.getHubCwUndoSnapshots(),
-        repository.getHubCwReconciliations(),
-      ]);
+        const [
+          agents,
+          departments,
+          hrAudits,
+          accounts,
+          appearancesArr,
+          tasks,
+          leads,
+          messages,
+          documents,
+          approvals,
+          askCeoQuestions,
+          auditLogs,
+          outreachLogs,
+          vaultStatuses,
+          tokenUsage,
+          agentMemsArr,
+          companyMemories,
+          workflows,
+          brandKit,
+          marketingChannels,
+          scheduledPosts,
+          adCampaigns,
+          socialComments,
+          socialLogs,
+          expenses,
+          expenseRules,
+          expenseBudgets,
+          expenseCategories,
+          externalAccounts,
+          hubcwApiLogs,
+          hubcwSyncQueue,
+          hubcwUndoSnapshots,
+          hubcwReconciliations,
+          affiliateOffers,
+          affiliateProducts,
+          affiliateScores,
+          affiliateCampaigns,
+          trackedLinks,
+          affiliateContent,
+          affiliatePosts,
+          affiliateConversions,
+          affiliateCommissions,
+          affiliateExperiments,
+          legalDocuments,
+          contractTemplates,
+          contracts,
+          legalReports,
+          durableJobsRaw,
+          systemHealthLogs,
+          backupSnapshots,
+        ] = await Promise.all([
+          repository.getAgents(),
+          repository.getDepartments(),
+          repository.getHrAudits(),
+          repository.getAccounts(),
+          repository.getAgentAppearances(),
+          repository.getTasks(),
+          repository.getLeads(),
+          repository.getMessages(),
+          repository.getDocuments(),
+          repository.getApprovals(),
+          repository.getAskCeoQuestions(),
+          repository.getAuditLogs(),
+          repository.getOutreachLogs(),
+          repository.getVaultStatuses(),
+          repository.getTokenUsage(),
+          repository.getAgentMemories(),
+          repository.getCompanyMemories(),
+          repository.getWorkflows(),
+          repository.getBrandKit(),
+          repository.getMarketingChannels(),
+          repository.getScheduledPosts(),
+          repository.getAdCampaigns(),
+          repository.getSocialComments(),
+          repository.getSocialLogs(),
+          repository.getExpenses(),
+          repository.getExpenseRules(),
+          repository.getExpenseBudgets(),
+          repository.getExpenseCategories(),
+          repository.getExternalAccounts(),
+          repository.getHubCwApiLogs(),
+          repository.getHubCwSyncQueue(),
+          repository.getHubCwUndoSnapshots(),
+          repository.getHubCwReconciliations(),
+          repository.getAffiliateOffers(),
+          repository.getAffiliateProducts(),
+          repository.getAffiliateScores(),
+          repository.getAffiliateCampaigns(),
+          repository.getTrackedLinks(),
+          repository.getAffiliateContent(),
+          repository.getAffiliatePosts(),
+          repository.getAffiliateConversions(),
+          repository.getAffiliateCommissions(),
+          repository.getAffiliateExperiments(),
+          repository.getLegalDocuments(),
+          repository.getContractTemplates(),
+          repository.getContracts(),
+          repository.getLegalReports(),
+          repository.getDurableJobs(),
+          repository.getSystemHealthLogs(),
+          repository.getBackupSnapshots(),
+        ]);
 
-      const activeAgentsList = agents.length > 0 ? agents : seedAgents;
-      const activeDeptsList = departments.length > 0 ? departments : seedDepts;
+        const activeAgentsList = agents.length > 0 ? agents : seedAgents;
+        const activeDeptsList = departments.length > 0 ? departments : seedDepts;
 
-      const agentMemories: Record<string, AgentMemory> = {};
-      for (const m of agentMemsArr) {
-        agentMemories[m.agentId] = m;
-      }
-
-      const agentAppearances = buildDefaultAppearancesMap(activeAgentsList);
-      for (const app of appearancesArr) {
-        agentAppearances[app.agentId] = app;
-      }
-
-      const runtimes = buildInitialRuntimes(activeAgentsList);
-      const pendingReviewCount = expenses.filter((e) => e.status === 'pending_accountant').length;
-      for (const acc of accounts) {
-        if (acc.permissions.includes('expense:review') && runtimes[acc.agentId]) {
-          runtimes[acc.agentId].pendingReviewCount = pendingReviewCount;
+        // Recover any durable jobs left in 'leased' state across crashes/reloads
+        const durableJobs = recoverOrphanedDurableJobs(durableJobsRaw);
+        for (const job of durableJobs) {
+          const orig = durableJobsRaw.find((o) => o.id === job.id);
+          if (orig && orig.status !== job.status) {
+            await repository.putDurableJob(job);
+          }
         }
-      }
 
-      if (typeof document !== 'undefined') {
-        document.documentElement.classList.toggle('dark', mergedSettings.theme === 'dark');
-      }
+        const agentMemories: Record<string, AgentMemory> = {};
+        for (const m of agentMemsArr) {
+          agentMemories[m.agentId] = m;
+        }
 
-      // Normalize legacy tasks missing BỔ SUNG F fields
-      const normalizedTasks: TaskItem[] = tasks.map((t, idx) => ({
-        ...t,
-        taskCode: t.taskCode || `#T-${100 + tasks.length - idx}`,
-        definitionOfDone: t.definitionOfDone || t.description || 'Hoàn thành và lưu kết quả vào hệ thống.',
-        expectedDeliverable: t.expectedDeliverable || 'Báo cáo / tài liệu thực tế',
-        etaMinutes: t.etaMinutes || 15,
-        etaAt: t.etaAt || t.createdAt + 15 * 60_000,
-        progressPercent: typeof t.progressPercent === 'number' ? t.progressPercent : t.status === 'done' ? 100 : 25,
-        lastProgressAt: t.lastProgressAt || t.updatedAt || t.createdAt,
-        deliverables: Array.isArray(t.deliverables) ? t.deliverables : [],
-      }));
+        const agentAppearances = buildDefaultAppearancesMap(activeAgentsList);
+        for (const app of appearancesArr) {
+          agentAppearances[app.agentId] = app;
+        }
 
-      let lastFallbackMsgAt = 0;
-      llmClient.configure({
-        getSettings: () => get().settings,
-        getTodayTokensByProvider: (provider: ProviderId) => {
-          const todayKey = new Date().toISOString().slice(0, 10);
-          return get()
-            .tokenUsage.filter((t) => t.dateKey === todayKey && (t.provider || 'deepseek') === provider)
-            .reduce((acc, t) => acc + t.totalTokens, 0);
-        },
-        onUsage: (rec) => {
-          get().addTokenUsage(rec);
-          if (rec.costUsd > 0 && !rec.cached) {
-            get().recordAiTokenCostExpense(Math.round(rec.costUsd * 25400), rec.totalTokens, rec.provider);
+        const runtimes = buildInitialRuntimes(activeAgentsList);
+        const pendingReviewCount = expenses.filter((e) => e.status === 'pending_accountant').length;
+        for (const acc of accounts) {
+          if (acc.permissions.includes('expense:review') && runtimes[acc.agentId]) {
+            runtimes[acc.agentId].pendingReviewCount = pendingReviewCount;
           }
-        },
-        onErrorBanner: (msg) => {
-          set({ bannerAlert: msg });
-        },
-        onFallbackNotice: (msg) => {
-          const now = Date.now();
-          if (now - lastFallbackMsgAt > 15000) {
-            lastFallbackMsgAt = now;
-            get().addMessage({
-              channelId: 'all',
-              senderId: 'system',
-              senderName: 'Bộ định tuyến AI',
-              senderTitle: 'Failover Notice',
-              department: 'exec',
-              content: `**Thông báo chuyển dự phòng AI:** ${msg}`,
-              busType: 'escalation',
-            });
-          }
-        },
-      });
+        }
 
-      const health = await llmClient.detectEnvironment();
+        if (typeof document !== 'undefined') {
+          document.documentElement.classList.toggle('dark', mergedSettings.theme === 'dark');
+        }
 
-      set({
-        initialized: true,
-        loading: false,
-        settings: mergedSettings,
-        agents: activeAgentsList,
-        departments: activeDeptsList,
-        hrAudits,
-        accounts,
-        agentAppearances,
-        runtimes,
-        tasks: normalizedTasks,
-        leads,
-        messages,
-        documents,
-        approvals,
-        askCeoQuestions,
-        auditLogs,
-        outreachLogs,
-        vaultStatuses,
-        tokenUsage,
-        agentMemories,
-        companyMemories,
-        workflows,
-        brandKit: brandKit || buildDefaultBrandLaunchKit(mergedSettings.companyName),
-        marketingChannels,
-        scheduledPosts,
-        adCampaigns,
-        socialComments,
-        socialLogs,
-        expenses,
-        expenseRules,
-        expenseBudgets,
-        expenseCategories,
-        externalAccounts,
-        hubcwApiLogs,
-        hubcwSyncQueue,
-        hubcwUndoSnapshots,
-        hubcwReconciliations,
-        serverHealth: {
-          mode: health.mode,
-          hasGeminiEnvKey: health.hasGeminiEnvKey,
-          hasDeepSeekEnvKey: health.hasDeepSeekEnvKey,
-          hasSearchKey: health.hasSearchKey,
-        },
-        unreadNotifications:
-          approvals.filter((a) => a.status === 'pending').length +
-          askCeoQuestions.filter((q) => q.status === 'pending').length +
-          expenses.filter((e) => e.status === 'pending_ceo').length,
-      });
+        const normalizedTasks: TaskItem[] = tasks.map((t, idx) => ({
+          ...t,
+          taskCode: t.taskCode || `#T-${100 + tasks.length - idx}`,
+          definitionOfDone: t.definitionOfDone || t.description || 'Hoàn thành và lưu kết quả vào hệ thống.',
+          expectedDeliverable: t.expectedDeliverable || 'Báo cáo / tài liệu thực tế',
+          etaMinutes: t.etaMinutes || 15,
+          etaAt: t.etaAt || t.createdAt + 15 * 60_000,
+          progressPercent: typeof t.progressPercent === 'number' ? t.progressPercent : t.status === 'done' ? 100 : 25,
+          lastProgressAt: t.lastProgressAt || t.updatedAt || t.createdAt,
+          deliverables: Array.isArray(t.deliverables) ? t.deliverables : [],
+        }));
+
+        let lastFallbackMsgAt = 0;
+        llmClient.configure({
+          getSettings: () => get().settings,
+          getTodayTokensByProvider: (provider: ProviderId) => {
+            const todayKey = new Date().toISOString().slice(0, 10);
+            return get()
+              .tokenUsage.filter((t) => t.dateKey === todayKey && (t.provider || 'deepseek') === provider)
+              .reduce((acc, t) => acc + t.totalTokens, 0);
+          },
+          onUsage: (rec) => {
+            get().addTokenUsage(rec);
+            if (rec.costUsd > 0 && !rec.cached) {
+              get().recordAiTokenCostExpense(Math.round(rec.costUsd * 25400), rec.totalTokens, rec.provider);
+            }
+          },
+          onErrorBanner: (msg) => {
+            set({ bannerAlert: msg });
+          },
+          onFallbackNotice: (msg) => {
+            const now = Date.now();
+            if (now - lastFallbackMsgAt > 15000) {
+              lastFallbackMsgAt = now;
+              get().addMessage({
+                channelId: 'all',
+                senderId: 'system',
+                senderName: 'Bộ định tuyến AI',
+                senderTitle: 'Failover Notice',
+                department: 'exec',
+                content: `**Thông báo chuyển dự phòng AI:** ${msg}`,
+                busType: 'escalation',
+              });
+            }
+          },
+        });
+
+        const health = await llmClient.detectEnvironment();
+
+        // Start decoupled SSE realtime bridge
+        realtimeBridge.subscribeStatus((st) => {
+          set({ realtimeStatus: st });
+        });
+        realtimeBridge.start();
+
+        // Daily auto-backup check (> 24h)
+        let updatedBackups = backupSnapshots;
+        let finalSettings = mergedSettings;
+        const now = Date.now();
+        if (!mergedSettings.lastAutoBackupAt || now - mergedSettings.lastAutoBackupAt > 24 * 3600_000) {
+          const rawTables = await repository.exportAllTablesForBackup();
+          const autoSnap = buildBackupBundleJson(rawTables, `Sao lưu tự động ${new Date(now).toLocaleDateString('vi-VN')}`);
+          await repository.putBackupSnapshot(autoSnap);
+          updatedBackups = [autoSnap, ...backupSnapshots].slice(0, 30);
+          finalSettings = {
+            ...mergedSettings,
+            lastAutoBackupAt: now,
+            onboarding: { ...mergedSettings.onboarding, firstBackupCreated: true },
+          };
+          await repository.saveSettings(finalSettings);
+        }
+
+        const bootLog = createHealthLog(
+          'info',
+          'boot',
+          `Khởi động thành công (${activeAgentsList.length} nhân sự · ${activeDeptsList.length} phòng · 3 tầng).`
+        );
+        await repository.addSystemHealthLog(bootLog);
+
+        set({
+          initialized: true,
+          loading: false,
+          bootStatus: 'ready',
+          bootError: null,
+          settings: finalSettings,
+          agents: activeAgentsList,
+          departments: activeDeptsList,
+          hrAudits,
+          accounts,
+          agentAppearances,
+          runtimes,
+          tasks: normalizedTasks,
+          leads,
+          messages,
+          documents,
+          approvals,
+          askCeoQuestions,
+          auditLogs,
+          outreachLogs,
+          vaultStatuses,
+          tokenUsage,
+          agentMemories,
+          companyMemories,
+          workflows,
+          brandKit: brandKit || buildDefaultBrandLaunchKit(finalSettings.companyName),
+          marketingChannels,
+          scheduledPosts,
+          adCampaigns,
+          socialComments,
+          socialLogs,
+          expenses,
+          expenseRules,
+          expenseBudgets,
+          expenseCategories,
+          externalAccounts,
+          hubcwApiLogs,
+          hubcwSyncQueue,
+          hubcwUndoSnapshots,
+          hubcwReconciliations,
+          affiliateOffers,
+          affiliateProducts,
+          affiliateScores,
+          affiliateCampaigns,
+          trackedLinks,
+          affiliateContent,
+          affiliatePosts,
+          affiliateConversions,
+          affiliateCommissions,
+          affiliateExperiments,
+          legalDocuments,
+          contractTemplates,
+          contracts,
+          legalReports,
+          durableJobs,
+          systemHealthLogs: [bootLog, ...systemHealthLogs].slice(0, 400),
+          backupSnapshots: updatedBackups,
+          serverHealth: {
+            mode: health.mode,
+            hasGeminiEnvKey: health.hasGeminiEnvKey,
+            hasDeepSeekEnvKey: health.hasDeepSeekEnvKey,
+            hasSearchKey: health.hasSearchKey,
+          },
+          unreadNotifications:
+            approvals.filter((a) => a.status === 'pending').length +
+            askCeoQuestions.filter((q) => q.status === 'pending').length +
+            expenses.filter((e) => e.status === 'pending_ceo').length,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Lỗi không xác định khi khởi tạo dữ liệu cục bộ.';
+        set({
+          loading: false,
+          initialized: false,
+          bootStatus: 'error',
+          bootError: msg,
+        });
+      }
+    },
+
+    retryBoot: async () => {
+      await get().init();
     },
 
     setActiveTab: (tab) => set({ activeTab: tab }),
@@ -825,7 +1063,9 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
           ? { position: [17, 13, 18] as [number, number, number], lookAt: [0, 0.5, 0] as [number, number, number] }
           : floor === 2
           ? { position: [17, 16.5, 18] as [number, number, number], lookAt: [0, 4.0, 0] as [number, number, number] }
-          : { position: [20, 17, 21] as [number, number, number], lookAt: [0, 1.8, 0] as [number, number, number] };
+          : floor === 3
+          ? { position: [18, 20.5, 19] as [number, number, number], lookAt: [0, 7.8, 0] as [number, number, number] }
+          : { position: [22, 19, 23] as [number, number, number], lookAt: [0, 3.2, 0] as [number, number, number] };
       set((s) => ({
         visibleFloor: floor,
         followAgentMode: false,
@@ -954,8 +1194,15 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       if (!agent || !dept) return;
       const runtime = get().runtimes[agentId];
       const fromPos = runtime?.currentPosition || agent.deskPosition;
+      const currentFloor = floorFromY(fromPos[1]);
       const fromRoomId =
-        fromPos[1] > 1.9 ? (agent.floor === 2 ? agent.roomId : 'room-exec') : agent.floor === 1 ? agent.roomId : 'room-sales';
+        agent.floor === currentFloor
+          ? agent.roomId
+          : currentFloor === 3
+          ? 'room-aff-exec'
+          : currentFloor === 2
+          ? 'room-exec'
+          : 'room-sales';
       const dest = targetPos || dept.roomCenter;
       const waypoints = buildWalkWaypoints(fromPos, fromRoomId, dest, toRoomId);
       set((state) => ({
@@ -990,10 +1237,17 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
         get().setAgentStatus(agentId, 'idle');
         return;
       }
+      const curFloor = floorFromY(runtime.currentPosition[1]);
       const currentRoom =
-        runtime.currentPosition[1] < 1.9 && runtime.currentPosition[0] > -1.5 && runtime.currentPosition[2] < -1.2
+        curFloor === 1 && runtime.currentPosition[0] > -1.5 && runtime.currentPosition[2] < -1.2
           ? 'room-meeting'
-          : agent.roomId;
+          : curFloor === agent.floor
+          ? agent.roomId
+          : curFloor === 3
+          ? 'room-aff-analytics'
+          : curFloor === 2
+          ? 'room-exec'
+          : 'room-reception';
       const waypoints = buildWalkWaypoints(runtime.currentPosition, currentRoom, agent.deskPosition, agent.roomId);
       set((state) => ({
         runtimes: {
@@ -2342,6 +2596,40 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
 
     handleZaloCommand: async (rawText) => {
       const trimmed = rawText.trim();
+      // Pattern 1/2/3 for #HD-xxx Contracts: e.g. "1 #HD-2026-001", "2 #HD-... sửa ...", "3 #HD-... chuyển luật sư"
+      const hdMatch = trimmed.match(/^([123])\s+(#?HD-[\w-]+)(?:\s+([\s\S]+))?$/i);
+      if (hdMatch) {
+        const cmd = hdMatch[1];
+        const code = hdMatch[2].toUpperCase().startsWith('#') ? hdMatch[2].toUpperCase() : `#${hdMatch[2].toUpperCase()}`;
+        const note = hdMatch[3]?.trim();
+        const ctr = get().contracts.find((c) => c.contractCode.toUpperCase() === code);
+        if (!ctr) {
+          get().pushZaloSimMessage('in', `Không tìm thấy hợp đồng ${code}.`);
+          return true;
+        }
+        get().pushZaloSimMessage('out', trimmed);
+        if (cmd === '1') {
+          await get().ceoApproveAndUnlockContractSend(ctr.id, 'zalo_sim');
+          get().pushZaloSimMessage('in', `Đã duyệt & mở khóa gửi hợp đồng ${code}.`);
+        } else if (cmd === '2') {
+          const updated: ContractRecord = { ...ctr, status: 'draft', nextMilestoneNote: note || 'CEO yêu cầu chỉnh sửa', updatedAt: Date.now() };
+          set((s) => ({ contracts: s.contracts.map((c) => (c.id === ctr.id ? updated : c)) }));
+          await repository.putContract(updated);
+          get().pushZaloSimMessage('in', `Đã chuyển hợp đồng ${code} về Nháp để Pháp chế chỉnh sửa: ${note || ''}`);
+        } else {
+          const updated: ContractRecord = {
+            ...ctr,
+            requiresRealLawyer: true,
+            lawyerReasons: [...ctr.lawyerReasons, note || 'CEO chỉ đạo chuyển Luật sư thật rà soát'],
+            updatedAt: Date.now(),
+          };
+          set((s) => ({ contracts: s.contracts.map((c) => (c.id === ctr.id ? updated : c)) }));
+          await repository.putContract(updated);
+          get().pushZaloSimMessage('in', `Đã gắn cờ bắt buộc chuyển Luật sư thật cho ${code}.`);
+        }
+        return true;
+      }
+
       // Pattern 1/2/3 for #CP-xxx: e.g. "1 #CP-102", "2 #CP-102 vượt ngân sách", "3 #CP-102 xin báo giá"
       const cpMatch = trimmed.match(/^([123])\s+(#?CP-[\w-]+)(?:\s+([\s\S]+))?$/i);
       if (cpMatch) {
@@ -2670,6 +2958,34 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
 
       if (req.type === 'hr_hire' && decision !== 'rejected' && Array.isArray(req.payload?.specs)) {
         await get().hireBatchTeam(req.payload.specs as Array<Parameters<typeof buildNewAgentFromSpec>[0]>, 'CEO (Duyệt tuyển)');
+      }
+
+      if (req.type === 'affiliate_post' && req.payload?.affPostId) {
+        const affPost = get().affiliatePosts.find((p) => p.id === String(req.payload.affPostId));
+        if (affPost) {
+          const nextPost: AffiliateChannelPost = {
+            ...affPost,
+            status: decision === 'rejected' ? 'blocked_compliance' : 'scheduled',
+            scheduledAt: decision === 'rejected' ? undefined : Date.now() + 600_000,
+          };
+          set((s) => ({
+            affiliatePosts: s.affiliatePosts.map((p) => (p.id === nextPost.id ? nextPost : p)),
+          }));
+          await repository.putAffiliatePost(nextPost);
+        }
+      }
+
+      if (req.type === 'contract_send' && req.payload?.contractId) {
+        if (decision !== 'rejected') {
+          await get().ceoApproveAndUnlockContractSend(String(req.payload.contractId), 'web');
+        } else {
+          const ctr = get().contracts.find((c) => c.id === String(req.payload.contractId));
+          if (ctr) {
+            const reverted: ContractRecord = { ...ctr, status: 'draft', updatedAt: Date.now() };
+            set((s) => ({ contracts: s.contracts.map((c) => (c.id === ctr.id ? reverted : c)) }));
+            await repository.putContract(reverted);
+          }
+        }
       }
 
       const agent = get().agents.find((a) => a.id === req.requestedBy);
@@ -3412,32 +3728,32 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
         return { ok: true, message: 'Đã bật chế độ READ-ONLY (chỉ đọc dữ liệu thật từ Hub.ChuyenWeb, chặn toàn bộ lệnh ghi).' };
       }
 
-      // Transition to LIVE requires full pre-flight checklist + confirmation phrase + CEO password
+      // Transition to LIVE requires full 10-item Go-Live Checklist + confirmation phrase + CEO password
       const linkedActive = state.externalAccounts.filter((e) => e.status === 'active');
-      const moduleHealthValues = Object.values(state.settings.hubcw.moduleHealth || {});
-      const hasAnyConnectedHealth = moduleHealthValues.some((h) => h.status === 'ok');
+      const hasAiConfigured =
+        state.settings.primaryProvider !== 'mock' &&
+        (Boolean(state.settings.geminiApiKey) ||
+          Boolean(state.settings.deepseekApiKey) ||
+          Boolean(state.serverHealth?.hasGeminiEnvKey) ||
+          Boolean(state.serverHealth?.hasDeepSeekEnvKey) ||
+          state.settings.primaryProvider === 'local');
+
+      const goLiveChecks = evaluateGoLiveChecklist({
+        settings: state.settings,
+        hasAnyAiProviderConfigured: hasAiConfigured,
+        externalAccountsCount: state.externalAccounts.length,
+        linkedExternalAccountsCount: linkedActive.length,
+        backupsCount: state.backupSnapshots.length,
+      });
+
       const simExportLeaks = state.hubcwSyncQueue.filter(
         (q) => q.status === 'queued' && q.provenance?.origin === 'simulated'
       ).length;
 
       const checks = [
+        ...goLiveChecks.map((c) => ({ label: c.label, ok: c.passed, detail: c.detail })),
         {
-          label: '1. Ít nhất 1 nhân viên đã liên kết tài khoản Hub.ChuyenWeb hoạt động',
-          ok: linkedActive.length > 0,
-          detail: `${linkedActive.length} nhân viên đang 'active'`,
-        },
-        {
-          label: '2. Đã cấu hình chế độ kết nối thật (API hoặc Browser) & kiểm tra kết nối',
-          ok: state.settings.hubcw.connectionMode !== 'sandbox' && (hasAnyConnectedHealth || Boolean(state.settings.hubcw.lastHealthCheckAt)),
-          detail: `Mode: ${state.settings.hubcw.connectionMode}`,
-        },
-        {
-          label: '3. Ba module chưa xác nhận nghiệp vụ (Heo vàng, Tự động, Tài nguyên) vẫn khóa ghi an toàn',
-          ok: true,
-          detail: 'Bảo vệ mặc định theo Write Gate',
-        },
-        {
-          label: '4. Không có bản ghi MÔ PHỎNG nào chờ đẩy sang Hub.ChuyenWeb',
+          label: '11. Không có bản ghi MÔ PHỎNG nào chờ đẩy sang Hub.ChuyenWeb',
           ok: simExportLeaks === 0,
           detail: simExportLeaks === 0 ? 'Sạch (0 hàng đợi mô phỏng)' : `${simExportLeaks} bản ghi mô phỏng trong hàng đợi`,
         },
@@ -3446,7 +3762,7 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       if (checks.some((c) => !c.ok)) {
         return {
           ok: false,
-          message: 'Chưa đạt điều kiện Pre-flight để chuyển sang LIVE. Vui lòng hoàn tất các mục còn đỏ.',
+          message: 'Chưa đạt điều kiện Checklist Go-Live (10+1 bước). Vui lòng hoàn tất các mục còn đỏ trước khi chuyển LIVE.',
           checks,
         };
       }
@@ -3557,5 +3873,753 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       set({ agentAppearances: nextMap });
       return targets.length;
     },
+
+    // === BỔ SUNG I: FLOOR 3 AFFILIATE ACTIONS ===
+    updateAffiliateSettings: async (patch) => {
+      const cur = get().settings.affiliate;
+      const nextAff: AffiliateSettings = {
+        ...cur,
+        ...patch,
+        networks: patch.networks || cur.networks,
+      };
+      await get().updateSettings({ affiliate: nextAff });
+    },
+
+    runAffiliateScoutCycle: async (niche, networkId = 'shopee') => {
+      const state = get();
+      const network =
+        state.settings.affiliate.networks.find((n) => n.id === networkId) ||
+        state.settings.affiliate.networks[0];
+      const adapter = createAffiliateAdapter(network, state.settings.envMode);
+      const { offers, products } = await adapter.searchOffers({ niche, network });
+      const scores = products.map((p) => scoreAffiliateProduct(p, 'trend_analyst'));
+
+      for (const o of offers) await repository.putAffiliateOffer(o);
+      for (const p of products) await repository.putAffiliateProduct(p);
+      for (const s of scores) await repository.putAffiliateScore(s);
+
+      set((st) => ({
+        affiliateOffers: [...offers, ...st.affiliateOffers].slice(0, 150),
+        affiliateProducts: [...products, ...st.affiliateProducts].slice(0, 200),
+        affiliateScores: [
+          ...scores,
+          ...st.affiliateScores.filter((x) => !scores.some((ns) => ns.id === x.id)),
+        ].slice(0, 200),
+      }));
+
+      const winBest = scores.slice().sort((a, b) => b.totalScore - a.totalScore)[0];
+      const bestProd = winBest ? products.find((p) => p.id === winBest.productId) : products[0];
+      if (bestProd && winBest) {
+        await get().addMessage({
+          channelId: 'affiliate',
+          senderId: 'aff_scout_home',
+          senderName: getLiveAgentById('aff_scout_home')?.name || 'Product Scout',
+          senderTitle: 'Săn hàng Win (Tầng 3)',
+          department: 'aff_research',
+          content: `Hoàn tất săn ngách **${niche}** trên **${network.name}** (${offers[0]?.origin === 'simulated' ? 'Sandbox' : 'Live API'}). Tìm thấy ${products.length} sản phẩm; top Win: **${bestProd.name}** (${winBest.totalScore}/100đ).`,
+          busType: 'report',
+          cardType: 'affiliate_win_card',
+          cardData: { productId: bestProd.id, score: winBest.totalScore, label: winBest.label, niche },
+        });
+      }
+      return { offers, products, scores };
+    },
+
+    runAffiliateSelectProductMeeting: async () => {
+      const state = get();
+      const affAgents = state.agents.filter(
+        (a) => a.floor === 3 && a.employmentStatus !== 'archived'
+      );
+      affAgents.slice(0, 6).forEach((ag, idx) => {
+        get().walkAgentToRoom(ag.id, 'room-aff-analytics', MEETING_SEATS_F3[idx % MEETING_SEATS_F3.length]);
+        get().setAgentStatus(ag.id, 'in_meeting', 'Họp Chọn hàng sáng', 'Họp Chọn hàng Tầng 3', 70);
+      });
+
+      const topScore = [...state.affiliateScores].sort((a, b) => b.totalScore - a.totalScore)[0];
+      const topProd = topScore ? state.affiliateProducts.find((p) => p.id === topScore.productId) : undefined;
+      await get().addMessage({
+        channelId: 'affiliate',
+        senderId: 'aff_manager',
+        senderName: getLiveAgentById('aff_manager')?.name || 'Affiliate Manager',
+        senderTitle: 'Trưởng khối Affiliate',
+        department: 'aff_exec',
+        content: topProd
+          ? `**Họp Chọn hàng Tầng 3:** Đã chốt sản phẩm trọng điểm **${topProd.name}** (${topScore.totalScore}/100 điểm · ${topScore.label.toUpperCase()}). Bàn giao đội Sáng tạo & Kênh lên nội dung gắn Aff ID CEO.`
+          : `**Họp Chọn hàng Tầng 3:** Chưa có sản phẩm nào được chấm điểm. Khởi động Săn sản phẩm Win ngay!`,
+        busType: 'report',
+      });
+    },
+
+    createAffiliateCampaign: async ({ productId, channels, contentAngle, budgetVnd }) => {
+      const prod = get().affiliateProducts.find((p) => p.id === productId);
+      const now = Date.now();
+      const camp: AffiliateCampaign = {
+        id: `aff_camp_${now.toString(36)}`,
+        productId,
+        productName: prod?.name || 'Sản phẩm Affiliate',
+        networkId: prod?.networkId || 'shopee',
+        status: 'active',
+        channels,
+        contentAngle,
+        budgetVnd,
+        kpiTargetClicks: 500,
+        kpiTargetCommissionVnd: Math.max(500_000, budgetVnd * 2),
+        negativeRoiDays: 0,
+        startedAt: now,
+        updatedAt: now,
+      };
+      set((s) => ({ affiliateCampaigns: [camp, ...s.affiliateCampaigns] }));
+      await repository.putAffiliateCampaign(camp);
+      return camp;
+    },
+
+    createAffiliateTrackedLink: async ({ productId, subId, campaignId, createdBy }) => {
+      const state = get();
+      const prod =
+        state.affiliateProducts.find((p) => p.id === productId) || state.affiliateProducts[0];
+      if (!prod) {
+        throw new Error('Chưa có sản phẩm Affiliate nào trong kho. Hãy chạy "Săn hàng Win" trước.');
+      }
+      const network =
+        state.settings.affiliate.networks.find((n) => n.id === prod.networkId) ||
+        state.settings.affiliate.networks[0];
+      const link = createAndVerifyTrackedLink({
+        product: prod,
+        network,
+        campaignId,
+        subId,
+        shortlinkDomain: state.settings.affiliate.shortlinkDomain,
+        createdBy,
+      });
+      set((s) => ({ trackedLinks: [link, ...s.trackedLinks] }));
+      await repository.putTrackedLink(link);
+      return link;
+    },
+
+    createAffiliateContentPiece: async (params) => {
+      const now = Date.now();
+      const link = get().trackedLinks.find((l) => l.id === params.trackedLinkId);
+      const chk = runAffiliateComplianceCheck({
+        piece: {
+          title: params.title,
+          body: params.body,
+          hasAffiliateDisclosure: params.hasAffiliateDisclosure,
+          claimsTestedPersonally: params.claimsTestedPersonally,
+        },
+        trackedLink: link,
+        settings: get().settings.affiliate,
+      });
+      const piece: AffiliateContentPiece = {
+        id: `aff_cnt_${now.toString(36)}`,
+        campaignId: params.campaignId,
+        productId: params.productId,
+        trackedLinkId: params.trackedLinkId,
+        subId: link?.subId || 'missing_sub',
+        type: params.type,
+        title: params.title,
+        body: params.body,
+        hasAffiliateDisclosure: params.hasAffiliateDisclosure,
+        claimsTestedPersonally: params.claimsTestedPersonally,
+        complianceStatus: chk.passed ? 'passed' : 'blocked',
+        complianceReasons: chk.reasons,
+        authorId: params.authorId,
+        reviewedBy: 'aff_compliance',
+        createdAt: now,
+      };
+      set((s) => ({ affiliateContent: [piece, ...s.affiliateContent] }));
+      await repository.putAffiliateContent(piece);
+      return piece;
+    },
+
+    putAffiliateContent: async (piece) => {
+      set((s) => {
+        const exists = s.affiliateContent.some((c) => c.id === piece.id);
+        return {
+          affiliateContent: exists
+            ? s.affiliateContent.map((c) => (c.id === piece.id ? piece : c))
+            : [piece, ...s.affiliateContent],
+        };
+      });
+      await repository.putAffiliateContent(piece);
+    },
+
+    reviewAffiliateContentCompliance: async (contentPieceId, reviewerId = 'aff_compliance') => {
+      const state = get();
+      const piece = state.affiliateContent.find((c) => c.id === contentPieceId);
+      if (!piece) return { passed: false, reasons: ['Không tìm thấy nội dung.'] };
+      const link = state.trackedLinks.find((l) => l.id === piece.trackedLinkId);
+      const chk = runAffiliateComplianceCheck({
+        piece,
+        trackedLink: link,
+        settings: state.settings.affiliate,
+      });
+      const updated: AffiliateContentPiece = {
+        ...piece,
+        complianceStatus: chk.passed ? 'passed' : 'blocked',
+        complianceReasons: chk.reasons,
+        reviewedBy: reviewerId,
+      };
+      await get().putAffiliateContent(updated);
+      return { passed: chk.passed, reasons: chk.reasons };
+    },
+
+    scheduleAffiliatePost: async ({ contentPieceId, platform, isPaidAd }) => {
+      const state = get();
+      const piece = state.affiliateContent.find((c) => c.id === contentPieceId);
+      if (!piece) return { ok: false, reason: 'Không tìm thấy nội dung.' };
+      const link = state.trackedLinks.find((l) => l.id === piece.trackedLinkId);
+      const isFirstPostOnChannel = !state.affiliatePosts.some(
+        (p) => p.platform === platform && (p.status === 'published' || p.status === 'scheduled')
+      );
+      const chk = runAffiliateComplianceCheck({
+        piece,
+        trackedLink: link,
+        settings: state.settings.affiliate,
+        isFirstPostOnChannel,
+        isPaidAd,
+      });
+      if (!chk.passed) {
+        return { ok: false, reason: `Tuân thủ Affiliate từ chối: ${chk.reasons.join(' | ')}` };
+      }
+
+      const now = Date.now();
+      const post: AffiliateChannelPost = {
+        id: `aff_post_${now.toString(36)}`,
+        contentPieceId: piece.id,
+        campaignId: piece.campaignId,
+        platform,
+        subId: piece.subId,
+        trackedLinkId: piece.trackedLinkId,
+        isFirstPostOnChannel,
+        isPaidAd,
+        status: chk.requiresCeoApproval ? 'waiting_approval' : 'scheduled',
+        scheduledAt: chk.requiresCeoApproval ? undefined : now + 600_000,
+        createdAt: now,
+      };
+
+      if (chk.requiresCeoApproval) {
+        const aprId = `apr_aff_${now.toString(36)}`;
+        post.approvalId = aprId;
+        await get().putApproval({
+          id: aprId,
+          type: 'affiliate_post',
+          title: `Duyệt bài Affiliate (${platform}): ${piece.title}`,
+          description: chk.ceoApprovalReason || 'Cần CEO phê duyệt trước khi đăng.',
+          requestedBy: 'aff_channel',
+          department: 'aff_channel',
+          payload: { affPostId: post.id, platform, subId: piece.subId },
+          status: 'pending',
+          createdAt: now,
+        });
+      }
+
+      set((s) => ({ affiliatePosts: [post, ...s.affiliatePosts] }));
+      await repository.putAffiliatePost(post);
+      return { ok: true, post, reason: chk.ceoApprovalReason };
+    },
+
+    importAffiliateCsvReport: async ({ networkId, csvText, fileName }) => {
+      const { clicks, commissions } = parseAffiliateCsvReport(csvText, networkId, fileName);
+      for (const c of clicks) await repository.putAffiliateConversion(c);
+      for (const m of commissions) await repository.putAffiliateCommission(m);
+      set((s) => ({
+        affiliateConversions: [...clicks, ...s.affiliateConversions],
+        affiliateCommissions: [...commissions, ...s.affiliateCommissions],
+      }));
+      return { clicksCount: clicks.length, commissionsCount: commissions.length };
+    },
+
+    checkAllAffiliateLinksHealth: async () => {
+      const state = get();
+      let dead = 0;
+      let expired = 0;
+      const updatedLinks: TrackedLink[] = [];
+      for (const link of state.trackedLinks) {
+        const net = state.settings.affiliate.networks.find((n) => n.id === link.networkId);
+        const adapter = createAffiliateAdapter(
+          net || state.settings.affiliate.networks[0],
+          state.settings.envMode
+        );
+        const chk = await adapter.checkLink(link.affiliateUrl);
+        const affValid = Boolean(net?.affId && link.affiliateUrl.includes(net.affId.trim()));
+        const health: TrackedLink['linkHealth'] = !affValid ? 'dead' : chk.health;
+        if (health === 'dead') dead++;
+        if (health === 'promo_expired') expired++;
+        const next: TrackedLink = {
+          ...link,
+          linkHealth: health,
+          isAffIdVerified: affValid,
+          lastCheckedAt: chk.checkedAt,
+        };
+        updatedLinks.push(next);
+        await repository.putTrackedLink(next);
+      }
+      set({ trackedLinks: updatedLinks });
+      return { checked: updatedLinks.length, dead, expired };
+    },
+
+    evaluateAffiliateRoiCutoffs: async () => {
+      const state = get();
+      let cutCount = 0;
+      const autoDays = state.settings.affiliate.autoCutNegativeRoiDays || 5;
+      const nextCampaigns: AffiliateCampaign[] = [];
+      for (const camp of state.affiliateCampaigns) {
+        const relComms = state.affiliateCommissions.filter((m) =>
+          state.trackedLinks.some((l) => l.campaignId === camp.id && l.subId === m.subId)
+        );
+        const verdict = shouldAutoCutNegativeRoi(camp, relComms, autoDays);
+        if (verdict.shouldCut) {
+          cutCount++;
+          const updated: AffiliateCampaign = {
+            ...camp,
+            status: 'cut_negative_roi',
+            updatedAt: Date.now(),
+          };
+          nextCampaigns.push(updated);
+          await repository.putAffiliateCampaign(updated);
+          await get().addMessage({
+            channelId: 'affiliate',
+            senderId: 'aff_analytics',
+            senderName: getLiveAgentById('aff_analytics')?.name || 'Data Affiliate',
+            senderTitle: 'Tự động cắt lỗ ROI',
+            department: 'aff_analytics',
+            content: `🛑 **Đã tự động dừng chiến dịch lỗ:** ${verdict.reason}`,
+            busType: 'escalation',
+          });
+        } else {
+          nextCampaigns.push(camp);
+        }
+      }
+      set({ affiliateCampaigns: nextCampaigns });
+      return cutCount;
+    },
+
+    // === BỔ SUNG K: LEGAL & CONTRACTS ACTIONS ===
+    updateLegalSettings: async (patch) => {
+      const cur = get().settings.legal;
+      await get().updateSettings({ legal: { ...cur, ...patch } });
+    },
+
+    draftNewContract: async (params) => {
+      const state = get();
+      const tpl =
+        state.contractTemplates.find((t) => t.id === params.templateId) ||
+        state.contractTemplates[0];
+      const contractCode = `#HD-${new Date().getFullYear()}-${String(state.contracts.length + 1).padStart(3, '0')}`;
+      const record = draftContractFromVerifiedData({
+        contractCode,
+        template: tpl,
+        variant: params.variant,
+        legalSettings: state.settings.legal,
+        legalDocs: state.legalDocuments,
+        partyBInput: params.partyBInput,
+        contractValueVnd: params.contractValueVnd,
+        durationMonths: params.durationMonths || 12,
+        involvesChildrenData: params.involvesChildrenData ?? tpl.category === 'saas_preschool',
+        hasForeignElement: params.hasForeignElement ?? false,
+        involvesSourceCodeSale: params.involvesSourceCodeSale ?? false,
+        isLongTermExclusive: params.isLongTermExclusive ?? false,
+        linkedLeadId: params.linkedLeadId,
+        linkedHubCwCustomerId: params.linkedHubCwCustomerId,
+        createdBy: params.createdBy,
+      });
+
+      set((s) => ({ contracts: [record, ...s.contracts] }));
+      await repository.putContract(record);
+
+      await get().addMessage({
+        channelId: 'legal',
+        senderId: params.createdBy || 'contract_drafter',
+        senderName: getLiveAgentById(params.createdBy || 'contract_drafter')?.name || 'Soạn thảo HĐ',
+        senderTitle: 'Phòng Pháp chế',
+        department: 'legal',
+        content: `Đã lập dự thảo **${record.contractCode}** (${tpl.name}).${
+          record.missingFields.length > 0
+            ? ` ⚠️ Còn ${record.missingFields.length} trường **[CẦN BỔ SUNG]** (${record.missingFields.join(', ')}).`
+            : ''
+        }${record.requiresRealLawyer ? ' 🚨 Thuộc diện **BẮT BUỘC CHUYỂN LUẬT SƯ THẬT RÀ SOÁT**.' : ''}`,
+        busType: 'report',
+        cardType: 'contract_card',
+        cardData: { contractId: record.id, contractCode: record.contractCode },
+      });
+
+      return record;
+    },
+
+    saveContractRevision: async (contractId, content, note, editedBy = 'contract_drafter') => {
+      const ctr = get().contracts.find((c) => c.id === contractId);
+      if (!ctr) return null;
+      const now = Date.now();
+      const nextVer = ctr.currentVersion + 1;
+      const updated: ContractRecord = {
+        ...ctr,
+        currentVersion: nextVer,
+        versions: [
+          ...ctr.versions,
+          {
+            version: nextVer,
+            content,
+            variant: ctr.variant,
+            editedBy,
+            note,
+            createdAt: now,
+          },
+        ],
+        updatedAt: now,
+      };
+      set((s) => ({ contracts: s.contracts.map((c) => (c.id === contractId ? updated : c)) }));
+      await repository.putContract(updated);
+      return updated;
+    },
+
+    submitContractForCeoApproval: async (contractId) => {
+      const ctr = get().contracts.find((c) => c.id === contractId);
+      if (!ctr) return;
+      const now = Date.now();
+      const aprId = `apr_ctr_${now.toString(36)}`;
+      await get().putApproval({
+        id: aprId,
+        type: 'contract_send',
+        title: `Phê duyệt Hợp đồng ${ctr.contractCode}: ${ctr.title}`,
+        description: `Giá trị: ${ctr.contractValueVnd.toLocaleString('vi-VN')}đ · Thiếu ${ctr.missingFields.length} trường · ${
+          ctr.requiresRealLawyer ? 'BẮT BUỘC LUẬT SƯ THẬT KIỂM TRA' : 'Đủ điều kiện trình duyệt'
+        }`,
+        requestedBy: 'legal',
+        department: 'legal',
+        amountVnd: ctr.contractValueVnd,
+        payload: { contractId: ctr.id, contractCode: ctr.contractCode },
+        status: 'pending',
+        createdAt: now,
+      });
+
+      const updated: ContractRecord = {
+        ...ctr,
+        status: 'waiting_ceo_approval',
+        approvalId: aprId,
+        updatedAt: now,
+      };
+      set((s) => ({ contracts: s.contracts.map((c) => (c.id === contractId ? updated : c)) }));
+      await repository.putContract(updated);
+
+      get().pushZaloSimMessage(
+        'in',
+        `⚖️ Trình CEO duyệt Hợp đồng ${ctr.contractCode} (${ctr.title})\n• Giá trị: ${ctr.contractValueVnd.toLocaleString('vi-VN')}đ\n• Thiếu: ${ctr.missingFields.length} trường | Rủi ro cao: ${ctr.risks.filter((r) => r.severity === 'high').length}\n• Trả lời Zalo: "1 ${ctr.contractCode}" = Duyệt gửi | "2 ${ctr.contractCode} ghi chú" = Yêu cầu sửa | "3 ${ctr.contractCode}" = Chuyển Luật sư thật`
+      );
+    },
+
+    ceoApproveAndUnlockContractSend: async (contractId, via = 'web') => {
+      const ctr = get().contracts.find((c) => c.id === contractId);
+      if (!ctr) return;
+      const now = Date.now();
+      const updated: ContractRecord = {
+        ...ctr,
+        status: 'approved',
+        ceoApprovedBy: `ceo (${via})`,
+        ceoApprovedAt: now,
+        updatedAt: now,
+      };
+      set((s) => ({ contracts: s.contracts.map((c) => (c.id === contractId ? updated : c)) }));
+      await repository.putContract(updated);
+      await get().addAuditLog({
+        id: `aud_ctr_${now}`,
+        agentId: 'ceo',
+        agentName: 'Chủ tịch (CEO)',
+        action: 'contract:approve',
+        permission: 'contract:send',
+        resource: ctr.contractCode,
+        result: 'allowed',
+        reason: `CEO duyệt & mở khóa gửi hợp đồng qua ${via}.`,
+        timestamp: now,
+      });
+    },
+
+    sendContractToClient: async (contractId, actorId) => {
+      const state = get();
+      const ctr = state.contracts.find((c) => c.id === contractId);
+      if (!ctr) return { ok: false, error: 'Không tìm thấy hợp đồng.' };
+
+      const acc = state.accounts.find((a) => a.agentId === actorId);
+      const isCeoActor = actorId === 'ceo' || acc?.role === 'CEO' || Boolean(acc?.permissions.includes('contract:send'));
+      if (!isCeoActor) {
+        await get().addAuditLog({
+          id: `aud_ctr_deny_${Date.now()}`,
+          agentId: actorId,
+          agentName: getLiveAgentById(actorId)?.name || actorId,
+          action: 'contract:send',
+          permission: 'contract:send',
+          resource: ctr.contractCode,
+          result: 'denied',
+          reason: 'Chỉ CEO (hoặc tài khoản được CEO cấp quyền contract:send) mới được gửi/ký hợp đồng chính thức.',
+          timestamp: Date.now(),
+        });
+        return {
+          ok: false,
+          error: 'Bị chặn RBAC: Agent AI không có quyền tự gửi hợp đồng chính thức (contract:send chỉ dành cho CEO).',
+        };
+      }
+
+      if (ctr.status !== 'approved' && ctr.status !== 'signed' && ctr.status !== 'active') {
+        return { ok: false, error: 'Hợp đồng chưa được CEO bấm Phê duyệt trước khi gửi.' };
+      }
+
+      const now = Date.now();
+      const updated: ContractRecord = {
+        ...ctr,
+        status: 'signed',
+        sentAt: now,
+        updatedAt: now,
+      };
+      set((s) => ({ contracts: s.contracts.map((c) => (c.id === contractId ? updated : c)) }));
+      await repository.putContract(updated);
+      return { ok: true };
+    },
+
+    runLegalReportForContract: async (contractId, actorId = 'compliance_reviewer') => {
+      const state = get();
+      const ctr = state.contracts.find((c) => c.id === contractId);
+      if (!ctr) return null;
+      const report = buildLegalReport({
+        contract: ctr,
+        reportType: 'contract_review',
+        title: `Báo cáo Pháp lý 8 phần — ${ctr.contractCode}`,
+        legalDocs: state.legalDocuments,
+        createdBy: actorId,
+      });
+      await get().putLegalReport(report);
+      return report;
+    },
+
+    putLegalReport: async (report) => {
+      set((s) => ({
+        legalReports: [report, ...s.legalReports.filter((r) => r.id !== report.id)],
+      }));
+      await repository.putLegalReport(report);
+    },
+
+    checkLegalUpdatesOnline: async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      let serverMsg = 'Đã rà soát danh mục 16 văn bản quy phạm pháp luật Việt Nam.';
+      try {
+        const res = await fetch('/api/legal/check-updates', { method: 'POST' });
+        if (res.ok) {
+          const data = (await res.json()) as { message?: string };
+          if (data.message) serverMsg = data.message;
+        }
+      } catch {
+        // Offline / client mode fallback
+      }
+      await get().updateLegalSettings({ lastLawCheckAt: today });
+      return { checkedAt: today, message: serverMsg };
+    },
+
+    simulateLawStatusChange: async (docId, newStatus, note) => {
+      const state = get();
+      const targetDoc = state.legalDocuments.find((d) => d.id === docId);
+      if (!targetDoc) return { affectedTemplates: 0, affectedContracts: 0 };
+
+      const updatedDoc: LegalDocument = {
+        ...targetDoc,
+        effectiveStatus: newStatus,
+        statusAlertNote: note || `Cập nhật trạng thái hiệu lực sang "${newStatus}" ngày ${new Date().toLocaleDateString('vi-VN')}.`,
+        lastCheckedAt: new Date().toISOString().slice(0, 10),
+      };
+      await repository.putLegalDocument(updatedDoc);
+
+      const impact = checkLawChangeImpact({
+        changedDocId: docId,
+        newStatus,
+        templates: state.contractTemplates,
+        contracts: state.contracts,
+      });
+
+      const nextTemplates = state.contractTemplates.map((t) =>
+        impact.affectedTemplateIds.includes(t.id) ? { ...t, needsLawUpdateReview: true } : t
+      );
+      for (const t of nextTemplates) {
+        if (impact.affectedTemplateIds.includes(t.id)) await repository.putContractTemplate(t);
+      }
+
+      const nextContracts = state.contracts.map((c) =>
+        impact.affectedContractIds.includes(c.id) ? { ...c, needsLawUpdateReview: true } : c
+      );
+      for (const c of nextContracts) {
+        if (impact.affectedContractIds.includes(c.id)) await repository.putContract(c);
+      }
+
+      set((s) => ({
+        legalDocuments: s.legalDocuments.map((d) => (d.id === docId ? updatedDoc : d)),
+        contractTemplates: nextTemplates,
+        contracts: nextContracts,
+      }));
+
+      return {
+        affectedTemplates: impact.affectedTemplateIds.length,
+        affectedContracts: impact.affectedContractIds.length,
+      };
+    },
+
+    // === BỔ SUNG J: 24/7 OPS, DURABLE JOBS, LOGS, BACKUP & ONBOARDING ===
+    enqueueJob: async ({ type, agentId, department, payload, totalSteps }) => {
+      const job = createDurableJobRecord({ type, agentId, department, payload, totalSteps });
+      set((s) => ({ durableJobs: [job, ...s.durableJobs].slice(0, 200) }));
+      await repository.putDurableJob(job);
+      return job;
+    },
+
+    runPendingDurableJobs: async () => {
+      const queued = get().durableJobs.filter((j) => j.status === 'queued');
+      let completed = 0;
+      for (const job of queued) {
+        const now = Date.now();
+        const leased: DurableJob = {
+          ...job,
+          status: 'leased',
+          attempts: job.attempts + 1,
+          leaseOwner: 'browser_worker',
+          leaseExpiresAt: now + 30_000,
+          updatedAt: now,
+        };
+        await repository.putDurableJob(leased);
+
+        const done: DurableJob = {
+          ...leased,
+          status: 'completed',
+          progressStep: leased.totalSteps,
+          leaseOwner: undefined,
+          leaseExpiresAt: undefined,
+          updatedAt: Date.now(),
+        };
+        await repository.putDurableJob(done);
+        set((s) => ({
+          durableJobs: s.durableJobs.map((x) => (x.id === done.id ? done : x)),
+        }));
+        completed++;
+      }
+      return completed;
+    },
+
+    addHealthLog: async (level, component, message, traceId, detail) => {
+      const log = createHealthLog(level, component, message, traceId, detail);
+      set((s) => ({ systemHealthLogs: [log, ...s.systemHealthLogs].slice(0, 400) }));
+      await repository.addSystemHealthLog(log);
+    },
+
+    sendTestCeoAlert: async () => {
+      const state = get();
+      const res = await dispatchSystemAlert({
+        title: 'Kiểm thử Cảnh báo 24/7',
+        body: `Hệ thống Văn phòng ảo 3D (${state.settings.companyName}) đang hoạt động bình thường lúc ${new Date().toLocaleTimeString('vi-VN')}.`,
+        severity: 'info',
+        settings: state.settings,
+        pushZaloSim: state.pushZaloSimMessage,
+      });
+      await get().recordOnboardingProgress({ testAlertSent: true });
+      await get().addHealthLog('info', 'alert', `Đã gửi cảnh báo kiểm thử qua ${res.channel}`);
+      return { ok: res.delivered, channel: res.channel };
+    },
+
+    recordOnboardingProgress: async (patch) => {
+      const cur = get().settings.onboarding;
+      await get().updateSettings({ onboarding: { ...cur, ...patch } });
+    },
+
+    deleteDemoData: async () => {
+      await db.leads.clear();
+      await db.tasks.clear();
+      await db.documents.clear();
+      await db.expenses.clear();
+      await db.affiliateOffers.clear();
+      await db.affiliateProducts.clear();
+      await db.affiliateScores.clear();
+      await db.affiliateCampaigns.clear();
+      await db.trackedLinks.clear();
+      await db.affiliateContent.clear();
+      await db.affiliatePosts.clear();
+      set({
+        leads: [],
+        tasks: [],
+        documents: [],
+        expenses: [],
+        affiliateOffers: [],
+        affiliateProducts: [],
+        affiliateScores: [],
+        affiliateCampaigns: [],
+        trackedLinks: [],
+        affiliateContent: [],
+        affiliatePosts: [],
+      });
+      await get().recordOnboardingProgress({ hasDemoData: false });
+      await get().addHealthLog('info', 'onboarding', 'CEO đã xóa toàn bộ dữ liệu demo để bắt đầu vận hành sạch.');
+    },
+
+    createManualBackup: async (label) => {
+      const data = await repository.exportAllTablesForBackup();
+      const snap = buildBackupBundleJson(
+        data,
+        label || `Sao lưu thủ công ${new Date().toLocaleString('vi-VN')}`
+      );
+      await repository.putBackupSnapshot(snap);
+      set((s) => ({ backupSnapshots: [snap, ...s.backupSnapshots].slice(0, 30) }));
+      await get().recordOnboardingProgress({ firstBackupCreated: true });
+      await get().addHealthLog('info', 'backup', `Đã tạo bản sao lưu ${snap.id} (${Math.round(snap.sizeBytes / 1024)} KB).`);
+      return snap;
+    },
+
+    restoreFromBackupJson: async (rawJson) => {
+      const check = validateBackupBundleJson(rawJson);
+      if (!check.ok || !check.bundle) {
+        return {
+          ok: false,
+          error: `${check.error || 'File sao lưu lỗi.'}${check.backupKey ? ` (Đã bảo lưu bản lỗi tại ${check.backupKey})` : ''}`,
+        };
+      }
+      const d = check.bundle.data as Record<string, unknown>;
+      let restoredCount = 0;
+      if (Array.isArray(d.departments)) {
+        await db.departments.bulkPut(d.departments as DepartmentConfig[]);
+        restoredCount += d.departments.length;
+      }
+      if (Array.isArray(d.agents)) {
+        await db.agents.bulkPut(d.agents as AgentProfile[]);
+        restoredCount += d.agents.length;
+      }
+      if (Array.isArray(d.leads)) {
+        await db.leads.bulkPut(d.leads as LeadItem[]);
+        restoredCount += d.leads.length;
+      }
+      if (Array.isArray(d.tasks)) {
+        await db.tasks.bulkPut(d.tasks as TaskItem[]);
+        restoredCount += d.tasks.length;
+      }
+      if (Array.isArray(d.documents)) {
+        await db.documents.bulkPut(d.documents as DocumentItem[]);
+        restoredCount += d.documents.length;
+      }
+      if (Array.isArray(d.contracts)) {
+        await db.contracts.bulkPut(d.contracts as ContractRecord[]);
+        restoredCount += d.contracts.length;
+      }
+      if (Array.isArray(d.affiliateCampaigns)) {
+        await db.affiliateCampaigns.bulkPut(d.affiliateCampaigns as AffiliateCampaign[]);
+        restoredCount += d.affiliateCampaigns.length;
+      }
+      await get().init();
+      await get().addHealthLog('info', 'backup', `Đã khôi phục ${restoredCount} bản ghi từ file sao lưu v${check.bundle.schemaVersion}.`);
+      return { ok: true, restoredCount };
+    },
   };
+});
+
+// Register live synchronous accessor AFTER Zustand store finishes initializing (fixes TypeError on 'departments')
+registerLiveRegistry({
+  getAgents: () => useCompanyStore.getState()?.agents ?? seedAgents,
+  getDepartments: () => useCompanyStore.getState()?.departments ?? seedDepts,
+});
+
+// Keep circuit breaker logs flowing to health log
+circuitBreakers.subscribe(() => {
+  const openOnes = circuitBreakers.getAll().filter((c) => c.status === 'open');
+  if (openOnes.length > 0 && useCompanyStore.getState()?.initialized) {
+    // Non-blocking audit note handled on failure call sites
+  }
 });

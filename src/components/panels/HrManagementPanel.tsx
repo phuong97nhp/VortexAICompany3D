@@ -52,6 +52,7 @@ import {
   suggestToolsForDescription,
 } from '../../engine/roleTemplates';
 import { executeAgentTool } from '../../engine/tools';
+import { yFromFloor } from '../../engine/waypoints';
 import { HUBCW_MODULES } from '../../integrations/hubcw/hubcw.config';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import {
@@ -200,7 +201,7 @@ export function HrManagementPanel() {
   const [showInlineDept, setShowInlineDept] = useState(false);
   const [newDeptName, setNewDeptName] = useState('');
   const [newDeptShort, setNewDeptShort] = useState('');
-  const [newDeptFloor, setNewDeptFloor] = useState<1 | 2>(1);
+  const [newDeptFloor, setNewDeptFloor] = useState<1 | 2 | 3>(1);
   const [newDeptColor, setNewDeptColor] = useState(DEPT_COLORS[0]);
   const [newDeptDesc, setNewDeptDesc] = useState('');
 
@@ -469,7 +470,7 @@ export function HrManagementPanel() {
     const customX = Number(wCustomDeskX);
     const customZ = Number(wCustomDeskZ);
     const hasCustomSeat = Number.isFinite(customX) && Number.isFinite(customZ) && wCustomDeskX.trim() !== '' && wCustomDeskZ.trim() !== '';
-    const seatY = predictedSeat.floor === 2 ? 3.8 : 0;
+    const seatY = yFromFloor(predictedSeat.floor);
 
     if (editingAgentId) {
       await updateAgentProfile(editingAgentId, {
@@ -920,11 +921,12 @@ export function HrManagementPanel() {
               />
               <select
                 value={newDeptFloor}
-                onChange={(e) => setNewDeptFloor(Number(e.target.value) as 1 | 2)}
+                onChange={(e) => setNewDeptFloor(Number(e.target.value) as 1 | 2 | 3)}
                 className="px-2.5 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
               >
                 <option value={1}>Tầng 1 (Khu kinh doanh & tiếp đón)</option>
-                <option value={2}>Tầng 2 (Khu điều hành & chuyên môn)</option>
+                <option value={2}>Tầng 2 (Khu điều hành, Pháp chế & chuyên môn)</option>
+                <option value={3}>Tầng 3 (Khối Affiliate)</option>
               </select>
               <div className="flex items-center gap-1.5">
                 {DEPT_COLORS.map((c) => (
@@ -1625,11 +1627,12 @@ export function HrManagementPanel() {
                           />
                           <select
                             value={newDeptFloor}
-                            onChange={(e) => setNewDeptFloor(Number(e.target.value) as 1 | 2)}
+                            onChange={(e) => setNewDeptFloor(Number(e.target.value) as 1 | 2 | 3)}
                             className="px-2 py-1 rounded bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
                           >
                             <option value={1}>Tầng 1</option>
                             <option value={2}>Tầng 2</option>
+                            <option value={3}>Tầng 3</option>
                           </select>
                         </div>
                         <button

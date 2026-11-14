@@ -35,7 +35,12 @@ const BASE_ROLE_TEMPLATES: RoleTemplate[] = AGENTS.map((a) => {
         : 'Chủ động, rõ ràng, báo cáo bằng số liệu',
     promptTemplate: a.systemPrompt,
     bioTemplate: a.bio,
-    gender: ['secretary', 'cmo', 'content_writer', 'social_media', 'designer', 'sdr_1', 'pricing_proposal', 'support_agent', 'onboarding_specialist', 'cfo', 'hr', 'receptionist'].includes(a.id)
+    gender: [
+      'secretary', 'cmo', 'content_writer', 'social_media', 'designer', 'sdr_1',
+      'pricing_proposal', 'support_agent', 'onboarding_specialist', 'cfo', 'hr', 'receptionist',
+      'legal_researcher', 'compliance_reviewer', 'dpo_agent',
+      'aff_scout_home', 'aff_audience', 'aff_review', 'aff_seo', 'aff_channel', 'aff_community', 'aff_compliance',
+    ].includes(a.id)
       ? 'female'
       : 'male',
     hairStyle: defApp.hairStyle,
@@ -243,12 +248,25 @@ export function suggestToolsForDescription(desc: string, baseTools: ToolName[]):
   if (lower.includes('tuyen') || lower.includes('nhan su')) {
     set.add('hire_agent');
   }
+  if (lower.includes('affiliate') || lower.includes('hoa hong') || lower.includes('san hang') || lower.includes('sub_id')) {
+    set.add('affiliate_search_offers');
+    set.add('affiliate_create_link');
+    set.add('affiliate_check_links');
+    set.add('affiliate_compliance_check');
+  }
+  if (lower.includes('phap che') || lower.includes('hop dong') || lower.includes('luat') || lower.includes('du lieu ca nhan')) {
+    set.add('legal_research');
+    set.add('draft_contract');
+    set.add('review_contract');
+  }
   return Array.from(set);
 }
 
 export function suggestDeptFromText(text: string): DepartmentId {
   const l = foldVietnamese(text);
-  if (l.includes('ke toan') || l.includes('tai chinh') || l.includes('phap ly') || l.includes('nhan su') || l.includes('hr')) return 'backoffice';
+  if (l.includes('phap che') || l.includes('phap ly') || l.includes('hop dong') || l.includes('luat') || l.includes('dpo')) return 'legal';
+  if (l.includes('affiliate') || l.includes('lien ket') || l.includes('shopee') || l.includes('san hang')) return 'aff_research';
+  if (l.includes('ke toan') || l.includes('tai chinh') || l.includes('nhan su') || l.includes('hr')) return 'backoffice';
   if (l.includes('marketing') || l.includes('content') || l.includes('seo') || l.includes('design') || l.includes('video') || l.includes('ads')) return 'marketing';
   if (l.includes('cskh') || l.includes('cham soc') || l.includes('support') || l.includes('mam non')) return 'cs';
   if (l.includes('dev') || l.includes('code') || l.includes('qa') || l.includes('product') || l.includes('tech')) return 'product';

@@ -7,7 +7,6 @@ export const ALL_PERMISSIONS: Array<{ key: Permission; label: string; group: str
   { key: 'outreach:send', label: 'Gửi tin tiếp cận (SDR)', group: 'CRM & Sales' },
   { key: 'quote:create', label: 'Tạo báo giá nháp', group: 'CRM & Sales' },
   { key: 'quote:send', label: 'Gửi báo giá cho khách', group: 'CRM & Sales' },
-  { key: 'contract:draft', label: 'Soạn hợp đồng nháp', group: 'CRM & Sales' },
   { key: 'account:create', label: 'Khởi tạo tài khoản nền tảng', group: 'Tài khoản & Vault' },
   { key: 'vault:use', label: 'Sử dụng Credential Vault', group: 'Tài khoản & Vault' },
   { key: 'browser:use', label: 'Điều khiển trình duyệt Playbook', group: 'Tài khoản & Vault' },
@@ -16,6 +15,8 @@ export const ALL_PERMISSIONS: Array<{ key: Permission; label: string; group: str
   { key: 'meeting:call', label: 'Triệu tập cuộc họp', group: 'Vận hành' },
   { key: 'kpi:read', label: 'Đọc số liệu KPI', group: 'Vận hành' },
   { key: 'hr:manage', label: 'Quản lý nhân sự (tuyển/sửa/cho nghỉ)', group: 'Nhân sự & Quản trị' },
+  { key: 'settings:write', label: 'Thay đổi cài đặt hệ thống', group: 'Nhân sự & Quản trị' },
+  { key: 'system:admin', label: 'Quản trị 24/7, Sao lưu & Go-Live', group: 'Nhân sự & Quản trị' },
   { key: 'budget:spend', label: 'Đề xuất chi ngân sách', group: 'Tài chính & Kế toán' },
   { key: 'expense:request', label: 'Tạo phiếu xin chi phí', group: 'Tài chính & Kế toán' },
   { key: 'expense:review', label: 'Kế toán thẩm định chi phí (tầng 1)', group: 'Tài chính & Kế toán' },
@@ -24,11 +25,19 @@ export const ALL_PERMISSIONS: Array<{ key: Permission; label: string; group: str
   { key: 'expense:mark_paid', label: 'Đánh dấu đã chi & đối soát chứng từ', group: 'Tài chính & Kế toán' },
   { key: 'policy:write', label: 'Chỉnh Chính sách chi tiêu (CEO)', group: 'Tài chính & Kế toán' },
   { key: 'approval:request', label: 'Gửi yêu cầu phê duyệt', group: 'Tài chính & Kế toán' },
-  { key: 'settings:write', label: 'Thay đổi cài đặt hệ thống', group: 'Nhân sự & Quản trị' },
   { key: 'memory:read', label: 'Đọc bộ nhớ Agent', group: 'Bộ nhớ' },
   { key: 'memory:write', label: 'Ghi bộ nhớ Agent', group: 'Bộ nhớ' },
   { key: 'post:publish', label: 'Đăng bài lên Kênh MXH', group: 'Marketing & Kênh' },
   { key: 'ads:manage', label: 'Tạo & đề xuất chiến dịch Ads', group: 'Marketing & Kênh' },
+  { key: 'affiliate:read', label: 'Xem sản phẩm & báo cáo Affiliate', group: 'Khối Affiliate (Tầng 3)' },
+  { key: 'affiliate:write', label: 'Săn hàng Win, tạo link sub_id & soạn bài', group: 'Khối Affiliate (Tầng 3)' },
+  { key: 'affiliate:publish', label: 'Đăng bài lên kênh Affiliate', group: 'Khối Affiliate (Tầng 3)' },
+  { key: 'affiliate:compliance', label: 'Kiểm soát & chặn đăng vi phạm Affiliate', group: 'Khối Affiliate (Tầng 3)' },
+  { key: 'legal:research', label: 'Tra cứu & cập nhật Kho pháp luật VN', group: 'Phòng Pháp chế' },
+  { key: 'contract:draft', label: 'Soạn hợp đồng & báo cáo pháp lý', group: 'Phòng Pháp chế' },
+  { key: 'contract:review', label: 'Rà soát rủi ro & bảo vệ dữ liệu (DPO)', group: 'Phòng Pháp chế' },
+  { key: 'contract:send', label: 'Phê duyệt gửi/ký hợp đồng thật (Chỉ CEO)', group: 'Phòng Pháp chế' },
+  { key: 'legal:publish_template', label: 'Xuất bản mẫu hợp đồng chuẩn', group: 'Phòng Pháp chế' },
   { key: 'hubcw:read', label: 'Đọc dữ liệu Hub.ChuyenWeb', group: 'Kết nối phần mềm thật' },
   { key: 'hubcw:write', label: 'Ghi dữ liệu vào Hub.ChuyenWeb (qua Cổng kiểm soát)', group: 'Kết nối phần mềm thật' },
 ];
@@ -68,6 +77,14 @@ export const TOOL_PERMISSION_MAP: Partial<Record<ToolName, Permission>> = {
   hubcw_read: 'hubcw:read',
   hubcw_write: 'hubcw:write',
   hubcw_sync: 'hubcw:write',
+  affiliate_search_offers: 'affiliate:read',
+  affiliate_create_link: 'affiliate:write',
+  affiliate_check_links: 'affiliate:read',
+  affiliate_compliance_check: 'affiliate:compliance',
+  request_collab: 'task:assign',
+  legal_research: 'legal:research',
+  draft_contract: 'contract:draft',
+  review_contract: 'contract:review',
 };
 
 export const ROLE_LABELS: Record<RoleType, string> = {
@@ -92,6 +109,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
     'memory:write',
     'hubcw:read',
     'hubcw:write',
+    'affiliate:read',
   ],
   'Dept Head': [
     'lead:read',
@@ -117,7 +135,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
     'hubcw:read',
     'hubcw:write',
   ],
-  'Read-only': ['lead:read', 'kpi:read', 'memory:read', 'hubcw:read'],
+  'Read-only': ['lead:read', 'kpi:read', 'memory:read', 'hubcw:read', 'affiliate:read'],
 };
 
 export interface AuthorizationResult {
@@ -162,6 +180,7 @@ export function authorize(
     return { allowed: true };
   }
 
+  // contract:send strictly requires CEO or explicit grant; never implicitly allowed for non-CEO without explicit permission
   if (!account.permissions.includes(permission)) {
     const reason = `Thiếu quyền '${permission}' cho thao tác '${actionName}' (Role: ${account.role}).`;
     onAudit?.(mkLog('denied', reason));

@@ -18,19 +18,45 @@ export function getTaskGroupForAgent(agentId: string, isMemorySummary?: boolean)
     if (liveAgent.department === 'backoffice' || liveAgent.department === 'data') {
       return 'sales_closing';
     }
+    if (liveAgent.department === 'legal') {
+      return liveAgent.id === 'legal' ? 'leadership' : 'sales_closing';
+    }
+    if (liveAgent.department === 'aff_exec' || liveAgent.department === 'aff_analytics') {
+      return 'sales_closing';
+    }
+    if (
+      liveAgent.department === 'aff_research' ||
+      liveAgent.department === 'aff_creative' ||
+      liveAgent.department === 'aff_channel'
+    ) {
+      return 'marketing';
+    }
     return 'product_cs';
   }
 
-  if (['secretary', 'coo', 'cmo', 'sales_director', 'tech_lead'].includes(agentId)) {
+  if (['secretary', 'coo', 'cmo', 'sales_director', 'tech_lead', 'legal', 'aff_manager'].includes(agentId)) {
     return 'leadership';
   }
-  if (['market_research', 'content_writer', 'seo_specialist', 'social_media', 'ads_specialist', 'designer'].includes(agentId)) {
+  if (
+    [
+      'market_research',
+      'content_writer',
+      'seo_specialist',
+      'social_media',
+      'ads_specialist',
+      'designer',
+      'aff_review_writer',
+      'aff_video_script',
+      'aff_landing_seo',
+      'aff_channel_mgr',
+    ].includes(agentId)
+  ) {
     return 'marketing';
   }
   if (['lead_hunter_edu', 'lead_hunter_smb', 'account_provisioning', 'sdr_1', 'sdr_2'].includes(agentId)) {
     return 'sales_sdr';
   }
-  if (['account_executive', 'pricing_proposal', 'cfo', 'legal', 'hr', 'data_analyst'].includes(agentId)) {
+  if (['account_executive', 'pricing_proposal', 'cfo', 'hr', 'data_analyst', 'legal_researcher', 'contract_drafter'].includes(agentId)) {
     return 'sales_closing';
   }
   return 'product_cs';

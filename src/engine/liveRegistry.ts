@@ -37,11 +37,33 @@ export function buildSeedDepartments(): DepartmentConfig[] {
 
 export function buildSeedAgents(): AgentProfile[] {
   const now = Date.now();
+  const femaleIds = new Set([
+    'secretary',
+    'cmo',
+    'content_writer',
+    'social_media',
+    'designer',
+    'sdr_1',
+    'pricing_proposal',
+    'support_agent',
+    'onboarding_specialist',
+    'cfo',
+    'hr',
+    'receptionist',
+    'legal_researcher',
+    'compliance_reviewer',
+    'dpo_agent',
+    'aff_scout_home',
+    'aff_audience',
+    'aff_review',
+    'aff_seo',
+    'aff_channel',
+    'aff_community',
+    'aff_compliance',
+  ]);
   return SEED_AGENTS.map((a) => ({
     ...a,
-    gender: ['secretary', 'cmo', 'content_writer', 'social_media', 'designer', 'sdr_1', 'pricing_proposal', 'support_agent', 'onboarding_specialist', 'cfo', 'hr', 'receptionist'].includes(a.id)
-      ? 'female'
-      : 'male',
+    gender: a.gender || (femaleIds.has(a.id) ? 'female' : 'male'),
     employmentStatus: 'active',
     providerOverride: 'company_default',
     sleepWhenIdle: false,
@@ -60,6 +82,10 @@ export function buildSeedAgents(): AgentProfile[] {
         ? 'pm'
         : a.department === 'backoffice'
         ? 'cfo'
+        : a.department === 'legal'
+        ? 'legal'
+        : String(a.department).startsWith('aff_')
+        ? 'aff_manager'
         : 'secretary',
     createdAt: now,
     updatedAt: now,

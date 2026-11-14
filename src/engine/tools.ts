@@ -28,6 +28,9 @@ import { LlmToolDefinition } from './llm';
 import { buildDefaultBrandLaunchKit, PLATFORM_META } from './marketingSeeds';
 import { authorize, TOOL_PERMISSION_MAP } from './rbac';
 import { ROLE_TEMPLATES } from './roleTemplates';
+import { sanitizeExternalUntrustedContent } from './resilience';
+import { runAffiliateComplianceCheck } from '../integrations/affiliate/affiliateEngine';
+import { buildLegalReport } from './legal/legalEngine';
 
 export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
   create_task: {
@@ -637,6 +640,121 @@ export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
       },
     },
   },
+  affiliate_search_offers: {
+    type: 'function',
+    function: {
+      name: 'affiliate_search_offers',
+      description: 'Săn & chấm điểm 0–100 sản phẩm Win từ mạng Affiliate (Shopee ưu tiên) theo ngách.',
+      parameters: {
+        type: 'object',
+        properties: {
+          niche: { type: 'string' },
+          networkId: { type: 'string' },
+        },
+        required: ['niche'],
+      },
+    },
+  },
+  affiliate_create_link: {
+    type: 'function',
+    function: {
+      name: 'affiliate_create_link',
+      description: 'Tạo link tracked chứa Aff ID của CEO và sub_id duy nhất (không cho phép sửa Aff ID).',
+      parameters: {
+        type: 'object',
+        properties: {
+          productId: { type: 'string' },
+          subId: { type: 'string' },
+          campaignId: { type: 'string' },
+        },
+        required: ['productId', 'subId'],
+      },
+    },
+  },
+  affiliate_check_links: {
+    type: 'function',
+    function: {
+      name: 'affiliate_check_links',
+      description: 'Kiểm tra định kỳ toàn bộ link Affiliate xem còn sống, đúng Aff ID hay đã hết khuyến mãi.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  affiliate_compliance_check: {
+    type: 'function',
+    function: {
+      name: 'affiliate_compliance_check',
+      description: 'Kiểm duyệt nội dung Affiliate: bắt buộc nhãn minh bạch, cấm bịa dùng thử & cấm thổi phồng y tế.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contentPieceId: { type: 'string' },
+        },
+        required: ['contentPieceId'],
+      },
+    },
+  },
+  request_collab: {
+    type: 'function',
+    function: {
+      name: 'request_collab',
+      description: 'Tạo yêu cầu phối hợp liên phòng ban (vd: Khối Affiliate đặt hàng Phòng Marketing Tầng 2 hỗ trợ SEO/Banner).',
+      parameters: {
+        type: 'object',
+        properties: {
+          targetDepartment: { type: 'string' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+        },
+        required: ['targetDepartment', 'title'],
+      },
+    },
+  },
+  legal_research: {
+    type: 'function',
+    function: {
+      name: 'legal_research',
+      description: 'Tra cứu văn bản pháp luật Việt Nam trong Kho Pháp chế và kiểm tra trích dẫn hợp lệ 6 trường.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  draft_contract: {
+    type: 'function',
+    function: {
+      name: 'draft_contract',
+      description: 'Soạn thảo hợp đồng từ mẫu chuẩn (SaaS Mầm non, EduCenter, Kho, Website, NDA, CTV...) chỉ điền dữ liệu thật hoặc [CẦN BỔ SUNG].',
+      parameters: {
+        type: 'object',
+        properties: {
+          templateId: { type: 'string' },
+          partyBName: { type: 'string' },
+          partyBTaxCode: { type: 'string' },
+          contractValueVnd: { type: 'number' },
+          variant: { type: 'string', enum: ['seller_friendly', 'balanced', 'buyer_protective'] },
+        },
+        required: ['templateId'],
+      },
+    },
+  },
+  review_contract: {
+    type: 'function',
+    function: {
+      name: 'review_contract',
+      description: 'Rà soát rủi ro điều khoản hợp đồng và xuất Báo cáo Pháp lý 8 phần chuẩn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          contractId: { type: 'string' },
+        },
+        required: ['contractId'],
+      },
+    },
+  },
 };
 
 export function getToolsForAgent(allowedTools: ToolName[]): LlmToolDefinition[] {
@@ -972,8 +1090,16 @@ export async function executeAgentTool(
           body: JSON.stringify({ url }),
         });
         if (res.ok) {
-          const data = (await res.json()) as Record<string, unknown>;
-          return { ok: true, output: data };
+          const data = (await res.json()) as { excerpt?: string; [k: string]: unknown };
+          const san = sanitizeExternalUntrustedContent(String(data.excerpt || ''), url);
+          return {
+            ok: true,
+            output: {
+              ...data,
+              excerpt: san.sanitizedText,
+              hadInjectionAttempt: san.hadInjectionAttempt,
+            },
+          };
         }
       } catch {
         // Fallback
@@ -2315,6 +2441,180 @@ export async function executeAgentTool(
         },
       });
       return { ok: true, output: { syncId: queued.id, status: queued.status } };
+    }
+
+    case 'affiliate_search_offers': {
+      const niche = String(args.niche || store.settings.affiliate.priorityNiches[0] || 'Gia dụng thông minh');
+      const networkId = String(args.networkId || 'shopee');
+      const res = await store.runAffiliateScoutCycle(niche, networkId);
+      return {
+        ok: true,
+        output: {
+          niche,
+          networkId,
+          foundCount: res.products.length,
+          winCount: res.scores.filter((s) => s.label === 'win').length,
+          topProduct: res.products[0]
+            ? { id: res.products[0].id, name: res.products[0].name, score: res.scores[0]?.totalScore }
+            : null,
+        },
+      };
+    }
+
+    case 'affiliate_create_link': {
+      const productId = String(args.productId || '');
+      const subId = String(args.subId || `sub_${now.toString(36).slice(-4)}`);
+      try {
+        const link = await store.createAffiliateTrackedLink({
+          productId,
+          subId,
+          campaignId: args.campaignId ? String(args.campaignId) : undefined,
+          createdBy: agentId,
+        });
+        return {
+          ok: true,
+          output: {
+            linkId: link.id,
+            subId: link.subId,
+            affIdUsed: link.affIdUsed,
+            isAffIdVerified: link.isAffIdVerified,
+            shortUrl: link.shortUrl,
+            affiliateUrl: link.affiliateUrl,
+          },
+        };
+      } catch (err) {
+        return { ok: false, output: { error: err instanceof Error ? err.message : 'Không thể tạo link Affiliate' } };
+      }
+    }
+
+    case 'affiliate_check_links': {
+      const summary = await store.checkAllAffiliateLinksHealth();
+      return { ok: true, output: summary };
+    }
+
+    case 'affiliate_compliance_check': {
+      const pieceId = String(args.contentPieceId || '');
+      const piece = store.affiliateContent.find((c) => c.id === pieceId);
+      if (!piece) return { ok: false, output: { error: 'Không tìm thấy nội dung Affiliate để kiểm duyệt.' } };
+      const link = store.trackedLinks.find((l) => l.id === piece.trackedLinkId);
+      const chk = runAffiliateComplianceCheck({
+        piece,
+        trackedLink: link,
+        settings: store.settings.affiliate,
+      });
+      await store.putAffiliateContent({
+        ...piece,
+        complianceStatus: chk.passed ? 'passed' : 'blocked',
+        complianceReasons: chk.reasons,
+        reviewedBy: agentId,
+      });
+      return { ok: chk.passed, output: { passed: chk.passed, reasons: chk.reasons } };
+    }
+
+    case 'request_collab': {
+      const targetDept = String(args.targetDepartment || 'marketing') as DepartmentId;
+      const targetHead =
+        store.agents.find((a) => a.department === targetDept && a.role === 'Dept Head' && a.employmentStatus !== 'archived') ||
+        store.agents.find((a) => a.department === targetDept && a.employmentStatus !== 'archived') ||
+        agent;
+      const taskCode = `#T-${101 + store.tasks.length}`;
+      const collabTask = {
+        id: `task_col_${now}`,
+        taskCode,
+        title: `[Phối hợp ${agent.department} → ${targetDept}] ${String(args.title || 'Yêu cầu hỗ trợ')}`,
+        description: String(args.description || ''),
+        definitionOfDone: 'Hoàn tất đầu việc phối hợp liên khối và phản hồi trên kênh chung.',
+        expectedDeliverable: 'Tài liệu / Thiết kế / SEO hỗ trợ',
+        department: targetDept,
+        assignedTo: targetHead.id,
+        createdBy: agentId,
+        status: 'todo' as const,
+        priority: 'high' as const,
+        etaMinutes: 20,
+        etaAt: now + 20 * 60_000,
+        progressPercent: 0,
+        lastProgressAt: now,
+        deliverables: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      await store.putTask(collabTask);
+      await store.addMessage({
+        channelId: targetDept,
+        senderId: agentId,
+        senderName: agent.name,
+        senderTitle: agent.title,
+        department: agent.department,
+        content: `**Yêu cầu phối hợp liên khối (${taskCode}):** ${collabTask.title}\n${collabTask.description}`,
+        busType: 'request',
+      });
+      return { ok: true, output: { taskId: collabTask.id, taskCode, assignedTo: targetHead.name } };
+    }
+
+    case 'legal_research': {
+      const query = String(args.query || '').toLowerCase();
+      const matched = store.legalDocuments.filter(
+        (d) =>
+          d.title.toLowerCase().includes(query) ||
+          d.docNumber.toLowerCase().includes(query) ||
+          d.keyArticlesSummary.some((k) => k.toLowerCase().includes(query))
+      );
+      const list = (matched.length > 0 ? matched : store.legalDocuments.slice(0, 4)).map((d) => ({
+        docNumber: d.docNumber,
+        title: d.title,
+        effectiveStatus: d.effectiveStatus,
+        sourceUrl: d.sourceUrl,
+        lastCheckedAt: d.lastCheckedAt,
+        summary: d.keyArticlesSummary,
+      }));
+      return { ok: true, output: { count: list.length, documents: list } };
+    }
+
+    case 'draft_contract': {
+      const tplId = String(args.templateId || 'tpl_saas_preschool');
+      const ctr = await store.draftNewContract({
+        templateId: tplId,
+        variant: (args.variant as 'seller_friendly' | 'balanced' | 'buyer_protective') || 'balanced',
+        partyBInput: {
+          name: args.partyBName ? String(args.partyBName) : undefined,
+          taxCode: args.partyBTaxCode ? String(args.partyBTaxCode) : undefined,
+        },
+        contractValueVnd: Number(args.contractValueVnd || 0),
+        involvesChildrenData: tplId.includes('preschool') || tplId.includes('dpa'),
+        createdBy: agentId,
+      });
+      return {
+        ok: true,
+        output: {
+          contractId: ctr.id,
+          contractCode: ctr.contractCode,
+          missingFields: ctr.missingFields,
+          requiresRealLawyer: ctr.requiresRealLawyer,
+        },
+      };
+    }
+
+    case 'review_contract': {
+      const contractId = String(args.contractId || '');
+      const ctr = store.contracts.find((c) => c.id === contractId || c.contractCode === contractId);
+      if (!ctr) return { ok: false, output: { error: 'Không tìm thấy hợp đồng cần rà soát.' } };
+      const report = buildLegalReport({
+        contract: ctr,
+        reportType: 'contract_review',
+        title: `Báo cáo rà soát ${ctr.contractCode}: ${ctr.title}`,
+        legalDocs: store.legalDocuments,
+        createdBy: agentId,
+      });
+      await store.putLegalReport(report);
+      return {
+        ok: true,
+        output: {
+          reportId: report.id,
+          unverifiedExcludedCount: report.unverifiedExcludedCount,
+          risksCount: report.risks.length,
+          summaryFiveLines: report.summaryFiveLines,
+        },
+      };
     }
 
     default:

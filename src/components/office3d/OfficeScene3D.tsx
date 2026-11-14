@@ -6,13 +6,14 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Activity, Eye, Focus } from 'lucide-react';
 import { useCompanyStore } from '../../store/useCompanyStore';
+import { floorFromY } from '../../engine/waypoints';
 import { AgentCharacter } from './AgentCharacter';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 import { OfficeArchitecture } from './OfficeArchitecture';
 import { SceneDiagnosticsOverlay, SceneDiagnosticsProbe } from './SceneDiagnostics';
 
-const OVERVIEW_CAM_POS: [number, number, number] = [20, 17, 21];
-const OVERVIEW_LOOK_AT: [number, number, number] = [0, 1.8, 0];
+const OVERVIEW_CAM_POS: [number, number, number] = [23, 21, 24];
+const OVERVIEW_LOOK_AT: [number, number, number] = [0, 3.6, 0];
 
 const MEETING_MINIMAP_ROOM = {
   id: 'room-meeting',
@@ -200,11 +201,26 @@ export function OfficeScene3D() {
         if (visibleFloor === 'all') return true;
         const rt = runtimes[a.id];
         const y = rt ? rt.currentPosition[1] : a.deskPosition[1];
-        const currentFloor = y > 1.9 ? 2 : 1;
-        return currentFloor === visibleFloor;
+        return floorFromY(y) === visibleFloor;
       }),
     [activeAgents, visibleFloor, runtimes]
   );
+
+  // Dispose geometries/materials inside scene root cleanly on unmount
+  useEffect(() => {
+    const root = buildingRootRef.current;
+    return () => {
+      if (!root) return;
+      root.traverse((obj) => {
+        const m = obj as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        if (m.material) {
+          const mats = Array.isArray(m.material) ? m.material : [m.material];
+          for (const mat of mats) mat.dispose();
+        }
+      });
+    };
+  }, []);
 
   const minimapRooms = useMemo(
     () => [
@@ -327,6 +343,8 @@ export function OfficeScene3D() {
           <pointLight position={[5.0, 3.0, -4.5]} intensity={isNight ? 11 : 4} distance={18} color="#FDBA74" />
           <pointLight position={[3.5, 6.8, 3.5]} intensity={isNight ? 11 : 4} distance={20} color="#FDE68A" />
           <pointLight position={[-8.0, 6.8, -4.5]} intensity={isNight ? 10 : 4} distance={18} color="#F9A8D4" />
+          <pointLight position={[0, 10.6, 0]} intensity={isNight ? 11 : 4.5} distance={24} color="#5EEAD4" />
+          <pointLight position={[6.0, 10.6, 4.5]} intensity={isNight ? 10 : 4} distance={20} color="#38BDF8" />
 
           <Suspense fallback={null}>
             <Bounds clip margin={1.15}>
@@ -402,7 +420,7 @@ export function OfficeScene3D() {
           <div className="w-60 rounded-xl bg-slate-950/95 border border-slate-700/80 p-2.5 shadow-xl text-slate-100">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-semibold text-slate-300">
-                Mini-map · {visibleFloor === 'all' ? 'Cả 2 tầng' : `Tầng ${visibleFloor}`} ({activeAgents.length} NV)
+                Mini-map · {visibleFloor === 'all' ? 'Cả 3 tầng' : `Tầng ${visibleFloor}`} ({activeAgents.length} NV)
               </span>
               <button
                 type="button"
@@ -471,7 +489,7 @@ export function OfficeScene3D() {
         )}
 
         <div className="flex items-center gap-1.5 rounded-xl bg-slate-950/95 border border-slate-700/80 p-1 shadow-lg">
-          {(['all', 1, 2] as const).map((fl) => (
+          {(['all', 1, 2, 3] as const).map((fl) => (
             <button
               key={String(fl)}
               type="button"
@@ -480,7 +498,7 @@ export function OfficeScene3D() {
                 visibleFloor === fl ? 'bg-sky-600 text-white' : 'text-slate-300 hover:bg-slate-800'
               }`}
             >
-              {fl === 'all' ? '2 Tầng' : `Tầng ${fl}`}
+              {fl === 'all' ? '3 Tầng' : `Tầng ${fl}`}
             </button>
           ))}
           <button

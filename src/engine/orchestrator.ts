@@ -1226,6 +1226,46 @@ export async function handleCeoChatCommand(rawText: string, activeChannel: ChatC
     return;
   }
 
+  if (text.startsWith('/soan-hop-dong')) {
+    const hint = foldVietnamese(text.replace(/^\/soan-hop-dong\s*/i, '').trim());
+    let tplId = 'tpl_saas_edu';
+    if (hint.includes('mam non') || hint.includes('preschool')) tplId = 'tpl_saas_preschool';
+    else if (hint.includes('kho') || hint.includes('warehouse')) tplId = 'tpl_saas_warehouse';
+    else if (hint.includes('web') || hint.includes('thiet ke')) tplId = 'tpl_website_dev';
+    else if (hint.includes('nda') || hint.includes('bao mat')) tplId = 'tpl_nda';
+    else if (hint.includes('ctv') || hint.includes('affiliate')) tplId = 'tpl_affiliate_ctv';
+    else if (hint.includes('lao dong')) tplId = 'tpl_labor_vn';
+    else if (hint.includes('dich vu') || hint.includes('sla')) tplId = 'tpl_sla_b2b';
+
+    const draft = await store.draftNewContract({
+      templateId: tplId,
+      variant: 'balanced',
+      partyBInput: {
+        name: '[CẦN BỔ SUNG]',
+        taxCode: '[CẦN BỔ SUNG]',
+        address: '[CẦN BỔ SUNG]',
+        representative: '[CẦN BỔ SUNG]',
+        sourceLabel: 'Yêu cầu qua Chat CEO',
+      },
+      contractValueVnd: 0,
+      involvesChildrenData: tplId === 'tpl_saas_preschool',
+      createdBy: 'contract_drafter',
+    });
+    store.setActiveTab('legal');
+    await store.addMessage({
+      channelId: activeChannel,
+      senderId: 'contract_drafter',
+      senderName: getLiveAgentById('contract_drafter')?.name || 'Chuyên viên Soạn thảo HĐ',
+      senderTitle: 'Contract Drafter',
+      department: 'legal',
+      content: `Đã khởi tạo bản nháp **${draft.contractCode}** (*${draft.title}*). Các trường Bên B còn thiếu được đánh dấu **[CẦN BỔ SUNG]** và sẵn sàng trong tab **Pháp chế**.`,
+      busType: 'report',
+      cardType: 'contract_card',
+      cardData: { contractId: draft.id, contractCode: draft.contractCode, templateId: tplId },
+    });
+    return;
+  }
+
   // 6. Direct Message Channel
   if (activeChannel.startsWith('dm:')) {
     const targetId = activeChannel.replace('dm:', '');
@@ -1244,6 +1284,13 @@ export async function handleCeoChatCommand(rawText: string, activeChannel: ChatC
     product: 'pm',
     data: 'data_analyst',
     backoffice: 'cfo',
+    legal: 'legal',
+    affiliate: 'aff_manager',
+    aff_exec: 'aff_manager',
+    aff_research: 'aff_scout_home',
+    aff_creative: 'aff_review_writer',
+    aff_channel: 'aff_channel_mgr',
+    aff_analytics: 'aff_analyst',
     ask_ceo: 'secretary',
     meeting: 'secretary',
   };
@@ -1268,10 +1315,18 @@ export function startBackgroundSchedulers() {
   let lastAutopilotRun = 0;
   let lastMarketingRun = 0;
   let lastDigestKey = '';
+  let lastHeapWarnAt = 0;
 
   autopilotTimer = window.setInterval(() => {
-    const s = useCompanyStore.getState().settings;
+    const store = useCompanyStore.getState();
+    const s = store.settings;
     if (s.paused || s.killSwitchActive) return;
+
+    // Durable Jobs tick (24/7 persistence queue)
+    store.runPendingDurableJobs().catch((err) => {
+      console.warn('[DurableQueue tick]', err);
+    });
+
     const intervalMs = (Math.max(1, s.autopilotIntervalMinutes) * 60_000) / s.simulationSpeed;
     if (s.autopilotEnabled && Date.now() - lastAutopilotRun >= intervalMs) {
       lastAutopilotRun = Date.now();
@@ -1283,10 +1338,16 @@ export function startBackgroundSchedulers() {
     }
   }, 15000);
 
-  // Watchdog Timer (BỔ SUNG F): ETA +20% delay alerts, 15m stall escalation, Sleep-idle, Daily Digest
+  // Watchdog Timer (BỔ SUNG F + J): ETA +20% delay alerts, 15m stall escalation, Sleep-idle, Daily Digest, Heap watch
   overdueTimer = window.setInterval(() => {
     const store = useCompanyStore.getState();
     const now = Date.now();
+
+    const perfMem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+    if (perfMem && perfMem.usedJSHeapSize / (1024 * 1024) > 520 && now - lastHeapWarnAt > 300_000) {
+      lastHeapWarnAt = now;
+      store.addHealthLog('warn', 'runtime', `Bộ nhớ JS Heap cao: ${Math.round(perfMem.usedJSHeapSize / (1024 * 1024))} MB`);
+    }
 
     // 1. Overdue AskCeo
     const overdueMs = (store.settings.zaloOverdueHours || 2) * 3600_000;

@@ -30,6 +30,7 @@ import { ChatChannelId, ChatMessage, TaskDeliverableLink } from '../../types';
 
 const SLASH_COMMANDS = [
   { cmd: '/giao-viec ', desc: 'Giao nhiệm vụ mới kèm DoD & ETA' },
+  { cmd: '/soan-hop-dong ', desc: 'Phòng Pháp chế soạn hợp đồng mẫu chuẩn luật VN' },
   { cmd: '/tiendo', desc: 'Xem tiến độ thực tế mọi việc từ DB' },
   { cmd: '/bao-cao', desc: 'Data Analyst tổng hợp KPI & phiếu chi thực tế' },
   { cmd: '/tim-khach ', desc: 'Lead Hunter tìm khách hàng công khai' },
@@ -95,6 +96,7 @@ export function ChatPanel() {
       { id: 'all', label: '#Tất cả' },
       { id: 'ask_ceo', label: 'Hỏi CEO' },
       { id: 'meeting', label: '#Họp' },
+      { id: 'affiliate', label: '#Affiliate (Tổng)' },
     ];
     for (const d of departments) {
       if (d.id === 'reception') continue;
@@ -961,6 +963,76 @@ export function ChatPanel() {
                       className="px-2 py-1 rounded bg-amber-600 text-white text-[11px] font-semibold cursor-pointer"
                     >
                       Mở Task
+                    </button>
+                  </div>
+                )}
+
+                {/* BỔ SUNG K: Contract Card */}
+                {msg.cardType === 'contract_card' && msg.cardData && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-indigo-500/40 flex items-center justify-between gap-2 text-[11px]">
+                    <div>
+                      <div className="font-bold text-indigo-500 font-mono-num">
+                        {String(msg.cardData.contractCode || '#HD')} · Dự thảo Hợp đồng
+                      </div>
+                      <div className="text-slate-500 dark:text-slate-400">
+                        Kiểm tra trường [CẦN BỔ SUNG], điều khoản rủi ro & xuất DOCX/PDF
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('legal')}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shrink-0 cursor-pointer"
+                    >
+                      Mở Pháp chế
+                    </button>
+                  </div>
+                )}
+
+                {/* BỔ SUNG K: Legal Report Card */}
+                {msg.cardType === 'legal_report_card' && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-indigo-500/40 flex items-center justify-between gap-2 text-[11px]">
+                    <span className="font-medium">Báo cáo Pháp lý 8 phần đã lưu vào Phòng Pháp chế</span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('legal')}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-semibold shrink-0 cursor-pointer"
+                    >
+                      Xem Báo cáo
+                    </button>
+                  </div>
+                )}
+
+                {/* BỔ SUNG I: Affiliate Win Card */}
+                {msg.cardType === 'affiliate_win_card' && msg.cardData && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-emerald-500/40 flex items-center justify-between gap-2 text-[11px]">
+                    <div>
+                      <div className="font-bold text-emerald-500">
+                        Săn Win · Ngách {String(msg.cardData.niche || 'Shopee')} · {String(msg.cardData.score ?? 0)}/100đ
+                      </div>
+                      <div className="text-slate-500 dark:text-slate-400">
+                        Mở Affiliate Tầng 3 để tạo link gắn Aff ID CEO & lên kịch bản review
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('affiliate')}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shrink-0 cursor-pointer"
+                    >
+                      Mở Affiliate
+                    </button>
+                  </div>
+                )}
+
+                {/* BỔ SUNG J: Health Alert Card */}
+                {msg.cardType === 'health_alert_card' && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/40 flex items-center justify-between gap-2 text-[11px]">
+                    <span className="font-semibold text-rose-500">Cảnh báo Sức khỏe Hệ thống 24/7</span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('health')}
+                      className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-semibold shrink-0 cursor-pointer"
+                    >
+                      Kiểm tra 24/7
                     </button>
                   </div>
                 )}

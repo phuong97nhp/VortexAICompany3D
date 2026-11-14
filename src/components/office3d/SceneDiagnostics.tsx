@@ -6,7 +6,7 @@ import { useCompanyStore } from '../../store/useCompanyStore';
 import { RoomMeshStat } from '../../types';
 
 interface ProbeProps {
-  visibleFloor: 'all' | 1 | 2;
+  visibleFloor: 'all' | 1 | 2 | 3;
   rendererInfo: string;
   isSoftwareGl: boolean;
   webglError: string | null;

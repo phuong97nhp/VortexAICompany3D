@@ -29,6 +29,7 @@ import { cfoAgent } from './cfo';
 import { legalAgent } from './legal';
 import { hrAgent } from './hr';
 import { receptionistAgent } from './receptionist';
+import { FLOOR3_AFFILIATE_AGENTS, LEGAL_TEAM_AGENTS } from './floor3_and_legal';
 
 export const AGENTS: AgentProfile[] = [
   secretaryAgent,
@@ -59,8 +60,10 @@ export const AGENTS: AgentProfile[] = [
   dataAnalystAgent,
   cfoAgent,
   legalAgent,
+  ...LEGAL_TEAM_AGENTS,
   hrAgent,
   receptionistAgent,
+  ...FLOOR3_AFFILIATE_AGENTS,
 ];
 
 export const AGENT_MAP: Record<string, AgentProfile> = Object.fromEntries(

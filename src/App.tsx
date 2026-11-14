@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, RotateCcw, Trash2, WifiOff, X } from 'lucide-react';
 import { AgentProfileModal } from './components/AgentProfileModal';
 import { CeoSecurityModal } from './components/CeoSecurityModal';
 import { LeftOrgSidebar } from './components/LeftOrgSidebar';
+import { OnboardingWizardModal } from './components/OnboardingWizardModal';
 import { OfficeScene3D } from './components/office3d/OfficeScene3D';
 import { RightWorkspacePanel } from './components/RightWorkspacePanel';
 import { TopBar } from './components/TopBar';
@@ -11,7 +12,10 @@ import { RightPanelTab, useCompanyStore } from './store/useCompanyStore';
 
 export default function App() {
   const init = useCompanyStore((s) => s.init);
-  const loading = useCompanyStore((s) => s.loading);
+  const retryBoot = useCompanyStore((s) => s.retryBoot);
+  const bootStatus = useCompanyStore((s) => s.bootStatus);
+  const bootError = useCompanyStore((s) => s.bootError);
+  const realtimeStatus = useCompanyStore((s) => s.realtimeStatus);
   const settings = useCompanyStore((s) => s.settings);
   const bannerAlert = useCompanyStore((s) => s.bannerAlert);
   const setBannerAlert = useCompanyStore((s) => s.setBannerAlert);
@@ -25,22 +29,24 @@ export default function App() {
 
   useEffect(() => {
     init().then(() => {
-      startBackgroundSchedulers();
+      if (useCompanyStore.getState().bootStatus === 'ready') {
+        startBackgroundSchedulers();
+      }
     });
   }, [init]);
 
-  // Keyboard shortcuts (Alt + 1..9 to switch tabs)
+  // Keyboard shortcuts (Alt + 1..9 to switch tabs, Alt+D for 3D diagnostics)
   useEffect(() => {
     const tabMap: RightPanelTab[] = [
       'chat',
       'tasks',
       'crm',
       'approvals',
+      'affiliate',
+      'legal',
       'finance',
-      'docs',
-      'rbac',
-      'vault',
-      'tokens',
+      'health',
+      'settings',
     ];
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && (e.key === 'd' || e.key === 'D')) {
@@ -61,12 +67,75 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [setActiveTab, toggle3dDiagnostics]);
 
-  if (loading) {
+  const handleHardResetLocalData = async () => {
+    try {
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase('AICompany3D_DB_v1');
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    } catch {
+      // ignore
+    }
+    try {
+      localStorage.clear();
+    } catch {
+      // ignore
+    }
+    window.location.reload();
+  };
+
+  if (bootStatus === 'booting') {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-slate-200">
-        <div className="text-center space-y-2">
-          <div className="w-8 h-8 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto" />
+        <div className="text-center space-y-2.5">
+          <div className="w-9 h-9 border-2 border-sky-500 border-t-transparent rounded-full animate-spin mx-auto" />
           <div className="text-sm font-semibold">Đang khởi tạo Văn phòng Ảo 3D – AI Company...</div>
+          <div className="text-xs text-slate-400">Kiểm tra schema dữ liệu, phục hồi hàng đợi 24/7 & nạp 3 tầng...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (bootStatus === 'error') {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-slate-950 text-slate-100 p-6">
+        <div className="max-w-lg w-full rounded-2xl border border-rose-500/40 bg-slate-900 p-6 shadow-2xl space-y-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-6 h-6 text-rose-400 shrink-0 mt-0.5" />
+            <div>
+              <h1 className="text-base font-bold text-white">Không thể khởi động dữ liệu Văn phòng Ảo</h1>
+              <p className="text-xs text-slate-300 mt-1">
+                Hệ thống đã giữ nguyên trang chờ an toàn trước khi nạp cảnh 3D. Chủ tịch có thể thử lại hoặc đặt lại dữ liệu cục bộ.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-xl bg-slate-950 border border-slate-800 p-3 text-xs font-mono text-rose-300 break-words">
+            {bootError || 'Lỗi khởi tạo IndexedDB / Store'}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                retryBoot().then(() => {
+                  if (useCompanyStore.getState().bootStatus === 'ready') startBackgroundSchedulers();
+                })
+              }
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Thử khởi động lại</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleHardResetLocalData}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Đặt lại dữ liệu cục bộ</span>
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -80,22 +149,30 @@ export default function App() {
         onOpenSecurityModal={() => setSecurityModalOpen(true)}
       />
 
-      {/* BỔ SUNG H: Slim Environment Mode Banner */}
+      {/* Slim Environment Mode Banner */}
       {settings.envMode === 'sandbox' && (
         <div className="px-4 py-1 bg-amber-500/15 border-b border-amber-500/30 text-amber-700 dark:text-amber-300 text-[11px] font-medium flex items-center justify-between gap-2 z-20">
           <span>
             <strong>CHẾ ĐỘ SANDBOX</strong> — Dữ liệu mô phỏng, chưa kết nối phần mềm thật (Hub.ChuyenWeb)
           </span>
-          <button
-            type="button"
-            onClick={() => {
-              setShowRight(true);
-              setActiveTab('hubcw');
-            }}
-            className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-semibold text-[10.5px] cursor-pointer"
-          >
-            Kết nối phần mềm
-          </button>
+          <div className="flex items-center gap-2">
+            {(realtimeStatus === 'reconnecting' || realtimeStatus === 'offline') && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/80 text-slate-300 text-[10px]">
+                <WifiOff className="w-3 h-3" />
+                {realtimeStatus === 'reconnecting' ? 'Đang nối lại luồng SSE...' : 'SSE tạm ngắt'}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowRight(true);
+                setActiveTab('hubcw');
+              }}
+              className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-semibold text-[10.5px] cursor-pointer"
+            >
+              Kết nối phần mềm
+            </button>
+          </div>
         </div>
       )}
       {settings.envMode === 'read_only' && (
@@ -172,6 +249,7 @@ export default function App() {
       </main>
 
       <CeoSecurityModal open={securityModalOpen} onClose={() => setSecurityModalOpen(false)} />
+      <OnboardingWizardModal />
     </div>
   );
 }

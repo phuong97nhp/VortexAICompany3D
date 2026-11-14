@@ -115,7 +115,68 @@ function PartitionWall({
   );
 }
 
-export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 | 2 }) {
+function AnimatedElevator({ showF1, showF2, showF3 }: { showF1: boolean; showF2: boolean; showF3: boolean }) {
+  const cabinRef = useRef<THREE.Group>(null);
+  const targetYRef = useRef(0.1);
+
+  useFrame((state, delta) => {
+    if (!cabinRef.current) return;
+    const runtimes = useCompanyStore.getState().runtimes;
+    let activeElevY: number | null = null;
+    for (const rt of Object.values(runtimes)) {
+      if (rt.status === 'walking' && Math.abs(rt.currentPosition[0] + 2.8) < 2.2 && Math.abs(rt.currentPosition[2]) < 1.8) {
+        activeElevY = rt.currentPosition[1];
+        break;
+      }
+    }
+    if (activeElevY !== null) {
+      targetYRef.current = activeElevY;
+    } else {
+      const cycle = Math.floor((state.clock.elapsedTime / 7) % 3);
+      targetYRef.current = cycle === 0 ? 0 : cycle === 1 ? 3.8 : 7.6;
+    }
+    cabinRef.current.position.y = THREE.MathUtils.damp(cabinRef.current.position.y, targetYRef.current, 4.5, Math.min(delta, 0.08));
+  });
+
+  if (!showF1 && !showF2 && !showF3) return null;
+  const maxShaftH = showF3 ? 10.6 : showF2 ? 6.8 : 3.2;
+
+  return (
+    <group position={[-4.45, 0, 0]}>
+      {/* Glass Elevator Shaft Frame */}
+      <mesh position={[0, maxShaftH / 2, 0]}>
+        <boxGeometry args={[1.35, maxShaftH, 1.35]} />
+        <meshStandardMaterial color="#38BDF8" transparent opacity={0.14} roughness={0.1} metalness={0.3} depthWrite={false} />
+      </mesh>
+      <mesh position={[-0.65, maxShaftH / 2, -0.65]}>
+        <boxGeometry args={[0.07, maxShaftH, 0.07]} />
+        <meshStandardMaterial color="#334155" metalness={0.6} roughness={0.35} />
+      </mesh>
+      <mesh position={[0.65, maxShaftH / 2, -0.65]}>
+        <boxGeometry args={[0.07, maxShaftH, 0.07]} />
+        <meshStandardMaterial color="#334155" metalness={0.6} roughness={0.35} />
+      </mesh>
+
+      {/* Moving Cabin */}
+      <group ref={cabinRef} position={[0, 0, 0]}>
+        <mesh position={[0, 0.06, 0]} castShadow>
+          <boxGeometry args={[1.18, 0.12, 1.18]} />
+          <meshStandardMaterial color="#0F172A" metalness={0.5} roughness={0.3} />
+        </mesh>
+        <mesh position={[0, 1.05, 0]}>
+          <boxGeometry args={[1.14, 1.88, 1.14]} />
+          <meshStandardMaterial color="#0EA5E9" emissive="#0EA5E9" emissiveIntensity={0.22} transparent opacity={0.34} />
+        </mesh>
+        <mesh position={[0, 2.02, 0]}>
+          <boxGeometry args={[1.18, 0.08, 1.18]} />
+          <meshStandardMaterial color="#1E293B" metalness={0.6} roughness={0.3} />
+        </mesh>
+      </group>
+    </group>
+  );
+}
+
+export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 | 2 | 3 }) {
   const selectRoom = useCompanyStore((s) => s.selectRoom);
   const selectedRoomId = useCompanyStore((s) => s.selectedRoomId);
   const dayNightMode = useCompanyStore((s) => s.settings.dayNightMode);
@@ -133,6 +194,7 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
 
   const showF1 = visibleFloor === 'all' || visibleFloor === 1;
   const showF2 = visibleFloor === 'all' || visibleFloor === 2;
+  const showF3 = visibleFloor === 'all' || visibleFloor === 3;
 
   const activeAgents = useMemo(
     () => agents.filter((a) => a.employmentStatus !== 'archived'),
@@ -287,14 +349,14 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
   const groundColor = isNight ? '#1E293B' : '#94A3B8';
   const floor1Color = isNight ? '#334155' : '#E2E8F0';
   const floor2Color = isNight ? '#3B4963' : '#F1F5F9';
+  const floor3Color = isNight ? '#312E59' : '#EEF2FF';
   const wallColor = isNight ? '#475569' : '#CBD5E1';
   const wallTrimColor = isNight ? '#64748B' : '#64748B';
   const corridorColor = isNight ? '#283548' : '#CBD5E1';
 
-  const renderFloorPartitions = (baseY: number, floorNum: 1 | 2) => {
+  const renderFloorPartitions = (baseY: number, floorNum: 1 | 2 | 3) => {
     const h = 2.4;
     const cy = baseY + h / 2;
-    const isF2 = floorNum === 2;
 
     return (
       <group>
@@ -312,7 +374,7 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
           <meshStandardMaterial color={corridorColor} roughness={0.75} />
         </mesh>
 
-        {!isF2 ? (
+        {floorNum === 1 && (
           <>
             <PartitionWall position={[-10.575, cy, -1.2]} args={[4.85, h, 0.12]} color={wallColor} />
             <PartitionWall position={[-0.75, cy, -1.2]} args={[11.2, h, 0.12]} color={wallColor} />
@@ -324,33 +386,91 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
             <PartitionWall position={[8.95, cy, 1.2]} args={[8.1, h, 0.12]} color={wallColor} />
             <PartitionWall position={[-5.0, cy, 5.1]} args={[0.12, h, 7.8]} color={wallColor} />
           </>
-        ) : (
+        )}
+
+        {floorNum === 2 && (
           <>
+            {/* North corridor z=-1.2 */}
             <PartitionWall position={[-11.2, cy, -1.2]} args={[3.6, h, 0.12]} color={wallColor} />
             <PartitionWall position={[-2.0, cy, -1.2]} args={[11.2, h, 0.12]} color={wallColor} />
             <PartitionWall position={[9.2, cy, -1.2]} args={[7.6, h, 0.12]} color={wallColor} />
             <PartitionWall position={[-4.0, cy, -5.1]} args={[0.12, h, 7.8]} color={wallColor} />
 
-            <PartitionWall position={[-11.2, cy, 1.2]} args={[3.6, h, 0.12]} color={wallColor} />
-            <PartitionWall position={[-4.375, cy, 1.2]} args={[6.45, h, 0.12]} color={wallColor} />
-            <PartitionWall position={[4.0, cy, 1.2]} args={[6.7, h, 0.12]} color={wallColor} />
-            <PartitionWall position={[11.075, cy, 1.2]} args={[3.85, h, 0.12]} color={wallColor} />
+            {/* South corridor z=1.2 with doorway gaps for Product, Data, Backoffice, Legal */}
+            <PartitionWall position={[-11.1, cy, 1.2]} args={[3.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[-5.9, cy, 1.2]} args={[3.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[-2.75, cy, 1.2]} args={[2.5, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[1.15, cy, 1.2]} args={[2.5, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[3.6, cy, 1.2]} args={[2.4, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[7.4, cy, 1.2]} args={[2.4, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[9.35, cy, 1.2]} args={[1.5, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[12.25, cy, 1.2]} args={[1.5, h, 0.12]} color={wallColor} />
+            {/* South room dividers */}
             <PartitionWall position={[-4.0, cy, 5.1]} args={[0.12, h, 7.8]} color={wallColor} />
-            <PartitionWall position={[3.5, cy, 5.1]} args={[0.12, h, 7.8]} color={wallColor} />
+            <PartitionWall position={[2.4, cy, 5.1]} args={[0.12, h, 7.8]} color={wallColor} />
+            <PartitionWall position={[8.6, cy, 5.1]} args={[0.12, h, 7.8]} color={wallColor} />
+          </>
+        )}
+
+        {floorNum === 3 && (
+          <>
+            {/* North corridor z=-1.2 for Exec, Research, Analytics */}
+            <PartitionWall position={[-11.35, cy, -1.2]} args={[3.3, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[-6.65, cy, -1.2]} args={[3.3, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[-3.1, cy, -1.2]} args={[3.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[2.1, cy, -1.2]} args={[3.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[5.9, cy, -1.2]} args={[3.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[11.1, cy, -1.2]} args={[3.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[-5.0, cy, -5.1]} args={[0.12, h, 7.8]} color={wallColor} />
+            <PartitionWall position={[4.0, cy, -5.1]} args={[0.12, h, 7.8]} color={wallColor} />
+
+            {/* South corridor z=1.2 for Creative Studio & Channel/CRO */}
+            <PartitionWall position={[-10.1, cy, 1.2]} args={[5.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[-2.9, cy, 1.2]} args={[5.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[2.9, cy, 1.2]} args={[5.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[10.1, cy, 1.2]} args={[5.8, h, 0.12]} color={wallColor} />
+            <PartitionWall position={[0, cy, 5.1]} args={[0.12, h, 7.8]} color={wallColor} />
           </>
         )}
       </group>
     );
   };
 
+  const renderStairFlight = (baseY: number) => (
+    <group position={[-2.8, baseY, 0]}>
+      {Array.from({ length: 12 }).map((_, i) => (
+        <mesh
+          key={i}
+          position={[-1.0 + i * 0.18, 0.16 + i * 0.31, 0]}
+          castShadow
+          receiveShadow
+        >
+          <boxGeometry args={[0.24, 0.14, 1.55]} />
+          <meshStandardMaterial color="#64748B" roughness={0.45} metalness={0.3} />
+        </mesh>
+      ))}
+      <mesh position={[0, 2.05, -0.78]} rotation={[0, 0, 1.02]}>
+        <boxGeometry args={[4.4, 0.06, 0.06]} />
+        <meshStandardMaterial color="#38BDF8" roughness={0.3} metalness={0.5} />
+      </mesh>
+      <mesh position={[0, 2.05, 0.78]} rotation={[0, 0, 1.02]}>
+        <boxGeometry args={[4.4, 0.06, 0.06]} />
+        <meshStandardMaterial color="#38BDF8" roughness={0.3} metalness={0.5} />
+      </mesh>
+    </group>
+  );
+
   return (
     <group name="office-building-wrapper">
       <group name="shared-structure" userData={{ roomId: 'shared-structure' }}>
-        {/* Exterior Ground Plaza expanding smoothly for custom wings & overflow annex */}
+        {/* Exterior Ground Plaza */}
         <mesh position={[wingBounds.cx, -0.24, wingBounds.cz]} receiveShadow>
           <boxGeometry args={[Math.max(38, wingBounds.width + 11.6), 0.24, Math.max(28, wingBounds.depth + 9.6)]} />
           <meshStandardMaterial color={groundColor} roughness={0.85} />
         </mesh>
+
+        {/* Animated 3-Floor Glass Elevator */}
+        <AnimatedElevator showF1={showF1} showF2={showF2} showF3={showF3} />
 
         {/* FLOOR 1 STRUCTURE */}
         {showF1 && (
@@ -361,29 +481,7 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
             </mesh>
 
             {renderFloorPartitions(0, 1)}
-
-            {/* Central Staircase */}
-            <group position={[-2.8, 0, 0]}>
-              {Array.from({ length: 12 }).map((_, i) => (
-                <mesh
-                  key={i}
-                  position={[-1.0 + i * 0.18, 0.16 + i * 0.31, 0]}
-                  castShadow
-                  receiveShadow
-                >
-                  <boxGeometry args={[0.24, 0.14, 1.55]} />
-                  <meshStandardMaterial color="#64748B" roughness={0.45} metalness={0.3} />
-                </mesh>
-              ))}
-              <mesh position={[0, 2.05, -0.78]} rotation={[0, 0, 1.02]}>
-                <boxGeometry args={[4.4, 0.06, 0.06]} />
-                <meshStandardMaterial color="#38BDF8" roughness={0.3} metalness={0.5} />
-              </mesh>
-              <mesh position={[0, 2.05, 0.78]} rotation={[0, 0, 1.02]}>
-                <boxGeometry args={[4.4, 0.06, 0.06]} />
-                <meshStandardMaterial color="#38BDF8" roughness={0.3} metalness={0.5} />
-              </mesh>
-            </group>
+            {renderStairFlight(0)}
 
             {/* Pantry / Coffee Corner */}
             <group position={[-11.8, 0, 0]}>
@@ -418,6 +516,25 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
               />
             </mesh>
             {renderFloorPartitions(3.8, 2)}
+            {renderStairFlight(3.8)}
+          </group>
+        )}
+
+        {/* FLOOR 3 STRUCTURE (Khối Affiliate) */}
+        {showF3 && (
+          <group>
+            <mesh position={[wingBounds.cx, 7.52, wingBounds.cz]} receiveShadow>
+              <boxGeometry args={[wingBounds.width, 0.16, wingBounds.depth]} />
+              <meshStandardMaterial
+                color={floor3Color}
+                roughness={0.58}
+                metalness={0.12}
+                transparent={visibleFloor === 'all'}
+                opacity={visibleFloor === 'all' ? 0.32 : 1}
+                depthWrite={visibleFloor !== 'all'}
+              />
+            </mesh>
+            {renderFloorPartitions(7.6, 3)}
           </group>
         )}
       </group>
@@ -575,26 +692,114 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
           </group>
 
           <group name="room-data" userData={{ roomId: 'room-data' }}>
-            <KpiScreen3D position={[-0.25, 3.8, 2.25]} />
-            <PottedPlant position={[2.8, 3.8, 8.3]} />
+            <KpiScreen3D position={[-0.8, 3.8, 2.25]} />
+            <PottedPlant position={[1.8, 3.8, 8.3]} />
           </group>
 
           <group name="room-backoffice" userData={{ roomId: 'room-backoffice' }}>
-            <mesh position={[11.8, 4.55, 7.6]} castShadow>
-              <boxGeometry args={[1.15, 1.5, 0.95]} />
+            <mesh position={[7.7, 4.55, 7.8]} castShadow>
+              <boxGeometry args={[1.05, 1.5, 0.9]} />
               <meshStandardMaterial color="#312E81" roughness={0.28} metalness={0.75} />
             </mesh>
-            <mesh position={[11.9, 4.45, 2.8]} castShadow>
-              <boxGeometry args={[0.75, 1.3, 1.2]} />
+            <mesh position={[7.8, 4.45, 2.8]} castShadow>
+              <boxGeometry args={[0.7, 1.3, 1.1]} />
               <meshStandardMaterial color="#475569" roughness={0.45} metalness={0.35} />
             </mesh>
-            <PottedPlant position={[4.2, 3.8, 8.3]} />
+            <PottedPlant position={[3.2, 3.8, 8.3]} />
             {cfoPendingExpenses > 0 && cfoAgent && (
               <mesh position={[cfoAgent.deskPosition[0], cfoAgent.deskPosition[1] + 1.5, cfoAgent.deskPosition[2]]}>
                 <cylinderGeometry args={[0.08, 0.08, 0.14, 12]} />
                 <meshStandardMaterial color="#6366F1" emissive="#6366F1" emissiveIntensity={0.85} />
               </mesh>
             )}
+          </group>
+
+          {/* ROOM LEGAL (Tầng 2, x=8.6..13.0) */}
+          <group name="room-legal" userData={{ roomId: 'room-legal' }}>
+            {/* Vietnamese Legal Library Bookshelf */}
+            <mesh position={[12.55, 4.75, 5.1]} castShadow>
+              <boxGeometry args={[0.5, 1.85, 2.6]} />
+              <meshStandardMaterial color="#4C1D95" roughness={0.5} />
+            </mesh>
+            {/* Scales of Justice Emblem on Pedestal */}
+            <group position={[9.2, 3.8, 8.2]}>
+              <mesh position={[0, 0.45, 0]} castShadow>
+                <cylinderGeometry args={[0.18, 0.24, 0.9, 12]} />
+                <meshStandardMaterial color="#1E1B4B" roughness={0.4} metalness={0.5} />
+              </mesh>
+              <mesh position={[0, 1.05, 0]} castShadow>
+                <boxGeometry args={[0.52, 0.05, 0.05]} />
+                <meshStandardMaterial color="#FBBF24" metalness={0.8} roughness={0.2} />
+              </mesh>
+            </group>
+            <PottedPlant position={[12.3, 3.8, 8.3]} />
+          </group>
+        </>
+      )}
+
+      {/* FLOOR 3 ROOMS & DEDICATED AFFILIATE FURNITURE */}
+      {showF3 && (
+        <>
+          <group name="room-aff-exec" userData={{ roomId: 'room-aff-exec' }}>
+            <mesh position={[-12.4, 9.25, -5.1]} rotation={[0, Math.PI / 2, 0]} castShadow>
+              <boxGeometry args={[2.8, 1.3, 0.1]} />
+              <meshStandardMaterial color="#0F172A" emissive="#F43F5E" emissiveIntensity={0.25} />
+            </mesh>
+            <PottedPlant position={[-12.3, 7.6, -8.3]} />
+          </group>
+
+          <group name="room-aff-research" userData={{ roomId: 'room-aff-research' }}>
+            {/* Trend Radar & Winning Product Board */}
+            <mesh position={[-0.5, 9.15, -8.85]} castShadow>
+              <boxGeometry args={[4.2, 1.75, 0.12]} />
+              <meshStandardMaterial color="#0F172A" emissive="#14B8A6" emissiveIntensity={0.28} />
+            </mesh>
+            <PottedPlant position={[3.3, 7.6, -8.3]} />
+          </group>
+
+          <group name="room-aff-analytics" userData={{ roomId: 'room-aff-analytics' }}>
+            {/* Morning Product Selection Table + EPC Monitor */}
+            <mesh position={[8.5, 8.32, -5.1]} castShadow receiveShadow>
+              <cylinderGeometry args={[1.35, 1.35, 0.1, 20]} />
+              <meshStandardMaterial color="#065F46" roughness={0.45} />
+            </mesh>
+            <mesh position={[8.5, 7.96, -5.1]} castShadow>
+              <cylinderGeometry args={[0.25, 0.35, 0.72, 12]} />
+              <meshStandardMaterial color="#1E293B" />
+            </mesh>
+            <mesh position={[8.5, 9.15, -8.85]} castShadow>
+              <boxGeometry args={[3.8, 1.65, 0.12]} />
+              <meshStandardMaterial color="#052E16" emissive="#22C55E" emissiveIntensity={0.3} />
+            </mesh>
+            <PottedPlant position={[12.3, 7.6, -8.3]} />
+          </group>
+
+          <group name="room-aff-creative" userData={{ roomId: 'room-aff-creative' }}>
+            {/* Creator Studio Ring Light & Video Backdrop */}
+            <mesh position={[-12.6, 9.1, 5.1]} rotation={[0, Math.PI / 2, 0]} castShadow>
+              <boxGeometry args={[3.6, 1.9, 0.1]} />
+              <meshStandardMaterial color="#431407" emissive="#FB923C" emissiveIntensity={0.25} />
+            </mesh>
+            <group position={[-10.6, 7.6, 7.8]}>
+              <mesh position={[0, 0.78, 0]} castShadow>
+                <cylinderGeometry args={[0.04, 0.18, 1.56, 10]} />
+                <meshStandardMaterial color="#1E293B" metalness={0.5} />
+              </mesh>
+              <mesh position={[0, 1.7, 0]}>
+                <torusGeometry args={[0.3, 0.04, 8, 22]} />
+                <meshStandardMaterial color="#FFF7ED" emissive="#FB923C" emissiveIntensity={0.75} />
+              </mesh>
+            </group>
+            <PottedPlant position={[-12.3, 7.6, 8.3]} />
+          </group>
+
+          <group name="room-aff-channel" userData={{ roomId: 'room-aff-channel' }}>
+            {/* Multi-channel Livestream & CRO Board */}
+            <mesh position={[12.6, 9.15, 5.1]} rotation={[0, -Math.PI / 2, 0]} castShadow>
+              <boxGeometry args={[3.6, 1.75, 0.1]} />
+              <meshStandardMaterial color="#0C4A6E" emissive="#0EA5E9" emissiveIntensity={0.28} />
+            </mesh>
+            <PottedPlant position={[12.3, 7.6, 8.3]} />
           </group>
         </>
       )}

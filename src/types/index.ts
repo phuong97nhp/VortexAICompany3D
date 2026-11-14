@@ -6,7 +6,13 @@ export type BuiltinDepartmentId =
   | 'product'
   | 'data'
   | 'backoffice'
-  | 'reception';
+  | 'legal'
+  | 'reception'
+  | 'aff_exec'
+  | 'aff_research'
+  | 'aff_creative'
+  | 'aff_channel'
+  | 'aff_analytics';
 
 // Dynamic DepartmentId allows builtin + CEO-created custom departments (BỔ SUNG D)
 export type DepartmentId = BuiltinDepartmentId | (string & {});
@@ -23,6 +29,10 @@ export type Permission =
   | 'quote:create'
   | 'quote:send'
   | 'contract:draft'
+  | 'contract:review'
+  | 'contract:send'
+  | 'legal:research'
+  | 'legal:publish_template'
   | 'doc:write'
   | 'task:assign'
   | 'meeting:call'
@@ -43,7 +53,12 @@ export type Permission =
   | 'policy:write'
   | 'expense:mark_paid'
   | 'hubcw:read'
-  | 'hubcw:write';
+  | 'hubcw:write'
+  | 'affiliate:read'
+  | 'affiliate:write'
+  | 'affiliate:publish'
+  | 'affiliate:compliance'
+  | 'system:admin';
 
 export type AgentStatus =
   | 'idle'
@@ -96,7 +111,15 @@ export type ToolName =
   | 'spend'
   | 'hubcw_read'
   | 'hubcw_write'
-  | 'hubcw_sync';
+  | 'hubcw_sync'
+  | 'affiliate_search_offers'
+  | 'affiliate_create_link'
+  | 'affiliate_check_links'
+  | 'affiliate_compliance_check'
+  | 'request_collab'
+  | 'legal_research'
+  | 'draft_contract'
+  | 'review_contract';
 
 export type EmploymentStatus = 'active' | 'suspended' | 'archived';
 
@@ -107,7 +130,7 @@ export interface AgentProfile {
   gender?: 'male' | 'female' | 'other';
   title: string;
   department: DepartmentId;
-  floor: 1 | 2;
+  floor: 1 | 2 | 3;
   roomId: string;
   deskPosition: [number, number, number];
   deskRotationY?: number;
@@ -137,7 +160,7 @@ export interface DepartmentConfig {
   id: string;
   name: string;
   shortName: string;
-  floor: 1 | 2;
+  floor: 1 | 2 | 3;
   color: string;
   bgTint: string;
   badgeText: string;
@@ -328,6 +351,8 @@ export type ChatChannelId =
   | 'product'
   | 'data'
   | 'backoffice'
+  | 'legal'
+  | 'affiliate'
   | 'ask_ceo'
   | string;
 
@@ -346,7 +371,11 @@ export type MessageCardType =
   | 'system_blocker'
   | 'hr_proposal'
   | 'expense'
-  | 'expense_rule';
+  | 'expense_rule'
+  | 'contract_card'
+  | 'legal_report_card'
+  | 'affiliate_win_card'
+  | 'health_alert_card';
 
 export interface ChatMessage {
   id: string;
@@ -392,7 +421,17 @@ export interface DocumentItem {
   verificationStatus?: VerificationStatus;
 }
 
-export type ApprovalType = 'budget' | 'quote' | 'contract' | 'public_post' | 'outreach' | 'permission' | 'expense' | 'hr_hire';
+export type ApprovalType =
+  | 'budget'
+  | 'quote'
+  | 'contract'
+  | 'public_post'
+  | 'outreach'
+  | 'permission'
+  | 'expense'
+  | 'hr_hire'
+  | 'affiliate_post'
+  | 'contract_send';
 
 export interface ApprovalRequest {
   id: string;
@@ -752,6 +791,18 @@ export interface CompanySettings {
   envMode: SystemEnvMode;
   hubcw: HubCwSettings;
   brand: BrandSettings;
+  // BỔ SUNG I, J, K: Schema Versioning, Affiliate, 24/7 Ops, Legal
+  schemaVersion: number;
+  affiliate: AffiliateSettings;
+  legal: LegalSettings;
+  onboarding: OnboardingState;
+  zaloAlertWebhookUrl?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  workingHourStart?: number;
+  workingHourEnd?: number;
+  timezone?: string;
+  lastAutoBackupAt?: number;
 }
 
 export type SocialPlatformId =
@@ -1120,4 +1171,439 @@ export interface HubCwReconciliationReport {
   discrepancies: HubCwReconciliationDiscrepancy[];
   createdAt: number;
 }
+
+// === BỔ SUNG I: TẦNG 3 - AFFILIATE (TIẾP THỊ LIÊN KẾT) ===
+
+export type AffiliateNetworkId =
+  | 'shopee'
+  | 'lazada'
+  | 'tiktok_shop'
+  | 'accesstrade'
+  | 'tiki'
+  | 'amazon'
+  | string;
+
+export interface AffiliateNetworkConfig {
+  id: AffiliateNetworkId;
+  name: string;
+  enabled: boolean;
+  affId: string;
+  publisherId?: string;
+  defaultSubIdPrefix: string;
+  apiBaseUrl?: string;
+  converterApiUrl?: string;
+  hasOfficialApiKey: boolean;
+  payoutChannel: string;
+  monthlyBudgetVnd: number;
+}
+
+export interface AffiliateSettings {
+  networks: AffiliateNetworkConfig[];
+  priorityNiches: string[];
+  scoutHomeNiches: string[];
+  scoutTechNiches: string[];
+  shortlinkDomain: string;
+  requireDisclosureLabel: boolean;
+  disclosureTemplate: string;
+  autoCutNegativeRoiDays: number;
+  dailyScoutHour: number;
+  maxDailyPostsPerPlatform: number;
+  compliancePolicySummary: string;
+  compliancePolicyUpdatedAt: number;
+}
+
+export interface AffiliateOffer {
+  id: string;
+  networkId: AffiliateNetworkId;
+  externalOfferId: string;
+  title: string;
+  niche: string;
+  merchantName: string;
+  commissionRatePercent: number | null;
+  priceVnd: number | null;
+  productUrl: string;
+  validUntil?: string;
+  fetchedAt: number;
+  sourceLabel: string;
+  origin: OriginTag;
+  provenance: DataProvenance;
+}
+
+export interface AffiliateProduct {
+  id: string;
+  offerId: string;
+  networkId: AffiliateNetworkId;
+  externalProductId: string;
+  name: string;
+  niche: string;
+  priceVnd: number | null;
+  commissionRatePercent: number | null;
+  estimatedCommissionVnd: number | null;
+  soldCount: number | null;
+  salesGrowthPercent: number | null;
+  rating: number | null;
+  reviewCount: number | null;
+  shopTrustScore: number | null;
+  shippingFeeVnd: number | null;
+  stockCount: number | null;
+  hasVoucher: boolean;
+  seasonalityTag?: string;
+  competitionLevel?: 'low' | 'medium' | 'high';
+  productUrl: string;
+  fetchedAt: number;
+  sourceLabel: string;
+  origin: OriginTag;
+  provenance: DataProvenance;
+}
+
+export interface AffiliateProductScore {
+  id: string;
+  productId: string;
+  totalScore: number; // 0 - 100
+  label: 'win' | 'potential' | 'skip';
+  components: {
+    commissionScore: number;
+    priceFitScore: number;
+    demandVelocityScore: number;
+    ratingTrustScore: number;
+    stockVoucherScore: number;
+    competitionPenalty: number;
+  };
+  reasons: string[];
+  risks: string[];
+  scoredBy: string;
+  scoredAt: number;
+}
+
+export interface AffiliateCampaign {
+  id: string;
+  productId: string;
+  productName: string;
+  networkId: AffiliateNetworkId;
+  status: 'selected' | 'active' | 'paused' | 'cut_negative_roi' | 'completed';
+  channels: string[];
+  contentAngle: string;
+  budgetVnd: number;
+  kpiTargetClicks: number;
+  kpiTargetCommissionVnd: number;
+  negativeRoiDays: number;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface TrackedLink {
+  id: string;
+  campaignId?: string;
+  productId: string;
+  networkId: AffiliateNetworkId;
+  affIdUsed: string;
+  subId: string;
+  originalUrl: string;
+  affiliateUrl: string;
+  shortUrl: string;
+  isAffIdVerified: boolean;
+  linkHealth: 'ok' | 'dead' | 'promo_expired' | 'price_changed' | 'unchecked';
+  lastCheckedAt?: number;
+  createdBy: string;
+  createdAt: number;
+}
+
+export interface AffiliateContentPiece {
+  id: string;
+  campaignId: string;
+  productId: string;
+  trackedLinkId: string;
+  subId: string;
+  type: 'review' | 'top_list' | 'comparison' | 'video_script' | 'landing_seo';
+  title: string;
+  body: string;
+  hasAffiliateDisclosure: boolean;
+  claimsTestedPersonally: boolean;
+  complianceStatus: 'pending' | 'passed' | 'blocked';
+  complianceReasons: string[];
+  authorId: string;
+  reviewedBy?: string;
+  createdAt: number;
+}
+
+export interface AffiliateChannelPost {
+  id: string;
+  contentPieceId: string;
+  campaignId: string;
+  platform: SocialPlatformId | 'telegram' | 'blog';
+  subId: string;
+  trackedLinkId: string;
+  isFirstPostOnChannel: boolean;
+  isPaidAd: boolean;
+  status: 'draft' | 'waiting_approval' | 'scheduled' | 'published' | 'blocked_compliance';
+  approvalId?: string;
+  scheduledAt?: number;
+  publishedAt?: number;
+  createdAt: number;
+}
+
+export interface AffiliateClickConversion {
+  id: string;
+  networkId: AffiliateNetworkId;
+  subId: string;
+  productId?: string;
+  clicks: number;
+  orders: number;
+  reportDate: string;
+  sourceFileOrApi: string;
+  importedAt: number;
+  origin: OriginTag;
+  provenance: DataProvenance;
+}
+
+export interface AffiliateCommission {
+  id: string;
+  networkId: AffiliateNetworkId;
+  externalOrderId: string;
+  subId: string;
+  productName: string;
+  orderValueVnd: number;
+  commissionVnd: number;
+  status: 'pending' | 'approved' | 'paid' | 'cancelled';
+  reportDate: string;
+  sourceFileOrApi: string;
+  importedAt: number;
+  origin: OriginTag;
+  provenance: DataProvenance;
+}
+
+export interface AffiliateExperiment {
+  id: string;
+  campaignId: string;
+  name: string;
+  variantA: { headline: string; cta: string; clicks: number; conversions: number };
+  variantB: { headline: string; cta: string; clicks: number; conversions: number };
+  winner?: 'A' | 'B' | 'inconclusive';
+  status: 'running' | 'completed';
+  createdAt: number;
+}
+
+// === BỔ SUNG J: 24/7 STABILITY, DURABLE JOBS, RESILIENCE, ONBOARDING, BACKUP ===
+
+export type BootStatus = 'booting' | 'ready' | 'error';
+
+export type DurableJobStatus = 'queued' | 'leased' | 'completed' | 'failed' | 'dead';
+
+export interface DurableJob {
+  id: string;
+  type: string;
+  agentId: string;
+  department: DepartmentId;
+  status: DurableJobStatus;
+  attempts: number;
+  maxAttempts: number;
+  leaseOwner?: string;
+  leaseExpiresAt?: number;
+  progressStep: number;
+  totalSteps: number;
+  idempotencyKey: string;
+  traceId: string;
+  payload: Record<string, unknown>;
+  lastError?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type CircuitStatus = 'closed' | 'open' | 'half_open';
+
+export interface CircuitBreakerState {
+  key: string;
+  label: string;
+  status: CircuitStatus;
+  failureCount: number;
+  lastFailureAt?: number;
+  openedUntil?: number;
+  lastError?: string;
+  avgLatencyMs: number;
+}
+
+export interface SystemHealthLog {
+  id: string;
+  level: 'info' | 'warn' | 'error';
+  component: string;
+  traceId?: string;
+  message: string;
+  detail?: string;
+  timestamp: number;
+}
+
+export interface BackupSnapshotRecord {
+  id: string;
+  label: string;
+  schemaVersion: number;
+  createdBy: 'auto_daily' | 'manual';
+  sizeBytes: number;
+  jsonPayload: string;
+  createdAt: number;
+}
+
+export interface OnboardingState {
+  completed: boolean;
+  dismissed: boolean;
+  currentStep: number;
+  hasDemoData: boolean;
+  readOnlyCycleTested: boolean;
+  testAlertSent: boolean;
+  firstBackupCreated: boolean;
+}
+
+export interface GoLiveCheckItem {
+  id: string;
+  label: string;
+  passed: boolean;
+  detail: string;
+  blocking: boolean;
+}
+
+// === BỔ SUNG K: PHÒNG PHÁP CHẾ - HỢP ĐỒNG & BÁO CÁO PHÁP LÝ ===
+
+export type LegalEffectiveStatus = 'effective' | 'amended' | 'expired' | 'unverified';
+
+export interface LegalDocument {
+  id: string;
+  docType: string; // Bộ luật, Luật, Nghị định, Thông tư...
+  docNumber: string; // e.g. 91/2025/QH15
+  title: string;
+  issuingBody: string;
+  issuedDate: string;
+  effectiveDate: string;
+  effectiveStatus: LegalEffectiveStatus;
+  amendedOrReplacedBy?: string;
+  domain: 'civil_commerce' | 'software_ip' | 'data_privacy' | 'ai_cyber' | 'tax_labor' | 'advertising_ecommerce' | 'education_preschool';
+  sourceUrl: string;
+  lastCheckedAt: string;
+  keyArticlesSummary: string[];
+  affectedTemplateIds?: string[];
+  statusAlertNote?: string;
+}
+
+export interface LegalCitation {
+  docTitle: string;
+  docNumber: string;
+  articleClause: string;
+  effectiveStatus: LegalEffectiveStatus;
+  sourceUrl: string;
+  checkedAt: string;
+  claimText: string;
+  verified: boolean;
+  verificationTag?: 'VERIFIED' | 'CHƯA XÁC MINH - CẦN LUẬT SƯ XÁC NHẬN';
+}
+
+export interface LegalRiskItem {
+  id: string;
+  clauseRef: string;
+  severity: 'low' | 'medium' | 'high';
+  issue: string;
+  recommendation: string;
+  citation?: LegalCitation;
+}
+
+export type ContractVariant = 'seller_friendly' | 'balanced' | 'buyer_protective';
+
+export type ContractStatus = 'draft' | 'waiting_ceo_approval' | 'approved' | 'signed' | 'active' | 'expiring_soon' | 'terminated' | 'liquidated';
+
+export interface ContractTemplate {
+  id: string;
+  code: string;
+  name: string;
+  category:
+    | 'saas_edu'
+    | 'saas_warehouse'
+    | 'saas_preschool'
+    | 'website_dev'
+    | 'sla_maintenance'
+    | 'dpa_privacy'
+    | 'nda'
+    | 'affiliate_ctv'
+    | 'labor_service'
+    | 'tos_privacy'
+    | 'quote_acceptance_notice';
+  version: number;
+  requiredFields: Array<{ key: string; label: string; sourceHint: string }>;
+  defaultBody: string;
+  relatedLegalDocIds: string[];
+  needsLawUpdateReview?: boolean;
+  updatedAt: number;
+}
+
+export interface ContractVersion {
+  version: number;
+  content: string;
+  variant: ContractVariant;
+  editedBy: string;
+  note: string;
+  createdAt: number;
+}
+
+export interface ContractRecord {
+  id: string;
+  contractCode: string; // #HD-2025-001
+  templateId: string;
+  title: string;
+  variant: ContractVariant;
+  status: ContractStatus;
+  partyA: Record<string, string>; // Verified company legal info
+  partyB: Record<string, string>; // Verified customer/partner info or [CẦN BỔ SUNG]
+  dataProvenanceMap: Record<string, string>;
+  missingFields: string[];
+  contractValueVnd: number;
+  involvesChildrenData: boolean;
+  hasForeignElement: boolean;
+  involvesSourceCodeSale: boolean;
+  isLongTermExclusive: boolean;
+  hasDispute: boolean;
+  requiresRealLawyer: boolean;
+  lawyerReasons: string[];
+  currentVersion: number;
+  versions: ContractVersion[];
+  risks: LegalRiskItem[];
+  citations: LegalCitation[];
+  expiresAt?: string;
+  nextMilestoneNote?: string;
+  approvalId?: string;
+  ceoApprovedBy?: string;
+  ceoApprovedAt?: number;
+  sentAt?: number;
+  linkedLeadId?: string;
+  linkedHubCwCustomerId?: string;
+  needsLawUpdateReview?: boolean;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LegalReportRecord {
+  id: string;
+  reportType: 'contract_review' | 'privacy_audit' | 'ad_affiliate_review' | 'lead_outreach_audit' | 'periodic_report';
+  title: string;
+  contractId?: string;
+  summaryFiveLines: string[];
+  partiesAndProvenance: Array<{ field: string; value: string; source: string }>;
+  citations: LegalCitation[];
+  complianceChecklist: Array<{ item: string; status: 'Đạt' | 'Cần sửa' | 'Chưa xác minh'; note: string }>;
+  risks: LegalRiskItem[];
+  humanDecisionPoints: string[];
+  executionGuide: string[];
+  unverifiedExcludedCount: number;
+  createdBy: string;
+  createdAt: number;
+}
+
+export interface LegalSettings {
+  companyLegalName: string;
+  taxCode: string;
+  legalAddress: string;
+  representativeName: string;
+  representativeTitle: string;
+  bankAccountInfo: string;
+  lawyerEscalationThresholdVnd: number;
+  defaultStampSignatureNote: string;
+  lastLawCheckAt?: string;
+}
+
 

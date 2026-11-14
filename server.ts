@@ -58,17 +58,141 @@ async function startServer() {
   app.get('/api/health', (_req, res) => {
     const hasGemini = Boolean(process.env.GEMINI_API_KEY);
     const hasDeepSeek = Boolean(process.env.DEEPSEEK_API_KEY);
+    const hasSearch = Boolean(process.env.SEARCH_TAVILY_API_KEY || process.env.SEARCH_SERPER_API_KEY);
+    const warnings: string[] = [];
+    if (!hasGemini && !hasDeepSeek) {
+      warnings.push('Chưa đặt GEMINI_API_KEY hoặc DEEPSEEK_API_KEY trong biến môi trường server (có thể nhập trong Cài đặt hoặc dùng Local/Mock).');
+    }
     res.json({
       ok: true,
       mode: 'proxy',
       hasGeminiEnvKey: hasGemini,
       hasDeepSeekEnvKey: hasDeepSeek,
       hasDeepSeekKey: hasDeepSeek,
-      hasSearchKey: Boolean(process.env.SEARCH_TAVILY_API_KEY || process.env.SEARCH_SERPER_API_KEY),
+      hasSearchKey: hasSearch,
       dryRunDefault: process.env.DRY_RUN !== 'false',
       dailyTokenBudget: Number(process.env.DAILY_TOKEN_BUDGET || 500000),
       workerUrl: process.env.WORKER_WS_URL || null,
+      warnings,
+      uptimeSeconds: Math.round(process.uptime()),
     });
+  });
+
+  // Isolated App Realtime SSE Bridge (independent from Vite HMR WebSocket)
+  app.get('/api/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    const sendEv = (type: string, payload: Record<string, unknown> = {}) => {
+      res.write(`data: ${JSON.stringify({ type, payload, timestamp: Date.now() })}\n\n`);
+    };
+    sendEv('heartbeat', { status: 'connected' });
+
+    const timer = setInterval(() => {
+      sendEv('heartbeat', { uptime: Math.round(process.uptime()) });
+    }, 25_000);
+
+    req.on('close', () => {
+      clearInterval(timer);
+    });
+  });
+
+  // Safe Affiliate Link Converter Relay (CEO's converter API endpoint)
+  app.post('/api/affiliate/shopee-convert', async (req, res) => {
+    const { converterApiUrl, originalUrl, affId, subId } = (req.body || {}) as {
+      converterApiUrl?: string;
+      originalUrl?: string;
+      affId?: string;
+      subId?: string;
+    };
+    if (!converterApiUrl || !/^https?:\/\//.test(converterApiUrl)) {
+      return res.status(400).json({ ok: false, error: 'converterApiUrl không hợp lệ' });
+    }
+    if (!affId || !originalUrl) {
+      return res.status(400).json({ ok: false, error: 'Thiếu affId hoặc originalUrl' });
+    }
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 8000);
+      const upstream = await fetch(converterApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: originalUrl, affId, subId }),
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      const data = await upstream.json().catch(() => ({}));
+      return res.status(upstream.ok ? 200 : 502).json(data);
+    } catch (err) {
+      return res.status(502).json({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Lỗi kết nối converter API',
+      });
+    }
+  });
+
+  // Safe Official Legal Source Check (vbpl.vn / congbao.chinhphu.vn)
+  app.post('/api/legal/check-updates', async (req, res) => {
+    const urls = Array.isArray(req.body?.urls) ? (req.body.urls as string[]).slice(0, 12) : [];
+    const results: Array<{ url: string; reachable: boolean; status: number; checkedAt: string }> = [];
+    const today = new Date().toISOString().slice(0, 10);
+    for (const u of urls) {
+      if (!/^https:\/\/(vbpl\.vn|congbao\.chinhphu\.vn|thuvienphapluat\.vn|luatvietnam\.vn)/.test(String(u))) {
+        results.push({ url: String(u), reachable: false, status: 400, checkedAt: today });
+        continue;
+      }
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 5000);
+        const r = await fetch(u, { method: 'HEAD', signal: controller.signal });
+        clearTimeout(t);
+        results.push({ url: u, reachable: r.ok || r.status < 500, status: r.status, checkedAt: today });
+      } catch {
+        results.push({ url: u, reachable: false, status: 504, checkedAt: today });
+      }
+    }
+    return res.json({ ok: true, checkedAt: today, results });
+  });
+
+  // Safe CEO Critical Alert Dispatcher (Zalo webhook / Telegram Bot)
+  app.post('/api/alerts/send', async (req, res) => {
+    const { zaloWebhookUrl, telegramBotToken, telegramChatId, text } = (req.body || {}) as {
+      zaloWebhookUrl?: string;
+      telegramBotToken?: string;
+      telegramChatId?: string;
+      text?: string;
+    };
+    const msg = String(text || '').slice(0, 3500);
+    if (!msg) return res.status(400).json({ ok: false, error: 'Thiếu nội dung cảnh báo' });
+
+    const deliveries: string[] = [];
+    if (zaloWebhookUrl && /^https?:\/\//.test(zaloWebhookUrl)) {
+      try {
+        const r = await fetch(zaloWebhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: msg }),
+        });
+        if (r.ok) deliveries.push('zalo_webhook');
+      } catch {
+        // ignore downstream failure, report gracefully
+      }
+    }
+    if (telegramBotToken && telegramChatId) {
+      try {
+        const r = await fetch(`https://api.telegram.org/bot${encodeURIComponent(telegramBotToken)}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: telegramChatId, text: msg }),
+        });
+        if (r.ok) deliveries.push('telegram');
+      } catch {
+        // ignore
+      }
+    }
+    return res.json({ ok: deliveries.length > 0, deliveries });
   });
 
   // Server-side Gemini API proxy using @google/genai

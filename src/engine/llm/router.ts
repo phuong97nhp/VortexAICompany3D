@@ -13,6 +13,12 @@ import {
   UnifiedChatRequest,
   UnifiedChatResponse,
 } from './types';
+import {
+  checkTokenBudgetThreshold,
+  circuitBreakers,
+  providerCircuitKey,
+  withTimeout,
+} from '../resilience';
 
 interface CacheEntry {
   expiresAt: number;
@@ -227,17 +233,32 @@ export class LLMRouter implements LLMProvider {
       return provider.chat(request);
     }
 
+    const circuitKey = providerCircuitKey(providerId);
+    const gate = circuitBreakers.canExecute(circuitKey);
+    if (!gate.allowed) {
+      throw new Error(
+        `Circuit breaker [${providerId}] đang mở (thử lại sau ${Math.ceil(gate.retryInMs / 1000)}s).`
+      );
+    }
+
     const maxRetries = 2;
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const startedAt = Date.now();
       try {
-        return await provider.chat(request);
+        const resp = await withTimeout(provider.chat(request), 28_000, `LLM:${providerId}`);
+        circuitBreakers.recordSuccess(circuitKey, Date.now() - startedAt);
+        return resp;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const status = (err as Error & { status?: number })?.status;
-        const retryable = status === 429 || (status && status >= 500) || /network|timeout|fetch/i.test(lastError.message);
+        const retryable =
+          status === 429 ||
+          (status && status >= 500) ||
+          /network|timeout|fetch|Hết thời gian chờ/i.test(lastError.message);
         if (!retryable || attempt === maxRetries) {
+          circuitBreakers.recordFailure(circuitKey, lastError);
           throw lastError;
         }
         const backoff = 700 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
@@ -329,14 +350,21 @@ export class LLMRouter implements LLMProvider {
           continue;
         }
 
-        // Check per-provider daily token budget
+        // Check per-provider daily token budget (70%, 90%, 100% levels)
         if (settings && cand.provider !== 'mock') {
           const used = this.getTodayTokensByProviderFn?.(cand.provider) || 0;
           const limit = settings.providerBudgets?.[cand.provider] ?? settings.dailyTokenBudget ?? 500000;
-          if (used >= limit) {
-            const budgetMsg = `Provider "${cand.provider}" đã chạm ngân sách ngày (${used.toLocaleString('vi-VN')}/${limit.toLocaleString('vi-VN')} tokens).`;
+          const status = checkTokenBudgetThreshold(used, limit);
+          if (status.level === 'blocked_100') {
+            const budgetMsg = `Provider "${cand.provider}" đã chạm 100% ngân sách ngày (${used.toLocaleString('vi-VN')}/${limit.toLocaleString('vi-VN')} tokens).`;
             failureReasons.push(budgetMsg);
+            this.onErrorBannerFn?.(budgetMsg);
             continue;
+          }
+          if (status.level === 'warn_90') {
+            this.onErrorBannerFn?.(`Cảnh báo Token (${cand.provider}): Đã dùng ${status.percent}% ngân sách ngày.`);
+          } else if (status.level === 'warn_70') {
+            this.onFallbackNoticeFn?.(`Theo dõi Token (${cand.provider}): Đã đạt ${status.percent}% hạn mức ngày.`);
           }
         }
 

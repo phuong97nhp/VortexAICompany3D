@@ -24,6 +24,7 @@ import {
   HubCwUndoSnapshot,
 } from '../../types';
 import { createDefaultSpendingPolicy } from '../../engine/expenseEngine';
+import { buildFallbackBaseSettings } from '../../db/schemaMigration';
 
 // Mock BusinessSystemConnector capturing payloads for verification
 class MockLiveConnector implements BusinessSystemConnector {
@@ -82,56 +83,21 @@ class MockLiveConnector implements BusinessSystemConnector {
 }
 
 function makeBaseSettings(overrides: Partial<CompanySettings> = {}): CompanySettings {
+  const base = buildFallbackBaseSettings();
   return {
+    ...base,
     id: 'default',
     companyName: 'Chuyên Web',
     primaryProvider: 'gemini',
     fallbackProvider: 'mock',
-    geminiApiKey: '',
-    deepseekApiKey: '',
-    deepseekMode: 'proxy',
-    localBaseUrl: 'http://localhost:11434/v1',
-    localModel: 'qwen2.5:7b',
-    localApiKey: '',
-    localUseWorkerProxy: true,
-    routingPreset: 'balanced',
-    roleRoutes: [],
-    providerBudgets: { gemini: 500000, deepseek: 500000, local: 1000000, mock: 9999999 },
-    dailyTokenBudget: 1000000,
     dryRun: false,
     autonomyLevel: 2,
-    autopilotEnabled: false,
-    autopilotIntervalMinutes: 30,
     autopilotDailyLeadTarget: 10,
     priorityProductId: 'edu-center',
-    simulationSpeed: 1,
-    paused: false,
-    killSwitchActive: false,
-    theme: 'dark',
-    dayNightMode: 'day',
-    graphicsQuality: 'medium',
-    sdrDailyLimitEmail: 30,
-    sdrDailyLimitOther: 20,
-    sdrAllowedStartHour: 8,
-    sdrAllowedEndHour: 20,
-    sdrMaxFollowups: 3,
-    sdrMinDaysBetweenFollowups: 3,
-    zaloMaxMessagesPerHour: 6,
-    zaloDndStartHour: 22,
-    zaloDndEndHour: 7,
-    zaloOverdueHours: 2,
     ceoPasswordHash: 'hash',
     ceoPasswordSalt: 'salt',
     mustChangeDefaultPassword: false,
-    marketingAutopilotEnabled: false,
-    marketingPostsPerWeek: 3,
-    marketingDailyPostCap: 2,
-    marketingDailyAdBudgetVnd: 500000,
-    hrAutoDecide: false,
-    sleepIdleAgents: false,
-    maxConcurrentAgents: 8,
     spendingPolicy: createDefaultSpendingPolicy(),
-    dailyDigestEnabled: true,
     envMode: 'live',
     hubcw: {
       baseUrl: 'https://staging.hub.chuyenweb.com',
@@ -140,12 +106,6 @@ function makeBaseSettings(overrides: Partial<CompanySettings> = {}): CompanySett
       requireApprovalForCritical: true,
       unclearWriteUnlocked: { golden_pig: false, automation: false, resources: false },
       moduleHealth: {},
-    },
-    brand: {
-      primaryColor: '#1B55E3',
-      secondaryColor: '#E9A020',
-      accentColor: '#0F172A',
-      defaultUniformStyle: 'vest',
     },
     ...overrides,
   };

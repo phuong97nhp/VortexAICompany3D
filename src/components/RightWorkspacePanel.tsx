@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Activity,
   BarChart3,
   Briefcase,
   CheckSquare,
@@ -12,13 +13,17 @@ import {
   Palette,
   Plug,
   Receipt,
+  Scale,
   ScrollText,
   Settings,
   Shield,
+  TrendingUp,
 } from 'lucide-react';
 import { RightPanelTab, useCompanyStore } from '../store/useCompanyStore';
 import { ChatPanel } from './panels/ChatPanel';
 import { MarketingChannelsPanel } from './panels/MarketingChannelsPanel';
+import { AffiliatePanel } from './panels/AffiliatePanel';
+import { LegalPanel } from './panels/LegalPanel';
 import { TaskBoardPanel } from './panels/TaskBoardPanel';
 import { CrmPanel } from './panels/CrmPanel';
 import { LogsPanel } from './panels/LogsPanel';
@@ -26,6 +31,7 @@ import { DocsPanel } from './panels/DocsPanel';
 import { ApprovalsPanel } from './panels/ApprovalsPanel';
 import { FinanceAccountingPanel } from './panels/FinanceAccountingPanel';
 import { HubCwConnectorPanel } from './panels/HubCwConnectorPanel';
+import { SystemHealthPanel } from './panels/SystemHealthPanel';
 import { HrManagementPanel } from './panels/HrManagementPanel';
 import { VaultPanel } from './panels/VaultPanel';
 import { TokenKpiPanel } from './panels/TokenKpiPanel';
@@ -42,6 +48,8 @@ interface TabDef {
 const PRIMARY_TABS: TabDef[] = [
   { id: 'chat', label: 'Chat', shortLabel: 'Chat', icon: MessageSquare },
   { id: 'marketing', label: 'Kênh & Marketing', shortLabel: 'Marketing', icon: Megaphone },
+  { id: 'affiliate', label: 'Affiliate Tầng 3', shortLabel: 'Affiliate', icon: TrendingUp },
+  { id: 'legal', label: 'Pháp chế & HĐ', shortLabel: 'Pháp chế', icon: Scale },
   { id: 'tasks', label: 'Task Board', shortLabel: 'Task', icon: ListChecks },
   { id: 'crm', label: 'CRM & Pipeline', shortLabel: 'CRM', icon: Briefcase },
   { id: 'approvals', label: 'Phê duyệt', shortLabel: 'Duyệt', icon: CheckSquare },
@@ -51,6 +59,7 @@ const PRIMARY_TABS: TabDef[] = [
 ];
 
 const OVERFLOW_TABS: TabDef[] = [
+  { id: 'health', label: 'Sức khỏe 24/7 & Go-Live', shortLabel: 'Hệ thống', icon: Activity },
   { id: 'rbac', label: 'Nhân sự & Quyền', shortLabel: 'Nhân sự', icon: Shield },
   { id: 'docs', label: 'Kho tài liệu', shortLabel: 'Tài liệu', icon: FileText },
   { id: 'logs', label: 'Nhật ký hoạt động', shortLabel: 'Nhật ký', icon: ScrollText },
@@ -226,6 +235,8 @@ export function RightWorkspacePanel() {
       <div className="flex-1 overflow-hidden">
         {activeTab === 'chat' && <ChatPanel />}
         {activeTab === 'marketing' && <MarketingChannelsPanel />}
+        {activeTab === 'affiliate' && <AffiliatePanel />}
+        {activeTab === 'legal' && <LegalPanel />}
         {activeTab === 'tasks' && <TaskBoardPanel />}
         {activeTab === 'crm' && <CrmPanel />}
         {activeTab === 'logs' && <LogsPanel />}
@@ -233,6 +244,7 @@ export function RightWorkspacePanel() {
         {activeTab === 'approvals' && <ApprovalsPanel />}
         {activeTab === 'finance' && <FinanceAccountingPanel />}
         {activeTab === 'hubcw' && <HubCwConnectorPanel />}
+        {activeTab === 'health' && <SystemHealthPanel />}
         {activeTab === 'rbac' && <HrManagementPanel />}
         {activeTab === 'vault' && <VaultPanel />}
         {activeTab === 'tokens' && <TokenKpiPanel />}

@@ -1,6 +1,15 @@
 import Dexie, { Table } from 'dexie';
 import {
   AdCampaignItem,
+  AffiliateCampaign,
+  AffiliateClickConversion,
+  AffiliateCommission,
+  AffiliateContentPiece,
+  AffiliateExperiment,
+  AffiliateOffer,
+  AffiliateProduct,
+  AffiliateProductScore,
+  AffiliateChannelPost,
   AgentAccount,
   AgentAppearance,
   AgentExternalAccount,
@@ -9,11 +18,15 @@ import {
   ApprovalRequest,
   AskCeoQuestion,
   AuditLogEntry,
+  BackupSnapshotRecord,
   BrandLaunchKit,
   ChatMessage,
   CompanySettings,
+  ContractRecord,
+  ContractTemplate,
   DepartmentConfig,
   DocumentItem,
+  DurableJob,
   EncryptedCredentialRecord,
   ExpenseBudget,
   ExpenseCategoryConfig,
@@ -25,27 +38,28 @@ import {
   HubCwSyncItem,
   HubCwUndoSnapshot,
   LeadItem,
+  LegalDocument,
+  LegalReportRecord,
   MarketingChannelRecord,
   OutreachLogEntry,
   ScheduledSocialPost,
   SocialCommentInboxItem,
   SocialPostLogEntry,
+  SystemHealthLog,
   TaskItem,
   TokenUsageRecord,
+  TrackedLink,
   VaultAccountStatus,
   WorkflowTrace,
 } from '../types';
-import { DEFAULT_BRAND_PALETTE } from '../brand/logoBrand';
-import { buildDefaultHubCwPermissions, DEFAULT_HUBCW_BASE_URL } from '../integrations/hubcw/hubcw.config';
+import { buildDefaultHubCwPermissions } from '../integrations/hubcw/hubcw.config';
 import { generateHashedAgentToken, generateSalt, hashPasswordPBKDF2 } from '../engine/auth';
 import { getDefaultAppearance } from '../engine/characterAppearance';
-import { buildRoutingPreset } from '../engine/llm/presets';
 import { buildSeedAgents, buildSeedDepartments } from '../engine/liveRegistry';
 import {
   buildSeedExpenseBudgets,
   buildSeedExpenseRules,
   buildSeedExpenses,
-  createDefaultSpendingPolicy,
   DEFAULT_EXPENSE_CATEGORIES,
 } from '../engine/expenseEngine';
 import {
@@ -56,6 +70,14 @@ import {
   buildInitialSocialComments,
   buildInitialSocialLogs,
 } from '../engine/marketingSeeds';
+import { buildSeedContractTemplates, buildSeedLegalDocuments } from '../engine/legal/legalSeeds';
+import {
+  buildFallbackBaseSettings,
+  migrateAgentsList,
+  migrateDepartmentsList,
+  migrateSettingsRecord,
+  safeBackupCorruptedData,
+} from './schemaMigration';
 
 export interface CompanyMemoryRecord {
   id: string;
@@ -142,6 +164,44 @@ export interface IDataRepository {
   putHubCwUndoSnapshot(snap: HubCwUndoSnapshot): Promise<void>;
   getHubCwReconciliations(): Promise<HubCwReconciliationReport[]>;
   addHubCwReconciliation(report: HubCwReconciliationReport): Promise<void>;
+  // BỔ SUNG I: Affiliate
+  getAffiliateOffers(): Promise<AffiliateOffer[]>;
+  putAffiliateOffer(offer: AffiliateOffer): Promise<void>;
+  getAffiliateProducts(): Promise<AffiliateProduct[]>;
+  putAffiliateProduct(p: AffiliateProduct): Promise<void>;
+  getAffiliateScores(): Promise<AffiliateProductScore[]>;
+  putAffiliateScore(s: AffiliateProductScore): Promise<void>;
+  getAffiliateCampaigns(): Promise<AffiliateCampaign[]>;
+  putAffiliateCampaign(c: AffiliateCampaign): Promise<void>;
+  getTrackedLinks(): Promise<TrackedLink[]>;
+  putTrackedLink(l: TrackedLink): Promise<void>;
+  getAffiliateContent(): Promise<AffiliateContentPiece[]>;
+  putAffiliateContent(p: AffiliateContentPiece): Promise<void>;
+  getAffiliatePosts(): Promise<AffiliateChannelPost[]>;
+  putAffiliatePost(p: AffiliateChannelPost): Promise<void>;
+  getAffiliateConversions(): Promise<AffiliateClickConversion[]>;
+  putAffiliateConversion(c: AffiliateClickConversion): Promise<void>;
+  getAffiliateCommissions(): Promise<AffiliateCommission[]>;
+  putAffiliateCommission(c: AffiliateCommission): Promise<void>;
+  getAffiliateExperiments(): Promise<AffiliateExperiment[]>;
+  putAffiliateExperiment(e: AffiliateExperiment): Promise<void>;
+  // BỔ SUNG K: Legal
+  getLegalDocuments(): Promise<LegalDocument[]>;
+  putLegalDocument(d: LegalDocument): Promise<void>;
+  getContractTemplates(): Promise<ContractTemplate[]>;
+  putContractTemplate(t: ContractTemplate): Promise<void>;
+  getContracts(): Promise<ContractRecord[]>;
+  putContract(c: ContractRecord): Promise<void>;
+  getLegalReports(): Promise<LegalReportRecord[]>;
+  putLegalReport(r: LegalReportRecord): Promise<void>;
+  // BỔ SUNG J: 24/7 Durable Jobs, Logs, Backups
+  getDurableJobs(): Promise<DurableJob[]>;
+  putDurableJob(j: DurableJob): Promise<void>;
+  getSystemHealthLogs(): Promise<SystemHealthLog[]>;
+  addSystemHealthLog(l: SystemHealthLog): Promise<void>;
+  getBackupSnapshots(): Promise<BackupSnapshotRecord[]>;
+  putBackupSnapshot(b: BackupSnapshotRecord): Promise<void>;
+  exportAllTablesForBackup(): Promise<Record<string, unknown>>;
   resetAll(): Promise<void>;
 }
 
@@ -181,6 +241,24 @@ class AICompanyDexieDB extends Dexie {
   hubcwSyncQueue!: Table<HubCwSyncItem, string>;
   hubcwUndoSnapshots!: Table<HubCwUndoSnapshot, string>;
   hubcwReconciliations!: Table<HubCwReconciliationReport, string>;
+  // v6 tables
+  affiliateOffers!: Table<AffiliateOffer, string>;
+  affiliateProducts!: Table<AffiliateProduct, string>;
+  affiliateScores!: Table<AffiliateProductScore, string>;
+  affiliateCampaigns!: Table<AffiliateCampaign, string>;
+  trackedLinks!: Table<TrackedLink, string>;
+  affiliateContent!: Table<AffiliateContentPiece, string>;
+  affiliatePosts!: Table<AffiliateChannelPost, string>;
+  affiliateConversions!: Table<AffiliateClickConversion, string>;
+  affiliateCommissions!: Table<AffiliateCommission, string>;
+  affiliateExperiments!: Table<AffiliateExperiment, string>;
+  legalDocuments!: Table<LegalDocument, string>;
+  contractTemplates!: Table<ContractTemplate, string>;
+  contracts!: Table<ContractRecord, string>;
+  legalReports!: Table<LegalReportRecord, string>;
+  durableJobs!: Table<DurableJob, string>;
+  systemHealthLogs!: Table<SystemHealthLog, string>;
+  backupSnapshots!: Table<BackupSnapshotRecord, string>;
 
   constructor() {
     super('AICompany3D_DB_v1');
@@ -315,6 +393,62 @@ class AICompanyDexieDB extends Dexie {
       hubcwUndoSnapshots: 'id, agentId, module, externalRecordId, reverted, createdAt',
       hubcwReconciliations: 'id, createdAt',
     });
+
+    this.version(6).stores({
+      settings: 'id',
+      agents: 'id, department, employmentStatus, createdAt',
+      departments: 'id, floor, isCustom',
+      hrAudits: 'id, targetId, action, timestamp',
+      tasks: 'id, taskCode, department, assignedTo, status, createdAt',
+      leads: 'id, stage, recommendedProductId, score, province, createdAt',
+      messages: 'id, channelId, senderId, timestamp',
+      documents: 'id, category, authorId, department, createdAt',
+      approvals: 'id, status, type, requestedBy, createdAt',
+      askCeoQuestions: 'id, status, agentId, urgency, createdAt',
+      auditLogs: 'id, agentId, result, timestamp',
+      outreachLogs: 'id, agentId, leadId, channel, timestamp',
+      accounts: 'agentId, role, department, status',
+      vaultStatuses: 'id, platform, status',
+      tokenUsage: 'id, dateKey, agentId, provider, model, timestamp',
+      agentMemories: 'agentId, updatedAt',
+      companyMemories: 'id, key',
+      workflows: 'id, createdAt',
+      agentAppearances: 'agentId',
+      brandKits: 'id, createdAt',
+      marketingChannels: 'id, status, updatedAt',
+      scheduledPosts: 'id, platform, dayNumber, status, createdAt',
+      adCampaigns: 'id, platform, status, createdAt',
+      socialComments: 'id, platform, status, createdAt',
+      socialLogs: 'id, platform, agentId, timestamp',
+      expenses: 'id, expenseCode, status, department, category, requesterId, vendor, createdAt',
+      expenseRules: 'id, ruleCode, enabled, category, createdAt',
+      expenseBudgets: 'id, monthKey, department, category',
+      expenseCategories: 'id, name',
+      agentExternalAccounts: 'agentId, system, externalUserId, status',
+      credentialVault: 'id, agentId, system, updatedAt',
+      hubcwApiLogs: 'id, agentId, module, method, result, timestamp',
+      hubcwSyncQueue: 'id, direction, module, status, createdAt',
+      hubcwUndoSnapshots: 'id, agentId, module, externalRecordId, reverted, createdAt',
+      hubcwReconciliations: 'id, createdAt',
+      // v6 stores
+      affiliateOffers: 'id, networkId, niche, fetchedAt',
+      affiliateProducts: 'id, networkId, niche, fetchedAt',
+      affiliateScores: 'id, productId, label, totalScore, scoredAt',
+      affiliateCampaigns: 'id, productId, networkId, status, updatedAt',
+      trackedLinks: 'id, campaignId, productId, networkId, subId, linkHealth, createdAt',
+      affiliateContent: 'id, campaignId, productId, complianceStatus, createdAt',
+      affiliatePosts: 'id, contentPieceId, campaignId, platform, status, createdAt',
+      affiliateConversions: 'id, networkId, subId, reportDate, importedAt',
+      affiliateCommissions: 'id, networkId, subId, status, reportDate, importedAt',
+      affiliateExperiments: 'id, campaignId, status, createdAt',
+      legalDocuments: 'id, docNumber, domain, effectiveStatus',
+      contractTemplates: 'id, code, category, updatedAt',
+      contracts: 'id, contractCode, templateId, status, expiresAt, createdAt',
+      legalReports: 'id, reportType, contractId, createdAt',
+      durableJobs: 'id, status, agentId, department, traceId, createdAt',
+      systemHealthLogs: 'id, level, component, traceId, timestamp',
+      backupSnapshots: 'id, createdBy, createdAt',
+    });
   }
 }
 
@@ -323,76 +457,11 @@ export const db = new AICompanyDexieDB();
 export async function createDefaultSettings(): Promise<CompanySettings> {
   const salt = generateSalt(16);
   const hash = await hashPasswordPBKDF2('admin123', salt);
-  return {
-    id: 'default',
-    companyName: 'AI COMPANY VIỆT NAM',
-    primaryProvider: 'gemini',
-    fallbackProvider: 'deepseek',
-    geminiApiKey: '',
-    deepseekApiKey: '',
-    deepseekMode: 'proxy',
-    localBaseUrl: 'http://localhost:11434/v1',
-    localModel: 'qwen2.5:7b',
-    localApiKey: '',
-    localUseWorkerProxy: false,
-    routingPreset: 'balanced',
-    roleRoutes: buildRoutingPreset('balanced', 'qwen2.5:7b'),
-    providerBudgets: {
-      gemini: 500000,
-      deepseek: 400000,
-      local: 2000000,
-      mock: 9999999,
-    },
-    dailyTokenBudget: 500000,
-    dryRun: true,
-    autonomyLevel: 2,
-    autopilotEnabled: false,
-    autopilotIntervalMinutes: 30,
-    autopilotDailyLeadTarget: 30,
-    priorityProductId: 'edu-center',
-    simulationSpeed: 1,
-    paused: false,
-    killSwitchActive: false,
-    theme: 'dark',
-    dayNightMode: 'day',
-    graphicsQuality: 'medium',
-    sdrDailyLimitEmail: 30,
-    sdrDailyLimitOther: 20,
-    sdrAllowedStartHour: 8,
-    sdrAllowedEndHour: 20,
-    sdrMaxFollowups: 3,
-    sdrMinDaysBetweenFollowups: 3,
-    zaloMaxMessagesPerHour: 6,
-    zaloDndStartHour: 22,
-    zaloDndEndHour: 7,
-    zaloOverdueHours: 2,
+  return buildFallbackBaseSettings({
     ceoPasswordHash: hash,
     ceoPasswordSalt: salt,
     mustChangeDefaultPassword: true,
-    marketingAutopilotEnabled: false,
-    marketingPostsPerWeek: 3,
-    marketingDailyPostCap: 2,
-    marketingDailyAdBudgetVnd: 500000,
-    hrAutoDecide: false,
-    sleepIdleAgents: false,
-    maxConcurrentAgents: 8,
-    spendingPolicy: createDefaultSpendingPolicy(),
-    dailyDigestEnabled: true,
-    envMode: 'sandbox',
-    hubcw: {
-      baseUrl: DEFAULT_HUBCW_BASE_URL,
-      connectionMode: 'sandbox',
-      hourlyWriteLimit: 30,
-      requireApprovalForCritical: true,
-      unclearWriteUnlocked: {
-        golden_pig: false,
-        automation: false,
-        resources: false,
-      },
-      moduleHealth: {},
-    },
-    brand: { ...DEFAULT_BRAND_PALETTE },
-  };
+  });
 }
 
 async function ensureMarketingSeeded(companyName: string): Promise<void> {
@@ -408,14 +477,18 @@ async function ensureMarketingSeeded(companyName: string): Promise<void> {
 }
 
 async function ensureV4Seeded(): Promise<void> {
-  const deptCount = await db.departments.count();
-  if (deptCount === 0) {
-    await db.departments.bulkPut(buildSeedDepartments());
+  const existingDepts = await db.departments.toArray();
+  const migratedDepts = migrateDepartmentsList(existingDepts);
+  if (existingDepts.length === 0 || migratedDepts.length !== existingDepts.length) {
+    await db.departments.bulkPut(migratedDepts);
   }
-  const agentCount = await db.agents.count();
-  if (agentCount === 0) {
-    await db.agents.bulkPut(buildSeedAgents());
+
+  const existingAgents = await db.agents.toArray();
+  const migratedAgents = migrateAgentsList(existingAgents);
+  if (existingAgents.length === 0 || migratedAgents.length !== existingAgents.length) {
+    await db.agents.bulkPut(migratedAgents);
   }
+
   const catCount = await db.expenseCategories.count();
   if (catCount === 0) {
     await db.expenseCategories.bulkPut(DEFAULT_EXPENSE_CATEGORIES);
@@ -432,56 +505,74 @@ async function ensureV4Seeded(): Promise<void> {
   if (expCount === 0) {
     await db.expenses.bulkPut(buildSeedExpenses());
   }
-  // Ensure CFO & HR have new permissions
-  const cfoAcc = await db.accounts.get('cfo');
-  if (cfoAcc && !cfoAcc.permissions.includes('expense:review')) {
-    await db.accounts.put({
-      ...cfoAcc,
-      permissions: Array.from(
-        new Set([...cfoAcc.permissions, 'expense:request', 'expense:review', 'expense:rule_manage', 'expense:mark_paid'])
-      ),
-    });
+
+  // Ensure missing accounts & appearances & externalAccounts are created for any new Floor 2 Legal / Floor 3 Affiliate agents
+  const now = Date.now();
+  const allAccounts = await db.accounts.toArray();
+  const accMap = new Map(allAccounts.map((a) => [a.agentId, a]));
+  const allApps = await db.agentAppearances.toArray();
+  const appMap = new Map(allApps.map((a) => [a.agentId, a]));
+  const allExts = await db.agentExternalAccounts.toArray();
+  const extMap = new Map(allExts.map((a) => [a.agentId, a]));
+
+  for (const agent of migratedAgents) {
+    if (!accMap.has(agent.id)) {
+      const token = await generateHashedAgentToken(agent.id);
+      await db.accounts.put({
+        agentId: agent.id,
+        username: agent.id,
+        internalEmail: `${agent.id}@aicompany.vn`,
+        role: agent.role,
+        department: agent.department,
+        status: 'active',
+        tokenHash: token.hash,
+        permissions: [...agent.defaultPermissions],
+        lastActiveAt: now,
+      });
+    }
+    if (!appMap.has(agent.id)) {
+      await db.agentAppearances.put(getDefaultAppearance(agent));
+    }
+    if (!extMap.has(agent.id)) {
+      await db.agentExternalAccounts.put({
+        agentId: agent.id,
+        system: 'hubcw',
+        externalPermissions: buildDefaultHubCwPermissions(agent.department, agent.role, agent.title),
+        status: 'unlinked',
+      });
+    }
   }
-  const hrAcc = await db.accounts.get('hr');
-  if (hrAcc && !hrAcc.permissions.includes('hr:manage')) {
-    await db.accounts.put({
-      ...hrAcc,
-      permissions: Array.from(new Set([...hrAcc.permissions, 'hr:manage', 'expense:request'])),
-    });
+}
+
+async function ensureV6Seeded(): Promise<void> {
+  const lawCount = await db.legalDocuments.count();
+  if (lawCount === 0) {
+    await db.legalDocuments.bulkPut(buildSeedLegalDocuments());
+  }
+  const tplCount = await db.contractTemplates.count();
+  if (tplCount === 0) {
+    await db.contractTemplates.bulkPut(buildSeedContractTemplates());
   }
 }
 
 export async function seedInitialDatabase(): Promise<void> {
-  const existingSettings = await db.settings.get('default');
-  if (existingSettings) {
-    const seedAgents = buildSeedAgents();
-    const appCount = await db.agentAppearances.count();
-    if (appCount === 0) {
-      await db.agentAppearances.bulkPut(seedAgents.map((a) => getDefaultAppearance(a)));
+  try {
+    const existingSettings = await db.settings.get('default');
+    if (existingSettings) {
+      const { settings, migrated } = migrateSettingsRecord(existingSettings);
+      if (migrated) {
+        await db.settings.put(settings);
+      }
+      await ensureMarketingSeeded(settings.companyName || 'AI COMPANY VIỆT NAM');
+      await ensureV4Seeded();
+      await ensureV6Seeded();
+      return;
     }
-    await ensureMarketingSeeded(existingSettings.companyName || 'AI COMPANY VIỆT NAM');
-    await ensureV4Seeded();
-    const smAcc = await db.accounts.get('social_media');
-    if (smAcc && !smAcc.permissions.includes('post:publish')) {
-      await db.accounts.put({ ...smAcc, permissions: [...smAcc.permissions, 'post:publish', 'lead:write'] });
-    }
-    const adsAcc = await db.accounts.get('ads_specialist');
-    if (adsAcc && !adsAcc.permissions.includes('ads:manage')) {
-      await db.accounts.put({ ...adsAcc, permissions: [...adsAcc.permissions, 'ads:manage', 'budget:spend'] });
-    }
-    const extCount = await db.agentExternalAccounts.count();
-    if (extCount === 0) {
-      const currentAgents = await db.agents.toArray();
-      await db.agentExternalAccounts.bulkPut(
-        currentAgents.map((a) => ({
-          agentId: a.id,
-          system: 'hubcw' as const,
-          externalPermissions: buildDefaultHubCwPermissions(a.department, a.role, a.title),
-          status: 'unlinked' as const,
-        }))
-      );
-    }
-    return;
+  } catch (err) {
+    // Corrupted IndexedDB / incompatible schema: back up & recreate cleanly
+    safeBackupCorruptedData('db_open_error', String(err));
+    await db.delete();
+    await db.open();
   }
 
   const now = Date.now();
@@ -494,71 +585,38 @@ export async function seedInitialDatabase(): Promise<void> {
   const seedAgents = buildSeedAgents();
   await db.departments.bulkPut(seedDepts);
   await db.agents.bulkPut(seedAgents);
-
-  // Seed 30 Chibi 3D agent appearances
   await db.agentAppearances.bulkPut(seedAgents.map((a) => getDefaultAppearance(a)));
 
-  // Seed v3 Marketing Channels, Brand Launch Kit, Calendar, Ads & Comments
   await ensureMarketingSeeded(settings.companyName);
-
-  // Seed v4 Expenses, Rules, Budgets, Categories
   await ensureV4Seeded();
+  await ensureV6Seeded();
 
-  // Seed 30 agent RBAC accounts with SHA-256 hashed internal tokens
-  const accounts: AgentAccount[] = [];
-  for (const agent of seedAgents) {
-    const token = await generateHashedAgentToken(agent.id);
-    accounts.push({
-      agentId: agent.id,
-      username: agent.id,
-      internalEmail: `${agent.id}@aicompany.vn`,
-      role: agent.role,
-      department: agent.department,
-      status: 'active',
-      tokenHash: token.hash,
-      permissions: [...agent.defaultPermissions],
-      lastActiveAt: now - Math.floor(Math.random() * 600000),
-    });
-  }
-  await db.accounts.bulkPut(accounts);
-
-  // Seed unlinked 1-to-1 HubCW external accounts with least-privilege permissions
-  await db.agentExternalAccounts.bulkPut(
-    seedAgents.map((a) => ({
-      agentId: a.id,
-      system: 'hubcw' as const,
-      externalPermissions: buildDefaultHubCwPermissions(a.department, a.role, a.title),
-      status: 'unlinked' as const,
-    }))
-  );
-
-  // Seed initial agent memories
   await db.agentMemories.bulkPut(
     seedAgents.map((a) => ({
       agentId: a.id,
       shortTerm: [`Nhận bàn làm việc tại ${a.roomId}`, `Sản phẩm ưu tiên hiện tại: EduCenter Pro`],
-      longTermSummary: `${a.name} (${a.title}) sẵn sàng phối hợp theo quy trình RBAC và DRY_RUN mặc định.`,
+      longTermSummary: `${a.name} (${a.title}) sẵn sàng phối hợp theo quy trình RBAC và Sandbox mặc định.`,
       updatedAt: now,
     }))
   );
 
-  // Seed company shared memory
   await db.companyMemories.bulkPut([
     {
       id: 'cm_mission',
       key: 'Chiến lược Q4',
-      content: 'Tập trung 60% nguồn lực Sales vào phân khúc Trung tâm Ngoại ngữ tại TP.HCM & Hà Nội, 40% vào Trường Mầm non và Kho hàng SME.',
+      content:
+        'Tập trung 60% nguồn lực Sales vào phân khúc Trung tâm Ngoại ngữ tại TP.HCM & Hà Nội, kết hợp Khối Affiliate Tầng 3 săn sản phẩm Win.',
       updatedAt: now,
     },
     {
       id: 'cm_compliance',
-      key: 'Tuân thủ Nghị định 91/2020',
-      content: 'Mọi tin nhắn tiếp cận đều phải có dòng "Nhắn DỪNG để không nhận thêm", gửi trong khung 8h–20h, tối đa 3 follow-up.',
+      key: 'Tuân thủ NĐ 91/2020 & Minh bạch Affiliate',
+      content:
+        'Tin nhắn outreach phải có "Nhắn DỪNG để không nhận thêm". Bài Affiliate bắt buộc gắn nhãn tiếp thị và không bịa trải nghiệm.',
       updatedAt: now,
     },
   ]);
 
-  // Seed realistic Vietnamese leads
   const initialLeads: LeadItem[] = [
     {
       id: 'lead_1',
@@ -581,6 +639,7 @@ export async function seedInitialDatabase(): Promise<void> {
       lastContactedAt: now - 86400000,
       blacklisted: false,
       estimatedValueVnd: 29880000,
+      origin: 'simulated',
       interactions: [
         {
           id: 'int_1',
@@ -591,53 +650,11 @@ export async function seedInitialDatabase(): Promise<void> {
           timestamp: now - 172800000,
           dryRun: true,
         },
-        {
-          id: 'int_2',
-          channel: 'Zalo OA',
-          direction: 'inbound',
-          content: 'Cô Lan (Quản lý) phản hồi: Quan tâm tính năng chấm công giáo viên bản ngữ, hẹn demo 14h.',
-          agentId: 'account_executive',
-          timestamp: now - 86400000,
-          dryRun: true,
-        },
       ],
       createdAt: now - 259200000,
     },
     {
       id: 'lead_2',
-      name: 'Anh ngữ Quốc tế StarEdu Cầu Giấy',
-      category: 'Trung tâm ngoại ngữ',
-      address: '88 Trần Thái Tông, Cầu Giấy',
-      province: 'Hà Nội',
-      website: 'https://staredu.edu.vn',
-      email: 'info@staredu.edu.vn',
-      phone: '0983 221 890',
-      zalo: '0983221890',
-      source: 'Fanpage Công khai',
-      score: 86,
-      scoreReason: 'Quy mô ~450 học viên, đang chạy ads tuyển sinh nhưng phản hồi inbox chậm.',
-      recommendedProductId: 'edu-center',
-      stage: 'replied',
-      assignedAgentId: 'sdr_1',
-      followUpCount: 1,
-      lastContactedAt: now - 43200000,
-      blacklisted: false,
-      estimatedValueVnd: 29880000,
-      interactions: [
-        {
-          id: 'int_3',
-          channel: 'Facebook',
-          direction: 'outbound',
-          content: 'Giới thiệu EduCenter Pro tích hợp CRM tuyển sinh & lịch học thử.',
-          agentId: 'sdr_1',
-          timestamp: now - 86400000,
-          dryRun: true,
-        },
-      ],
-      createdAt: now - 180000000,
-    },
-    {
-      id: 'lead_3',
       name: 'Trường Mầm non Song ngữ Hoa Hướng Dương',
       category: 'Trường mầm non',
       address: '25 Phan Xích Long, Phú Nhuận',
@@ -655,77 +672,13 @@ export async function seedInitialDatabase(): Promise<void> {
       lastContactedAt: now - 36000000,
       blacklisted: false,
       estimatedValueVnd: 19080000,
+      origin: 'simulated',
       interactions: [],
       createdAt: now - 300000000,
-    },
-    {
-      id: 'lead_4',
-      name: 'Công ty TNHH Kho Vận & TM Minh Phát',
-      category: 'Doanh nghiệp kho/bán lẻ',
-      address: 'KCN Tân Bình, Quận Tân Phú',
-      province: 'TP.HCM',
-      website: 'https://minhphatlogistics.vn',
-      email: 'kho@minhphatlogistics.vn',
-      phone: '0938 661 204',
-      source: 'Website Công khai',
-      score: 79,
-      scoreReason: 'Có 2 kho hàng gia dụng > 4.000 SKU, hay lệch tồn kho cuối tháng.',
-      recommendedProductId: 'warehouse-pro',
-      stage: 'contacted',
-      assignedAgentId: 'sdr_2',
-      followUpCount: 1,
-      lastContactedAt: now - 72000000,
-      blacklisted: false,
-      estimatedValueVnd: 22680000,
-      interactions: [],
-      createdAt: now - 150000000,
-    },
-    {
-      id: 'lead_5',
-      name: 'Nội thất Gỗ Việt Decor',
-      category: 'Doanh nghiệp SME',
-      address: '310 Nguyễn Văn Linh, Hải Châu',
-      province: 'Đà Nẵng',
-      email: 'contact@govietdecor.vn',
-      phone: '0905 334 912',
-      source: 'Google Search',
-      score: 74,
-      scoreReason: 'Website cũ chưa tối ưu mobile và chưa có form báo giá tự động.',
-      recommendedProductId: 'web-design',
-      stage: 'new',
-      assignedAgentId: 'lead_hunter_smb',
-      followUpCount: 0,
-      blacklisted: false,
-      estimatedValueVnd: 14500000,
-      interactions: [],
-      createdAt: now - 50000000,
-    },
-    {
-      id: 'lead_6',
-      name: 'Trung tâm Tiếng Nhật Sakura Bình Thạnh',
-      category: 'Trung tâm ngoại ngữ',
-      address: '76 Điện Biên Phủ, Bình Thạnh',
-      province: 'TP.HCM',
-      email: 'daotao@sakura-bt.vn',
-      phone: '0977 554 112',
-      zalo: '0977554112',
-      source: 'Google Maps Công khai',
-      score: 89,
-      scoreReason: 'Nhiều lớp N5–N2 khai giảng liên tục, cần tự động xếp phòng & tính công giáo viên.',
-      recommendedProductId: 'edu-center',
-      stage: 'won',
-      assignedAgentId: 'account_executive',
-      followUpCount: 2,
-      lastContactedAt: now - 20000000,
-      blacklisted: false,
-      estimatedValueVnd: 29880000,
-      interactions: [],
-      createdAt: now - 500000000,
     },
   ];
   await db.leads.bulkPut(initialLeads);
 
-  // Seed initial structured tasks (BỔ SUNG F)
   await db.tasks.bulkPut([
     {
       id: 'task_1',
@@ -747,6 +700,7 @@ export async function seedInitialDatabase(): Promise<void> {
       progressPercent: 45,
       lastProgressAt: now - 60000,
       deliverables: [],
+      origin: 'simulated',
       createdAt: now - 7200000,
       updatedAt: now - 60000,
       dueLabel: 'Hôm nay 14:00',
@@ -754,75 +708,28 @@ export async function seedInitialDatabase(): Promise<void> {
     {
       id: 'task_2',
       taskCode: '#T-102',
-      title: 'Soạn báo giá Gói Trường Chuẩn cho Mầm non Hoa Hướng Dương',
-      description: 'Tính ưu đãi thanh toán 12 tháng + miễn phí import danh sách bé.',
-      definitionOfDone: 'Có báo giá PDF nháp + phiếu xin duyệt giảm 10%.',
-      expectedDeliverable: 'Báo giá & Tờ trình ưu đãi',
-      department: 'sales',
-      assignedTo: 'pricing_proposal',
-      createdBy: 'account_executive',
-      status: 'waiting_approval',
-      priority: 'medium',
-      productId: 'preschool-care',
-      relatedLeadId: 'lead_3',
-      etaMinutes: 15,
-      etaAt: now + 3600000,
-      startedAt: now - 1800000,
-      progressPercent: 90,
-      lastProgressAt: now - 1800000,
-      deliverables: [],
-      createdAt: now - 10800000,
-      updatedAt: now - 1800000,
-      dueLabel: 'Chờ CEO duyệt',
-    },
-    {
-      id: 'task_3',
-      taskCode: '#T-103',
-      title: 'Khảo sát từ khóa SEO "phần mềm quản lý trung tâm tiếng Anh"',
-      description: 'Lập bộ 20 từ khóa long-tail có tỷ lệ chuyển đổi cao.',
-      definitionOfDone: 'Lưu bảng từ khóa vào Kho tài liệu.',
-      expectedDeliverable: 'Bộ từ khóa SEO Trọng tâm Q4',
-      department: 'marketing',
-      assignedTo: 'seo_specialist',
-      createdBy: 'cmo',
-      status: 'done',
-      priority: 'medium',
-      productId: 'edu-center',
-      etaMinutes: 10,
-      etaAt: now - 18000000,
-      startedAt: now - 22000000,
-      completedAt: now - 20000000,
-      progressPercent: 100,
-      lastProgressAt: now - 20000000,
-      deliverables: [{ type: 'doc', id: 'doc_seed_1', title: 'Bộ từ khóa SEO Trọng tâm Q4 – EduCenter Pro' }],
-      createdAt: now - 86400000,
-      updatedAt: now - 20000000,
-      dueLabel: 'Đã xong',
-    },
-    {
-      id: 'task_4',
-      taskCode: '#T-104',
-      title: 'Thiết lập tài khoản Zalo OA & kiểm tra webhook',
-      description: 'Chuẩn hóa kênh gửi tin tự động theo Playbook worker/playbooks/zalo_oa.ts.',
-      definitionOfDone: 'Kênh Zalo OA ở trạng thái sẵn sàng hoặc đã gửi OTP cho CEO.',
-      expectedDeliverable: 'Trạng thái kênh Zalo OA trong Kho kênh',
-      department: 'sales',
-      assignedTo: 'account_provisioning',
-      createdBy: 'sales_director',
+      title: 'Rà soát điều khoản bảo vệ dữ liệu trẻ em cho HĐ Mầm non',
+      description: 'Đảm bảo điều khoản đồng ý phụ huynh theo NĐ 13/2023 và Luật Bảo vệ DLCN.',
+      definitionOfDone: 'Pháp chế kiểm tra mẫu HĐ-SAAS-MN và xuất báo cáo kiểm tra.',
+      expectedDeliverable: 'Báo cáo pháp lý & mẫu HĐ hoàn chỉnh',
+      department: 'legal',
+      assignedTo: 'legal',
+      createdBy: 'coo',
       status: 'todo',
       priority: 'high',
+      productId: 'preschool-care',
       etaMinutes: 15,
       etaAt: now + 900000,
       progressPercent: 0,
       lastProgressAt: now - 3600000,
       deliverables: [],
+      origin: 'simulated',
       createdAt: now - 3600000,
       updatedAt: now - 3600000,
-      dueLabel: 'Chu kỳ hiện tại',
+      dueLabel: 'Ưu tiên',
     },
   ]);
 
-  // Seed Vault account statuses
   await db.vaultStatuses.bulkPut([
     {
       id: 'v_email',
@@ -833,7 +740,7 @@ export async function seedInitialDatabase(): Promise<void> {
       status: 'dry_run_ready',
       managedBy: 'account_provisioning',
       lastCheckedAt: now - 1200000,
-      note: 'Chế độ Mô phỏng (DRY_RUN). Đã xác thực định dạng SPF/DKIM mẫu.',
+      note: 'Chế độ Sandbox. Sẵn sàng chạy thật khi đổi sang LIVE.',
     },
     {
       id: 'v_zalo',
@@ -844,58 +751,6 @@ export async function seedInitialDatabase(): Promise<void> {
       status: 'dry_run_ready',
       managedBy: 'account_provisioning',
       lastCheckedAt: now - 900000,
-      note: 'Có khung Zalo giả lập trong Cài đặt. Kết nối thật qua /worker.',
-    },
-    {
-      id: 'v_fb',
-      platform: 'Facebook Page Công ty',
-      handle: 'fb.com/AICompanyVietnam',
-      purpose: 'Đăng bài truyền thông & inbox fanpage trung tâm',
-      playbook: 'worker/playbooks/facebook_page.ts',
-      status: 'needs_verification',
-      managedBy: 'account_provisioning',
-      lastCheckedAt: now - 3600000,
-      note: 'Chờ CEO xác nhận 2FA khi chạy Playwright local.',
-    },
-    {
-      id: 'v_gbp',
-      platform: 'Google Business Profile',
-      handle: 'AI Company Software - TP.HCM',
-      purpose: 'Tăng uy tín tìm kiếm địa phương & bản đồ',
-      playbook: 'worker/playbooks/google_business.ts',
-      status: 'dry_run_ready',
-      managedBy: 'account_provisioning',
-      lastCheckedAt: now - 5400000,
-    },
-    {
-      id: 'v_cal',
-      platform: 'Google Calendar (Lịch Demo)',
-      handle: 'demo@aicompany.vn',
-      purpose: 'Đặt lịch demo 1-1 tự động cho AE',
-      playbook: 'worker/playbooks/email.ts',
-      status: 'dry_run_ready',
-      managedBy: 'account_provisioning',
-      lastCheckedAt: now - 1800000,
-    },
-    {
-      id: 'v_canva',
-      platform: 'Canva Teams',
-      handle: 'design@aicompany.vn',
-      purpose: 'Xuất banner & sales kit cho Marketing',
-      playbook: 'worker/playbooks/canva_social.ts',
-      status: 'dry_run_ready',
-      managedBy: 'account_provisioning',
-      lastCheckedAt: now - 7200000,
-    },
-    {
-      id: 'v_tiktok',
-      platform: 'TikTok & YouTube Shorts',
-      handle: '@aicompany.vn',
-      purpose: 'Video demo ngắn phần mềm giáo dục & kho',
-      playbook: 'worker/playbooks/canva_social.ts',
-      status: 'not_created',
-      managedBy: 'account_provisioning',
-      lastCheckedAt: now - 86400000,
     },
   ]);
 
@@ -904,11 +759,11 @@ export async function seedInitialDatabase(): Promise<void> {
     type: 'quote',
     title: 'Duyệt giảm 10% cho Mầm non Hoa Hướng Dương (Thanh toán 12 tháng)',
     description:
-      'Châu Kim Ngân (Pricing) đề xuất áp dụng mức ưu đãi 10% ngoài bảng giá chuẩn (còn 17.172.000đ/năm) để chốt ký ngay trong tuần.',
+      'Châu Kim Ngân (Pricing) đề xuất áp dụng mức ưu đãi 10% ngoài bảng giá chuẩn (còn 17.172.000đ/năm).',
     requestedBy: 'pricing_proposal',
     department: 'sales',
     amountVnd: 17172000,
-    payload: { leadId: 'lead_3', discountPercent: 10 },
+    payload: { leadId: 'lead_2', discountPercent: 10 },
     status: 'pending',
     createdAt: now - 1800000,
   });
@@ -920,7 +775,8 @@ export async function seedInitialDatabase(): Promise<void> {
     authorId: 'seo_specialist',
     department: 'marketing',
     productId: 'edu-center',
-    content: `# Bộ từ khóa SEO Trọng tâm – EduCenter Pro\n\n| Từ khóa | Lượng tìm/tháng | Mức độ ưu tiên |\n|---|---|---|\n| phần mềm quản lý trung tâm ngoại ngữ | 2.400 | Cao |\n| phần mềm quản lý trung tâm tiếng Anh | 3.100 | Rất cao |\n| app điểm danh trung tâm | 880 | Trung bình |\n| phần mềm tính lương giáo viên | 1.300 | Cao |\n\n## Đề xuất cấu trúc bài viết\n1. Trang đích trụ cột (Pillar Page) so sánh chi tiết với file Excel truyền thống.\n2. Case study tiết kiệm 15 giờ/tuần cho trung tâm quy mô 300 học viên.`,
+    content: `# Bộ từ khóa SEO Trọng tâm – EduCenter Pro\n\n| Từ khóa | Lượng tìm/tháng | Mức độ ưu tiên |\n|---|---|---|\n| phần mềm quản lý trung tâm ngoại ngữ | 2.400 | Cao |\n| phần mềm quản lý trung tâm tiếng Anh | 3.100 | Rất cao |`,
+    origin: 'simulated',
     createdAt: now - 20000000,
     updatedAt: now - 20000000,
   });
@@ -934,48 +790,9 @@ export async function seedInitialDatabase(): Promise<void> {
       senderTitle: 'Thư ký CEO',
       department: 'exec',
       content:
-        'Chào mừng Chủ tịch đã vào **Văn phòng ảo 3D – AI Company**! Toàn bộ nhân sự AI Chibi ở 2 tầng đã sẵn sàng.\n\n- Chủ tịch có thể **giao việc trực tiếp** hoặc dùng `@tên` (vd: `@Trịnh Gia Huy tìm 10 trung tâm ngoại ngữ`) để giao đúng người.\n- Hỗ trợ **Quản lý Nhân sự động (1–60 người)** trong tab Nhân sự & Quyền, và **Quy trình Chi phí – Kế toán 2 tầng** trong tab Chi phí & Kế toán.',
+        'Chào mừng Chủ tịch vào **Văn phòng ảo 3D – AI Company (3 tầng)**! Toàn bộ nhân sự 3 tầng (Tầng 1 Sales/CS, Tầng 2 Giám đốc/Marketing/Tech/Pháp chế, Tầng 3 Khối Affiliate) đã sẵn sàng.\n\n- Mở **Cài đặt** hoặc **Sức khỏe hệ thống** để hoàn tất **Checklist Go-Live 10 bước** trước khi chuyển sang chế độ **LIVE**.',
       timestamp: now - 600000,
       busType: 'chat',
-    },
-    {
-      id: 'msg_welcome_2',
-      channelId: 'sales',
-      senderId: 'sales_director',
-      senderName: 'Nguyễn Hoàng Long',
-      senderTitle: 'Giám đốc Kinh doanh',
-      department: 'sales',
-      content:
-        'Báo cáo nhanh Phòng Sales (Tầng 1): Hiện đang có **6 Lead** trong phễu (1 Đã chốt, 1 Đang demo, 1 Chờ duyệt báo giá). Bật **Autopilot** bất cứ lúc nào để đội Lead Hunter & SDR tự động tìm 30 khách/ngày.',
-      timestamp: now - 300000,
-      busType: 'report',
-    },
-    {
-      id: 'msg_welcome_3',
-      channelId: 'all',
-      senderId: 'pricing_proposal',
-      senderName: 'Châu Kim Ngân',
-      senderTitle: 'Pricing & Proposal',
-      department: 'sales',
-      content: 'Em đã lập tờ trình giảm giá 10% cho Trường Mầm non Hoa Hướng Dương, kính nhờ Chủ tịch phê duyệt.',
-      timestamp: now - 200000,
-      busType: 'approval_needed',
-      cardType: 'approval',
-      cardData: { approvalId: 'apr_seed_1' },
-    },
-    {
-      id: 'msg_welcome_4',
-      channelId: 'backoffice',
-      senderId: 'cfo',
-      senderName: 'Hồ Thảo Nhi',
-      senderTitle: 'CFO / Kế toán Trưởng',
-      department: 'backoffice',
-      content:
-        'Phòng Kế toán đã nhận đề xuất **#CP-101** (1.800.000đ chạy Lead Ads EduCenter Pro) từ Ngô Bảo Nam. Đang chờ Kế toán thẩm định tầng 1 trong tab **Chi phí & Kế toán**.',
-      timestamp: now - 150000,
-      busType: 'approval_needed',
-      cardType: 'expense',
-      cardData: { expenseId: 'exp_seed_1' },
     },
   ]);
 
@@ -993,77 +810,14 @@ export async function seedInitialDatabase(): Promise<void> {
     cached: false,
     timestamp: now - 20000000,
   });
-
-  await db.outreachLogs.put({
-    id: 'out_seed_1',
-    agentId: 'sdr_1',
-    agentName: 'Dương Minh Thư',
-    leadId: 'lead_1',
-    leadName: 'Trung tâm Anh ngữ SunLight Academy',
-    channel: 'Email',
-    subjectOrPreview: 'Giải pháp tự động xếp lịch & nhắc học phí Zalo OA cho SunLight Academy (Nhắn DỪNG để hủy)',
-    result: 'sent_dry_run',
-    dryRun: true,
-    timestamp: now - 172800000,
-  });
-
-  await db.auditLogs.put({
-    id: 'aud_seed_1',
-    agentId: 'sdr_1',
-    agentName: 'Dương Minh Thư',
-    action: 'send_outreach',
-    permission: 'outreach:send',
-    resource: 'outreach',
-    result: 'allowed',
-    timestamp: now - 172800000,
-  });
 }
 
 export class DexieRepository implements IDataRepository {
   async getSettings() {
     await seedInitialDatabase();
-    const defaults = await createDefaultSettings();
     const stored = await db.settings.get('default');
-    if (!stored) return defaults;
-    const rawGraphics = String((stored as { graphicsQuality?: string }).graphicsQuality || 'medium');
-    const normalizedQuality =
-      rawGraphics === 'eco' ? 'low' : rawGraphics === 'balanced' ? 'medium' : (rawGraphics as CompanySettings['graphicsQuality']);
-
-    const rawSpeed = Number(stored.simulationSpeed);
-    const normalizedSpeed: 1 | 2 | 4 = rawSpeed === 2 ? 2 : rawSpeed === 4 ? 4 : 1;
-
-    return {
-      ...defaults,
-      ...stored,
-      simulationSpeed: normalizedSpeed,
-      graphicsQuality: normalizedQuality,
-      providerBudgets: {
-        ...defaults.providerBudgets,
-        ...(stored.providerBudgets || {}),
-      },
-      spendingPolicy: {
-        ...defaults.spendingPolicy,
-        ...(stored.spendingPolicy || {}),
-      },
-      envMode: stored.envMode || defaults.envMode,
-      hubcw: {
-        ...defaults.hubcw,
-        ...(stored.hubcw || {}),
-        unclearWriteUnlocked: {
-          ...defaults.hubcw.unclearWriteUnlocked,
-          ...(stored.hubcw?.unclearWriteUnlocked || {}),
-        },
-        moduleHealth: {
-          ...defaults.hubcw.moduleHealth,
-          ...(stored.hubcw?.moduleHealth || {}),
-        },
-      },
-      brand: {
-        ...defaults.brand,
-        ...(stored.brand || {}),
-      },
-      roleRoutes: Array.isArray(stored.roleRoutes) && stored.roleRoutes.length > 0 ? stored.roleRoutes : defaults.roleRoutes,
-    };
+    const { settings } = migrateSettingsRecord(stored);
+    return settings;
   }
   async saveSettings(settings: CompanySettings) {
     await db.settings.put(settings);
@@ -1174,7 +928,7 @@ export class DexieRepository implements IDataRepository {
     await db.companyMemories.put(mem);
   }
   async getWorkflows() {
-    return db.workflows.orderBy('createdAt').reverse().limit(30).toArray();
+    return db.workflows.orderBy('createdAt').reverse().limit(50).toArray();
   }
   async putWorkflow(wf: WorkflowTrace) {
     await db.workflows.put(wf);
@@ -1186,7 +940,8 @@ export class DexieRepository implements IDataRepository {
     await db.agentAppearances.put(app);
   }
   async getBrandKit() {
-    return db.brandKits.get('kit_default');
+    const all = await db.brandKits.toArray();
+    return all[0];
   }
   async putBrandKit(kit: BrandLaunchKit) {
     await db.brandKits.put(kit);
@@ -1292,6 +1047,181 @@ export class DexieRepository implements IDataRepository {
   }
   async addHubCwReconciliation(report: HubCwReconciliationReport) {
     await db.hubcwReconciliations.put(report);
+  }
+  // Affiliate
+  async getAffiliateOffers() {
+    return db.affiliateOffers.orderBy('fetchedAt').reverse().limit(150).toArray();
+  }
+  async putAffiliateOffer(offer: AffiliateOffer) {
+    await db.affiliateOffers.put(offer);
+  }
+  async getAffiliateProducts() {
+    return db.affiliateProducts.orderBy('fetchedAt').reverse().limit(200).toArray();
+  }
+  async putAffiliateProduct(p: AffiliateProduct) {
+    await db.affiliateProducts.put(p);
+  }
+  async getAffiliateScores() {
+    return db.affiliateScores.orderBy('scoredAt').reverse().limit(200).toArray();
+  }
+  async putAffiliateScore(s: AffiliateProductScore) {
+    await db.affiliateScores.put(s);
+  }
+  async getAffiliateCampaigns() {
+    return db.affiliateCampaigns.orderBy('updatedAt').reverse().toArray();
+  }
+  async putAffiliateCampaign(c: AffiliateCampaign) {
+    await db.affiliateCampaigns.put(c);
+  }
+  async getTrackedLinks() {
+    return db.trackedLinks.orderBy('createdAt').reverse().toArray();
+  }
+  async putTrackedLink(l: TrackedLink) {
+    await db.trackedLinks.put(l);
+  }
+  async getAffiliateContent() {
+    return db.affiliateContent.orderBy('createdAt').reverse().toArray();
+  }
+  async putAffiliateContent(p: AffiliateContentPiece) {
+    await db.affiliateContent.put(p);
+  }
+  async getAffiliatePosts() {
+    return db.affiliatePosts.orderBy('createdAt').reverse().toArray();
+  }
+  async putAffiliatePost(p: AffiliateChannelPost) {
+    await db.affiliatePosts.put(p);
+  }
+  async getAffiliateConversions() {
+    return db.affiliateConversions.orderBy('importedAt').reverse().toArray();
+  }
+  async putAffiliateConversion(c: AffiliateClickConversion) {
+    await db.affiliateConversions.put(c);
+  }
+  async getAffiliateCommissions() {
+    return db.affiliateCommissions.orderBy('importedAt').reverse().toArray();
+  }
+  async putAffiliateCommission(c: AffiliateCommission) {
+    await db.affiliateCommissions.put(c);
+  }
+  async getAffiliateExperiments() {
+    return db.affiliateExperiments.orderBy('createdAt').reverse().toArray();
+  }
+  async putAffiliateExperiment(e: AffiliateExperiment) {
+    await db.affiliateExperiments.put(e);
+  }
+  // Legal
+  async getLegalDocuments() {
+    return db.legalDocuments.toArray();
+  }
+  async putLegalDocument(d: LegalDocument) {
+    await db.legalDocuments.put(d);
+  }
+  async getContractTemplates() {
+    return db.contractTemplates.toArray();
+  }
+  async putContractTemplate(t: ContractTemplate) {
+    await db.contractTemplates.put(t);
+  }
+  async getContracts() {
+    return db.contracts.orderBy('createdAt').reverse().toArray();
+  }
+  async putContract(c: ContractRecord) {
+    await db.contracts.put(c);
+  }
+  async getLegalReports() {
+    return db.legalReports.orderBy('createdAt').reverse().toArray();
+  }
+  async putLegalReport(r: LegalReportRecord) {
+    await db.legalReports.put(r);
+  }
+  // 24/7 Ops
+  async getDurableJobs() {
+    return db.durableJobs.orderBy('createdAt').reverse().limit(200).toArray();
+  }
+  async putDurableJob(j: DurableJob) {
+    await db.durableJobs.put(j);
+  }
+  async getSystemHealthLogs() {
+    return db.systemHealthLogs.orderBy('timestamp').reverse().limit(400).toArray();
+  }
+  async addSystemHealthLog(l: SystemHealthLog) {
+    await db.systemHealthLogs.put(l);
+  }
+  async getBackupSnapshots() {
+    return db.backupSnapshots.orderBy('createdAt').reverse().limit(30).toArray();
+  }
+  async putBackupSnapshot(b: BackupSnapshotRecord) {
+    await db.backupSnapshots.put(b);
+  }
+  async exportAllTablesForBackup() {
+    const [
+      settings,
+      agents,
+      departments,
+      tasks,
+      leads,
+      documents,
+      expenses,
+      expenseRules,
+      expenseBudgets,
+      affiliateOffers,
+      affiliateProducts,
+      affiliateScores,
+      affiliateCampaigns,
+      trackedLinks,
+      affiliateContent,
+      affiliateConversions,
+      affiliateCommissions,
+      legalDocuments,
+      contractTemplates,
+      contracts,
+      legalReports,
+    ] = await Promise.all([
+      db.settings.get('default'),
+      db.agents.toArray(),
+      db.departments.toArray(),
+      db.tasks.toArray(),
+      db.leads.toArray(),
+      db.documents.toArray(),
+      db.expenses.toArray(),
+      db.expenseRules.toArray(),
+      db.expenseBudgets.toArray(),
+      db.affiliateOffers.toArray(),
+      db.affiliateProducts.toArray(),
+      db.affiliateScores.toArray(),
+      db.affiliateCampaigns.toArray(),
+      db.trackedLinks.toArray(),
+      db.affiliateContent.toArray(),
+      db.affiliateConversions.toArray(),
+      db.affiliateCommissions.toArray(),
+      db.legalDocuments.toArray(),
+      db.contractTemplates.toArray(),
+      db.contracts.toArray(),
+      db.legalReports.toArray(),
+    ]);
+    return {
+      settings,
+      agents,
+      departments,
+      tasks,
+      leads,
+      documents,
+      expenses,
+      expenseRules,
+      expenseBudgets,
+      affiliateOffers,
+      affiliateProducts,
+      affiliateScores,
+      affiliateCampaigns,
+      trackedLinks,
+      affiliateContent,
+      affiliateConversions,
+      affiliateCommissions,
+      legalDocuments,
+      contractTemplates,
+      contracts,
+      legalReports,
+    };
   }
   async resetAll() {
     await db.delete();
