@@ -3,6 +3,7 @@ import {
   AdCampaignItem,
   AgentAccount,
   AgentAppearance,
+  AgentExternalAccount,
   AgentMemory,
   AgentProfile,
   AgentRuntimeState,
@@ -11,12 +12,15 @@ import {
   AskCeoQuestion,
   AuditLogEntry,
   BrandLaunchKit,
+  BrandSettings,
   ChatChannelId,
   ChatMessage,
   CompanySettings,
+  DataProvenance,
   DepartmentConfig,
   DepartmentId,
   DocumentItem,
+  EncryptedCredentialRecord,
   ExpenseAuditStep,
   ExpenseBudget,
   ExpenseCategoryConfig,
@@ -24,9 +28,18 @@ import {
   ExpenseRule,
   ExpenseStatus,
   HrAuditEntry,
+  HubCwApiLog,
+  HubCwModuleId,
+  HubCwModulePermissionFlag,
+  HubCwReconciliationReport,
+  HubCwSettings,
+  HubCwSyncItem,
+  HubCwUndoSnapshot,
   LeadItem,
   LeadStage,
+  LogoPlacement,
   MarketingChannelRecord,
+  OutfitStyleId,
   OutreachLogEntry,
   Permission,
   ProviderId,
@@ -39,6 +52,7 @@ import {
   SocialCommentInboxItem,
   SocialPostLogEntry,
   SpendingPolicy,
+  SystemEnvMode,
   TaskItem,
   TaskStatus,
   TokenUsageRecord,
@@ -47,10 +61,29 @@ import {
 } from '../types';
 import { CompanyMemoryRecord, createDefaultSettings, repository } from '../db/repository';
 import { buildWalkWaypoints, MEETING_SEATS, Vec3 } from '../engine/waypoints';
-import { generateHashedAgentToken, generateSalt, hashPasswordPBKDF2 } from '../engine/auth';
+import {
+  decryptSecretAesGcm,
+  encryptSecretAesGcm,
+  generateHashedAgentToken,
+  generateSalt,
+  hashPasswordPBKDF2,
+  verifyPasswordPBKDF2,
+} from '../engine/auth';
 import { getDefaultAppearance } from '../engine/characterAppearance';
 import { buildRoutingPreset, llmClient } from '../engine/llm';
 import { buildDefaultBrandLaunchKit } from '../engine/marketingSeeds';
+import { DEFAULT_BRAND_PALETTE } from '../brand/logoBrand';
+import {
+  buildDefaultHubCwPermissions,
+  DEFAULT_HUBCW_BASE_URL,
+  HUBCW_MODULES,
+} from '../integrations/hubcw/hubcw.config';
+import { createHubCwConnector } from '../integrations/hubcw/BusinessSystemConnector';
+import {
+  executeHubCwWrite,
+  revertHubCwSnapshot,
+  runHubCwReconciliation,
+} from '../integrations/hubcw/writeGate';
 import {
   buildSeedAgents,
   buildSeedDepartments,
@@ -83,6 +116,7 @@ export type RightPanelTab =
   | 'docs'
   | 'approvals'
   | 'finance'
+  | 'hubcw'
   | 'rbac'
   | 'vault'
   | 'tokens'
@@ -129,6 +163,12 @@ export interface CompanyState {
   expenseRules: ExpenseRule[];
   expenseBudgets: ExpenseBudget[];
   expenseCategories: ExpenseCategoryConfig[];
+  // BỔ SUNG G & H: HubCW Connector & Anti-Fake-Data Firewall
+  externalAccounts: AgentExternalAccount[];
+  hubcwApiLogs: HubCwApiLog[];
+  hubcwSyncQueue: HubCwSyncItem[];
+  hubcwUndoSnapshots: HubCwUndoSnapshot[];
+  hubcwReconciliations: HubCwReconciliationReport[];
   onAskCeoResolvedHook?: (q: AskCeoQuestion, answer: string) => Promise<void> | void;
 
   // UI HUD State
@@ -324,6 +364,57 @@ export interface CompanyState {
 
   // DB reset
   resetDatabase: () => Promise<void>;
+
+  // BỔ SUNG G & H Actions: HubCW Connector, Credential Vault, Sync, Undo, Env Switch & Uniform Brand
+  getDecryptedAgentSecret: (agentId: string) => Promise<string | undefined>;
+  linkExistingExternalAccount: (params: {
+    agentId: string;
+    username: string;
+    secret: string;
+    authType: 'token' | 'password_session';
+    externalUserId?: string;
+    email?: string;
+    externalRole?: string;
+  }) => Promise<{ ok: boolean; message: string }>;
+  proposeCreateExternalAccount: (params: {
+    agentId: string;
+    username: string;
+    email: string;
+    externalRole: string;
+  }) => Promise<{ ok: boolean; message: string; setupGuide: string }>;
+  testExternalAccountLogin: (agentId: string) => Promise<{ ok: boolean; message: string }>;
+  lockExternalAccount: (agentId: string, reason?: string) => Promise<void>;
+  rotateExternalToken: (agentId: string, newSecret: string) => Promise<{ ok: boolean; message: string }>;
+  updateAgentHubCwPermissions: (
+    agentId: string,
+    module: HubCwModuleId,
+    flag: HubCwModulePermissionFlag
+  ) => Promise<void>;
+  updateHubCwSettings: (patch: Partial<HubCwSettings>) => Promise<void>;
+  checkHubCwModuleHealth: () => Promise<void>;
+  addHubCwApiLog: (log: HubCwApiLog) => Promise<void>;
+  addHubCwUndoSnapshot: (snap: HubCwUndoSnapshot) => Promise<void>;
+  enqueueHubCwSync: (item: Omit<HubCwSyncItem, 'id' | 'status' | 'createdAt' | 'updatedAt'>) => Promise<HubCwSyncItem>;
+  processHubCwSyncQueue: () => Promise<{ processed: number; blocked: number }>;
+  revertHubCwWriteAction: (snapshotId: string) => Promise<{ ok: boolean; message: string }>;
+  runReconciliationNow: () => Promise<HubCwReconciliationReport>;
+  switchEnvModeWithPreflight: (
+    targetMode: SystemEnvMode,
+    options?: { confirmPhrase?: string; ceoPassword?: string }
+  ) => Promise<{ ok: boolean; message: string; checks?: Array<{ label: string; ok: boolean; detail: string }> }>;
+  instantRevertToSafeMode: (target?: 'sandbox' | 'read_only') => Promise<void>;
+  updateBrandSettings: (patch: Partial<BrandSettings>) => Promise<void>;
+  applyUniformToDept: (
+    departmentId: DepartmentId,
+    options: { outfitStyle?: OutfitStyleId; outfitColor?: string; logoPlacement?: LogoPlacement; showBadge?: boolean; useUniform?: boolean }
+  ) => Promise<number>;
+  applyUniformToCompany: (options: {
+    outfitStyle?: OutfitStyleId;
+    useUniform?: boolean;
+    logoPlacement?: LogoPlacement;
+    showBadge?: boolean;
+    tintWithBrandPrimary?: boolean;
+  }) => Promise<number>;
 }
 
 function buildInitialRuntimes(agents: AgentProfile[]): Record<string, AgentRuntimeState> {
@@ -438,6 +529,20 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       maxConcurrentAgents: 8,
       spendingPolicy: createDefaultSpendingPolicy(),
       dailyDigestEnabled: true,
+      envMode: 'sandbox',
+      hubcw: {
+        baseUrl: DEFAULT_HUBCW_BASE_URL,
+        connectionMode: 'sandbox',
+        hourlyWriteLimit: 30,
+        requireApprovalForCritical: true,
+        unclearWriteUnlocked: {
+          golden_pig: false,
+          automation: false,
+          resources: false,
+        },
+        moduleHealth: {},
+      },
+      brand: { ...DEFAULT_BRAND_PALETTE },
     },
     accounts: [],
     agentAppearances: buildDefaultAppearancesMap(seedAgents),
@@ -465,6 +570,11 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
     expenseRules: [],
     expenseBudgets: [],
     expenseCategories: [],
+    externalAccounts: [],
+    hubcwApiLogs: [],
+    hubcwSyncQueue: [],
+    hubcwUndoSnapshots: [],
+    hubcwReconciliations: [],
 
     activeTab: 'chat',
     activeChannel: 'all',
@@ -533,6 +643,11 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
         expenseRules,
         expenseBudgets,
         expenseCategories,
+        externalAccounts,
+        hubcwApiLogs,
+        hubcwSyncQueue,
+        hubcwUndoSnapshots,
+        hubcwReconciliations,
       ] = await Promise.all([
         repository.getAgents(),
         repository.getDepartments(),
@@ -562,6 +677,11 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
         repository.getExpenseRules(),
         repository.getExpenseBudgets(),
         repository.getExpenseCategories(),
+        repository.getExternalAccounts(),
+        repository.getHubCwApiLogs(),
+        repository.getHubCwSyncQueue(),
+        repository.getHubCwUndoSnapshots(),
+        repository.getHubCwReconciliations(),
       ]);
 
       const activeAgentsList = agents.length > 0 ? agents : seedAgents;
@@ -672,6 +792,11 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
         expenseRules,
         expenseBudgets,
         expenseCategories,
+        externalAccounts,
+        hubcwApiLogs,
+        hubcwSyncQueue,
+        hubcwUndoSnapshots,
+        hubcwReconciliations,
         serverHealth: {
           mode: health.mode,
           hasGeminiEnvKey: health.hasGeminiEnvKey,
@@ -1008,9 +1133,17 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
         timestamp: Date.now(),
       };
 
+      const extAccount: AgentExternalAccount = {
+        agentId: newAgent.id,
+        system: 'hubcw',
+        externalPermissions: buildDefaultHubCwPermissions(newAgent.department, newAgent.role, newAgent.title),
+        status: 'unlinked',
+      };
+
       set((s) => ({
         agents: [...s.agents, newAgent],
         accounts: [...s.accounts, account],
+        externalAccounts: [...s.externalAccounts, extAccount],
         agentAppearances: { ...s.agentAppearances, [newAgent.id]: appearance },
         agentMemories: { ...s.agentMemories, [newAgent.id]: memory },
         runtimes: { ...s.runtimes, [newAgent.id]: runtime },
@@ -1020,6 +1153,7 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       await Promise.all([
         repository.putAgent(newAgent),
         repository.putAccount(account),
+        repository.putExternalAccount(extAccount),
         repository.putAgentAppearance(appearance),
         repository.putAgentMemory(memory),
         repository.addHrAudit(audit),
@@ -1136,6 +1270,31 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       };
       set((s) => ({ hrAudits: [audit, ...s.hrAudits].slice(0, 300) }));
       await repository.addHrAudit(audit);
+
+      if (deptChanged) {
+        const ext = get().externalAccounts.find((e) => e.agentId === agentId);
+        if (ext && ext.status === 'active') {
+          const proposedPerms = buildDefaultHubCwPermissions(nextAgent.department, nextAgent.role, nextAgent.title);
+          const updatedExt: AgentExternalAccount = {
+            ...ext,
+            externalPermissions: proposedPerms,
+          };
+          set((s) => ({
+            externalAccounts: s.externalAccounts.map((e) => (e.agentId === agentId ? updatedExt : e)),
+          }));
+          await repository.putExternalAccount(updatedExt);
+          await get().addMessage({
+            channelId: 'backoffice',
+            senderId: 'hr',
+            senderName: 'Phòng Nhân sự',
+            senderTitle: 'HR Notice',
+            department: 'backoffice',
+            content: `Nhân sự **${nextAgent.name}** vừa chuyển sang phòng **${nextAgent.department}**. Hệ thống đã đề xuất điều chỉnh lại quyền Hub.ChuyenWeb theo chuẩn tối thiểu của phòng mới — CEO kiểm tra lại trong tab Nhân sự.`,
+            busType: 'report',
+          });
+        }
+      }
+
       emitHrEvent('agent.updated', { agentId, departmentId: nextAgent.department });
     },
 
@@ -1286,6 +1445,22 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
           accounts: s.accounts.map((a) => (a.agentId === agentId ? revokedAcc : a)),
         }));
         await repository.putAccount(revokedAcc);
+      }
+
+      // G2 Lifecycle: Lock HubCW external account + wipe encrypted secret (never hard delete real account)
+      const extAcc = state.externalAccounts.find((e) => e.agentId === agentId);
+      if (extAcc) {
+        const lockedExt: AgentExternalAccount = {
+          ...extAcc,
+          status: extAcc.status === 'unlinked' ? 'unlinked' : 'suspended',
+          handoverNote: `Khóa tài khoản HubCW & bàn giao cho ${recipient.name} (${new Date().toLocaleDateString('vi-VN')})`,
+          lastActivityAt: Date.now(),
+        };
+        set((s) => ({
+          externalAccounts: s.externalAccounts.map((e) => (e.agentId === agentId ? lockedExt : e)),
+        }));
+        await repository.putExternalAccount(lockedExt);
+        await repository.deleteEncryptedCredential(agentId);
       }
 
       // Walk character out to reception exit door, then mark archived
@@ -2265,12 +2440,14 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
     },
 
     triggerKillSwitch: async () => {
+      const prevEnv = get().settings.envMode;
       const next = {
         ...get().settings,
         killSwitchActive: true,
         autopilotEnabled: false,
         marketingAutopilotEnabled: false,
         paused: true,
+        envMode: prevEnv === 'live' ? ('read_only' as const) : prevEnv,
       };
       const nextRuntimes = { ...get().runtimes };
       for (const id of Object.keys(nextRuntimes)) {
@@ -2285,7 +2462,8 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       set({
         settings: next,
         runtimes: nextRuntimes,
-        bannerAlert: 'KILL SWITCH ĐÃ KÍCH HOẠT: Toàn bộ agent, Autopilot và cuộc gọi LLM đã dừng ngay lập tức.',
+        bannerAlert:
+          'KILL SWITCH ĐÃ KÍCH HOẠT: Toàn bộ agent, Autopilot và kết nối ghi Hub.ChuyenWeb đã bị ngắt lập tức.',
       });
       await repository.saveSettings(next);
       await get().addMessage({
@@ -2753,6 +2931,631 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       const freshDefault = await createDefaultSettings();
       await repository.saveSettings(freshDefault);
       await get().init();
+    },
+
+    // === BỔ SUNG G & H: HUB.CHUYENWEB.COM CONNECTOR, VAULT, UNDO, RECONCILIATION & UNIFORM ===
+    getDecryptedAgentSecret: async (agentId) => {
+      const cred = await repository.getEncryptedCredential(agentId);
+      if (!cred) return undefined;
+      try {
+        return await decryptSecretAesGcm(cred.ivHex, cred.ciphertextB64);
+      } catch {
+        return undefined;
+      }
+    },
+
+    linkExistingExternalAccount: async ({
+      agentId,
+      username,
+      secret,
+      authType,
+      externalUserId,
+      email,
+      externalRole,
+    }) => {
+      const agent = get().agents.find((a) => a.id === agentId);
+      if (!agent) return { ok: false, message: 'Không tìm thấy nhân sự.' };
+      if (!username.trim() || !secret.trim()) {
+        return { ok: false, message: 'Vui lòng nhập đầy đủ Tên đăng nhập và Token/Mật khẩu.' };
+      }
+
+      const encrypted = await encryptSecretAesGcm(secret.trim());
+      const credRecord: EncryptedCredentialRecord = {
+        id: `${agentId}::hubcw`,
+        agentId,
+        system: 'hubcw',
+        authType,
+        ivHex: encrypted.ivHex,
+        ciphertextB64: encrypted.ciphertextB64,
+        keyFingerprint: encrypted.keyFingerprint,
+        updatedAt: Date.now(),
+      };
+      await repository.putEncryptedCredential(credRecord);
+
+      const settings = get().settings;
+      const resolvedExtId = externalUserId?.trim() || `hubcw_${username.trim().toLowerCase()}`;
+      let statusMessage = `Đã mã hóa AES-256-GCM và liên kết tài khoản '${username.trim()}' cho ${agent.name}.`;
+      let finalStatus: AgentExternalAccount['status'] = 'active';
+
+      if (settings.hubcw.connectionMode === 'api') {
+        const connector = createHubCwConnector('api', settings.hubcw.baseUrl);
+        const probe = await connector.testConnection({
+          agentId,
+          agentName: agent.name,
+          externalUserId: resolvedExtId,
+          credentialSecret: secret.trim(),
+          requestId: `link_test_${Date.now()}`,
+        });
+        if (!probe.ok) {
+          finalStatus = 'error';
+          statusMessage = `Đã lưu thông tin mã hóa nhưng kiểm tra API HubCW báo lỗi: ${probe.message}`;
+        } else {
+          statusMessage = `Kiểm tra đăng nhập HubCW thành công (${probe.latencyMs}ms). Đã liên kết cho ${agent.name}.`;
+        }
+      }
+
+      const existing = get().externalAccounts.find((e) => e.agentId === agentId);
+      const nextAcc: AgentExternalAccount = {
+        agentId,
+        system: 'hubcw',
+        externalUserId: resolvedExtId,
+        username: username.trim(),
+        email: email?.trim() || `${agentId}@aicompany.vn`,
+        externalRole: externalRole?.trim() || agent.role,
+        externalPermissions:
+          existing?.externalPermissions || buildDefaultHubCwPermissions(agent.department, agent.role, agent.title),
+        status: finalStatus,
+        linkedAt: Date.now(),
+        lastActivityAt: Date.now(),
+        tokenExpiresAt: Date.now() + 30 * 86400_000,
+        lastError: finalStatus === 'error' ? statusMessage : undefined,
+      };
+      set((s) => ({
+        externalAccounts: s.externalAccounts.some((e) => e.agentId === agentId)
+          ? s.externalAccounts.map((e) => (e.agentId === agentId ? nextAcc : e))
+          : [...s.externalAccounts, nextAcc],
+      }));
+      await repository.putExternalAccount(nextAcc);
+
+      await get().addAuditLog({
+        id: `aud_link_${Date.now()}`,
+        agentId,
+        agentName: agent.name,
+        action: 'hubcw:link_account',
+        permission: 'hubcw:write',
+        resource: 'hubcw_account',
+        result: finalStatus === 'active' ? 'allowed' : 'denied',
+        externalRefId: resolvedExtId,
+        reason: statusMessage,
+        timestamp: Date.now(),
+      });
+
+      return { ok: finalStatus === 'active', message: statusMessage };
+    },
+
+    proposeCreateExternalAccount: async ({ agentId, username, email, externalRole }) => {
+      const agent = get().agents.find((a) => a.id === agentId);
+      if (!agent) {
+        return { ok: false, message: 'Không tìm thấy nhân sự.', setupGuide: '' };
+      }
+
+      const existing = get().externalAccounts.find((e) => e.agentId === agentId);
+      const pendingAcc: AgentExternalAccount = {
+        agentId,
+        system: 'hubcw',
+        username: username.trim(),
+        email: email.trim(),
+        externalRole: externalRole.trim(),
+        externalPermissions:
+          existing?.externalPermissions || buildDefaultHubCwPermissions(agent.department, agent.role, agent.title),
+        status: 'pending_creation',
+        lastActivityAt: Date.now(),
+      };
+      set((s) => ({
+        externalAccounts: s.externalAccounts.some((e) => e.agentId === agentId)
+          ? s.externalAccounts.map((e) => (e.agentId === agentId ? pendingAcc : e))
+          : [...s.externalAccounts, pendingAcc],
+      }));
+      await repository.putExternalAccount(pendingAcc);
+
+      const setupGuide = [
+        `1. Mở trang quản trị Người dùng tại ${get().settings.hubcw.baseUrl}/users`,
+        `2. Tạo tài khoản mới với:`,
+        `   - Họ tên: ${agent.name} (${agent.title})`,
+        `   - Username: ${username.trim()}`,
+        `   - Email: ${email.trim()}`,
+        `   - Vai trò gợi ý: ${externalRole.trim()}`,
+        `3. Tạo Personal API Token (hoặc mật khẩu riêng) rồi dán vào nút "Liên kết TK có sẵn" cạnh tên ${agent.name}.`,
+      ].join('\n');
+
+      await get().addMessage({
+        channelId: 'backoffice',
+        senderId: 'hr',
+        senderName: 'Phòng Nhân sự',
+        senderTitle: 'Cấp tài khoản HubCW',
+        department: 'backoffice',
+        content: `Đã lập hồ sơ đề xuất tài khoản **Hub.ChuyenWeb** cho **${agent.name}** (\`${username.trim()}\` / ${email.trim()}).\n\n\`\`\`\n${setupGuide}\n\`\`\``,
+        busType: 'approval_needed',
+      });
+
+      return {
+        ok: true,
+        message: `Đã chuyển trạng thái '${agent.name}' sang Chờ tạo tài khoản và xuất hướng dẫn thao tác.`,
+        setupGuide,
+      };
+    },
+
+    testExternalAccountLogin: async (agentId) => {
+      const agent = get().agents.find((a) => a.id === agentId);
+      const ext = get().externalAccounts.find((e) => e.agentId === agentId);
+      if (!agent || !ext) {
+        return { ok: false, message: 'Chưa có thông tin tài khoản HubCW.' };
+      }
+      const secret = await get().getDecryptedAgentSecret(agentId);
+      const settings = get().settings;
+      const mode = settings.hubcw.connectionMode;
+      const connector = createHubCwConnector(mode, settings.hubcw.baseUrl);
+      const res = await connector.testConnection({
+        agentId,
+        agentName: agent.name,
+        externalUserId: ext.externalUserId,
+        credentialSecret: secret,
+        requestId: `test_${Date.now()}`,
+      });
+      const updated: AgentExternalAccount = {
+        ...ext,
+        status: res.ok ? 'active' : mode === 'sandbox' ? ext.status : 'error',
+        lastActivityAt: Date.now(),
+        lastError: res.ok ? undefined : res.message,
+      };
+      set((s) => ({
+        externalAccounts: s.externalAccounts.map((e) => (e.agentId === agentId ? updated : e)),
+      }));
+      await repository.putExternalAccount(updated);
+      return { ok: res.ok, message: res.message };
+    },
+
+    lockExternalAccount: async (agentId, reason) => {
+      const ext = get().externalAccounts.find((e) => e.agentId === agentId);
+      if (!ext) return;
+      const nextStatus: AgentExternalAccount['status'] =
+        ext.status === 'suspended' ? 'active' : 'suspended';
+      const updated: AgentExternalAccount = {
+        ...ext,
+        status: nextStatus,
+        lastError: nextStatus === 'suspended' ? reason || 'CEO tạm khóa kết nối HubCW' : undefined,
+        lastActivityAt: Date.now(),
+      };
+      set((s) => ({
+        externalAccounts: s.externalAccounts.map((e) => (e.agentId === agentId ? updated : e)),
+      }));
+      await repository.putExternalAccount(updated);
+    },
+
+    rotateExternalToken: async (agentId, newSecret) => {
+      const ext = get().externalAccounts.find((e) => e.agentId === agentId);
+      const agent = get().agents.find((a) => a.id === agentId);
+      if (!ext || !agent) return { ok: false, message: 'Không tìm thấy tài khoản.' };
+      const encrypted = await encryptSecretAesGcm(newSecret.trim());
+      await repository.putEncryptedCredential({
+        id: `${agentId}::hubcw`,
+        agentId,
+        system: 'hubcw',
+        authType: 'token',
+        ivHex: encrypted.ivHex,
+        ciphertextB64: encrypted.ciphertextB64,
+        keyFingerprint: encrypted.keyFingerprint,
+        updatedAt: Date.now(),
+      });
+      const updated: AgentExternalAccount = {
+        ...ext,
+        status: 'active',
+        tokenExpiresAt: Date.now() + 30 * 86400_000,
+        lastActivityAt: Date.now(),
+        lastError: undefined,
+      };
+      set((s) => ({
+        externalAccounts: s.externalAccounts.map((e) => (e.agentId === agentId ? updated : e)),
+      }));
+      await repository.putExternalAccount(updated);
+      return { ok: true, message: `Đã xoay vòng & gia hạn token mới (30 ngày) cho ${agent.name}.` };
+    },
+
+    updateAgentHubCwPermissions: async (agentId, module, flag) => {
+      const ext = get().externalAccounts.find((e) => e.agentId === agentId);
+      const agent = get().agents.find((a) => a.id === agentId);
+      if (!agent) return;
+      const base = ext || {
+        agentId,
+        system: 'hubcw' as const,
+        externalPermissions: buildDefaultHubCwPermissions(agent.department, agent.role, agent.title),
+        status: 'unlinked' as const,
+      };
+      const updated: AgentExternalAccount = {
+        ...base,
+        externalPermissions: {
+          ...base.externalPermissions,
+          [module]: flag,
+        },
+      };
+      set((s) => ({
+        externalAccounts: s.externalAccounts.some((e) => e.agentId === agentId)
+          ? s.externalAccounts.map((e) => (e.agentId === agentId ? updated : e))
+          : [...s.externalAccounts, updated],
+      }));
+      await repository.putExternalAccount(updated);
+    },
+
+    updateHubCwSettings: async (patch) => {
+      const cur = get().settings;
+      const nextHubCw: HubCwSettings = {
+        ...cur.hubcw,
+        ...patch,
+        unclearWriteUnlocked: {
+          ...cur.hubcw.unclearWriteUnlocked,
+          ...(patch.unclearWriteUnlocked || {}),
+        },
+        moduleHealth: {
+          ...cur.hubcw.moduleHealth,
+          ...(patch.moduleHealth || {}),
+        },
+      };
+      // Default safety: if user switches from sandbox to real API/Browser while envMode was sandbox, switch safely to read_only first
+      const nextEnvMode: SystemEnvMode =
+        patch.connectionMode && patch.connectionMode !== 'sandbox' && cur.envMode === 'sandbox'
+          ? 'read_only'
+          : patch.connectionMode === 'sandbox'
+            ? 'sandbox'
+            : cur.envMode;
+      await get().updateSettings({ hubcw: nextHubCw, envMode: nextEnvMode });
+    },
+
+    checkHubCwModuleHealth: async () => {
+      const settings = get().settings;
+      const connector = createHubCwConnector(settings.hubcw.connectionMode, settings.hubcw.baseUrl);
+      const activeExt = get().externalAccounts.find((e) => e.status === 'active');
+      const secret = activeExt ? await get().getDecryptedAgentSecret(activeExt.agentId) : undefined;
+      const agent = activeExt ? get().agents.find((a) => a.id === activeExt.agentId) : undefined;
+
+      const ctx = {
+        agentId: activeExt?.agentId || 'system_probe',
+        agentName: agent?.name || 'Health Probe',
+        externalUserId: activeExt?.externalUserId,
+        credentialSecret: secret,
+        requestId: `health_${Date.now()}`,
+      };
+
+      const healthMap: Record<string, (typeof settings.hubcw.moduleHealth)[string]> = {};
+      for (const mod of HUBCW_MODULES) {
+        healthMap[mod.id] = await connector.checkModuleHealth(ctx, mod.id);
+      }
+
+      await get().updateHubCwSettings({
+        lastHealthCheckAt: Date.now(),
+        moduleHealth: healthMap,
+      });
+    },
+
+    addHubCwApiLog: async (log) => {
+      set((s) => ({ hubcwApiLogs: [log, ...s.hubcwApiLogs].slice(0, 400) }));
+      await repository.addHubCwApiLog(log);
+    },
+
+    addHubCwUndoSnapshot: async (snap) => {
+      set((s) => ({ hubcwUndoSnapshots: [snap, ...s.hubcwUndoSnapshots].slice(0, 150) }));
+      await repository.putHubCwUndoSnapshot(snap);
+    },
+
+    enqueueHubCwSync: async (item) => {
+      const now = Date.now();
+      const full: HubCwSyncItem = {
+        ...item,
+        id: `sync_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        status: 'queued',
+        createdAt: now,
+        updatedAt: now,
+      };
+      set((s) => ({ hubcwSyncQueue: [full, ...s.hubcwSyncQueue] }));
+      await repository.putHubCwSyncItem(full);
+      return full;
+    },
+
+    processHubCwSyncQueue: async () => {
+      const state = get();
+      const queued = state.hubcwSyncQueue.filter((q) => q.status === 'queued');
+      let processed = 0;
+      let blocked = 0;
+
+      for (const item of queued) {
+        if (item.direction === 'push_to_hubcw') {
+          const agent = state.agents.find((a) => a.id === item.agentId);
+          const rbacAcc = state.accounts.find((a) => a.agentId === item.agentId);
+          const extAcc = state.externalAccounts.find((e) => e.agentId === item.agentId);
+          const secret = await get().getDecryptedAgentSecret(item.agentId);
+          const connector = createHubCwConnector(
+            state.settings.hubcw.connectionMode,
+            state.settings.hubcw.baseUrl
+          );
+          const outcome = await executeHubCwWrite(
+            {
+              agentId: item.agentId,
+              agentName: agent?.name || item.agentId,
+              module: item.module,
+              operation: item.externalId ? 'update' : 'create',
+              recordId: item.externalId,
+              payload: item.payload,
+              origin: item.provenance?.origin,
+              provenance: item.provenance,
+            },
+            {
+              settings: get().settings,
+              rbacAccount: rbacAcc,
+              externalAccount: extAcc,
+              decryptedSecret: secret,
+              expenses: get().expenses,
+              recentApiLogs: get().hubcwApiLogs,
+              connector,
+              onWriteLog: (log) => get().addHubCwApiLog(log),
+              onWriteAudit: (aud) => get().addAuditLog(aud),
+              onSaveUndoSnapshot: (snap) => get().addHubCwUndoSnapshot(snap),
+            }
+          );
+
+          const updated: HubCwSyncItem = {
+            ...item,
+            status: outcome.ok ? 'synced' : 'blocked',
+            externalId: outcome.writeResult?.externalRecordId || item.externalId,
+            errorMessage: outcome.ok ? undefined : outcome.gateResult.reason || outcome.writeResult?.error,
+            updatedAt: Date.now(),
+          };
+          set((s) => ({
+            hubcwSyncQueue: s.hubcwSyncQueue.map((q) => (q.id === item.id ? updated : q)),
+          }));
+          await repository.putHubCwSyncItem(updated);
+          if (outcome.ok) processed++;
+          else blocked++;
+        }
+      }
+      return { processed, blocked };
+    },
+
+    revertHubCwWriteAction: async (snapshotId) => {
+      const snap = get().hubcwUndoSnapshots.find((s) => s.id === snapshotId);
+      if (!snap) return { ok: false, message: 'Không tìm thấy bản chụp Hoàn tác.' };
+      const state = get();
+      const rbacAcc = state.accounts.find((a) => a.agentId === snap.agentId);
+      const extAcc = state.externalAccounts.find((e) => e.agentId === snap.agentId);
+      const secret = await get().getDecryptedAgentSecret(snap.agentId);
+      const connector = createHubCwConnector(
+        state.settings.hubcw.connectionMode,
+        state.settings.hubcw.baseUrl
+      );
+      const res = await revertHubCwSnapshot(snap, {
+        settings: state.settings,
+        rbacAccount: rbacAcc,
+        externalAccount: extAcc,
+        decryptedSecret: secret,
+        connector,
+        onWriteAudit: (aud) => get().addAuditLog(aud),
+      });
+      if (res.ok) {
+        const updatedSnap: HubCwUndoSnapshot = {
+          ...snap,
+          reverted: true,
+          revertedAt: Date.now(),
+        };
+        set((s) => ({
+          hubcwUndoSnapshots: s.hubcwUndoSnapshots.map((x) => (x.id === snap.id ? updatedSnap : x)),
+        }));
+        await repository.putHubCwUndoSnapshot(updatedSnap);
+      }
+      return res;
+    },
+
+    runReconciliationNow: async () => {
+      const state = get();
+      let hubcwCustomers: Array<Record<string, unknown>> | undefined;
+      let hubcwCashflow: Array<Record<string, unknown>> | undefined;
+
+      if (state.settings.envMode !== 'sandbox' && state.settings.hubcw.connectionMode === 'api') {
+        const activeExt = state.externalAccounts.find((e) => e.status === 'active');
+        if (activeExt) {
+          const secret = await get().getDecryptedAgentSecret(activeExt.agentId);
+          const connector = createHubCwConnector('api', state.settings.hubcw.baseUrl);
+          const ctx = {
+            agentId: activeExt.agentId,
+            agentName: 'Reconciliation',
+            externalUserId: activeExt.externalUserId,
+            credentialSecret: secret,
+            requestId: `recon_${Date.now()}`,
+          };
+          const custRes = await connector.readModule(ctx, 'customers');
+          if (custRes.ok) hubcwCustomers = custRes.items;
+          const cfRes = await connector.readModule(ctx, 'cashflow');
+          if (cfRes.ok) hubcwCashflow = cfRes.items;
+        }
+      }
+
+      const report = runHubCwReconciliation({
+        leads: state.leads,
+        tasks: state.tasks,
+        expenses: state.expenses,
+        apiLogs: state.hubcwApiLogs,
+        hubcwCustomers,
+        hubcwCashflow,
+      });
+      set((s) => ({ hubcwReconciliations: [report, ...s.hubcwReconciliations].slice(0, 30) }));
+      await repository.addHubCwReconciliation(report);
+      return report;
+    },
+
+    switchEnvModeWithPreflight: async (targetMode, options) => {
+      const state = get();
+      if (targetMode === 'sandbox') {
+        await get().updateSettings({
+          envMode: 'sandbox',
+          dryRun: true,
+          hubcw: { ...state.settings.hubcw, connectionMode: 'sandbox' },
+        });
+        return { ok: true, message: 'Đã chuyển về chế độ SANDBOX (dữ liệu mô phỏng, an toàn tuyệt đối).' };
+      }
+
+      if (targetMode === 'read_only') {
+        await get().updateSettings({
+          envMode: 'read_only',
+          dryRun: true,
+          hubcw: {
+            ...state.settings.hubcw,
+            connectionMode: state.settings.hubcw.connectionMode === 'sandbox' ? 'api' : state.settings.hubcw.connectionMode,
+          },
+        });
+        return { ok: true, message: 'Đã bật chế độ READ-ONLY (chỉ đọc dữ liệu thật từ Hub.ChuyenWeb, chặn toàn bộ lệnh ghi).' };
+      }
+
+      // Transition to LIVE requires full pre-flight checklist + confirmation phrase + CEO password
+      const linkedActive = state.externalAccounts.filter((e) => e.status === 'active');
+      const moduleHealthValues = Object.values(state.settings.hubcw.moduleHealth || {});
+      const hasAnyConnectedHealth = moduleHealthValues.some((h) => h.status === 'ok');
+      const simExportLeaks = state.hubcwSyncQueue.filter(
+        (q) => q.status === 'queued' && q.provenance?.origin === 'simulated'
+      ).length;
+
+      const checks = [
+        {
+          label: '1. Ít nhất 1 nhân viên đã liên kết tài khoản Hub.ChuyenWeb hoạt động',
+          ok: linkedActive.length > 0,
+          detail: `${linkedActive.length} nhân viên đang 'active'`,
+        },
+        {
+          label: '2. Đã cấu hình chế độ kết nối thật (API hoặc Browser) & kiểm tra kết nối',
+          ok: state.settings.hubcw.connectionMode !== 'sandbox' && (hasAnyConnectedHealth || Boolean(state.settings.hubcw.lastHealthCheckAt)),
+          detail: `Mode: ${state.settings.hubcw.connectionMode}`,
+        },
+        {
+          label: '3. Ba module chưa xác nhận nghiệp vụ (Heo vàng, Tự động, Tài nguyên) vẫn khóa ghi an toàn',
+          ok: true,
+          detail: 'Bảo vệ mặc định theo Write Gate',
+        },
+        {
+          label: '4. Không có bản ghi MÔ PHỎNG nào chờ đẩy sang Hub.ChuyenWeb',
+          ok: simExportLeaks === 0,
+          detail: simExportLeaks === 0 ? 'Sạch (0 hàng đợi mô phỏng)' : `${simExportLeaks} bản ghi mô phỏng trong hàng đợi`,
+        },
+      ];
+
+      if (checks.some((c) => !c.ok)) {
+        return {
+          ok: false,
+          message: 'Chưa đạt điều kiện Pre-flight để chuyển sang LIVE. Vui lòng hoàn tất các mục còn đỏ.',
+          checks,
+        };
+      }
+
+      if ((options?.confirmPhrase || '').trim().toUpperCase() !== 'XÁC NHẬN CHẠY THẬT') {
+        return {
+          ok: false,
+          message: 'Vui lòng gõ chính xác cụm từ "XÁC NHẬN CHẠY THẬT" để mở khóa chế độ LIVE.',
+          checks,
+        };
+      }
+
+      const pwdOk = await verifyPasswordPBKDF2(
+        options?.ceoPassword || '',
+        state.settings.ceoPasswordSalt,
+        state.settings.ceoPasswordHash
+      );
+      if (!pwdOk) {
+        return {
+          ok: false,
+          message: 'Mật khẩu CEO không chính xác — từ chối chuyển sang LIVE.',
+          checks,
+        };
+      }
+
+      await get().updateSettings({
+        envMode: 'live',
+        dryRun: false,
+      });
+
+      await get().addMessage({
+        channelId: 'all',
+        senderId: 'ceo',
+        senderName: 'Chủ tịch (CEO)',
+        senderTitle: 'CEO',
+        department: 'ceo',
+        content: '🔴 **HỆ THỐNG ĐÃ CHUYỂN SANG CHẾ ĐỘ LIVE.** Toàn bộ lệnh ghi vào `hub.chuyenweb.com` đi qua Cổng kiểm soát dữ liệu thật + truy vết `Idempotency-Key` + `Undo Snapshot`.',
+        busType: 'escalation',
+      });
+
+      return { ok: true, message: 'Hệ thống đã kích hoạt chế độ LIVE thành công!', checks };
+    },
+
+    instantRevertToSafeMode: async (target = 'sandbox') => {
+      const cur = get().settings;
+      await get().updateSettings({
+        envMode: target,
+        dryRun: true,
+        hubcw: {
+          ...cur.hubcw,
+          connectionMode: target === 'sandbox' ? 'sandbox' : cur.hubcw.connectionMode,
+        },
+      });
+      set({
+        bannerAlert: `Đã thu hồi về chế độ ${target.toUpperCase()} an toàn trong 1 chạm.`,
+      });
+    },
+
+    updateBrandSettings: async (patch) => {
+      const cur = get().settings.brand || DEFAULT_BRAND_PALETTE;
+      const nextBrand: BrandSettings = { ...cur, ...patch };
+      await get().updateSettings({ brand: nextBrand });
+    },
+
+    applyUniformToDept: async (departmentId, options) => {
+      const state = get();
+      const targets = state.agents.filter(
+        (a) => a.department === departmentId && a.employmentStatus !== 'archived'
+      );
+      const nextMap = { ...state.agentAppearances };
+      for (const ag of targets) {
+        const base = nextMap[ag.id] || getDefaultAppearance(ag);
+        const updated: AgentAppearance = {
+          ...base,
+          outfitStyle: options.outfitStyle ?? base.outfitStyle,
+          outfitColor: options.outfitColor ?? base.outfitColor,
+          logoPlacement: options.logoPlacement ?? base.logoPlacement ?? 'chest',
+          showBadge: options.showBadge ?? base.showBadge ?? true,
+          useUniform: options.useUniform ?? true,
+        };
+        nextMap[ag.id] = updated;
+        await repository.putAgentAppearance(updated);
+      }
+      set({ agentAppearances: nextMap });
+      return targets.length;
+    },
+
+    applyUniformToCompany: async (options) => {
+      const state = get();
+      const brandPrimary = state.settings.brand?.primaryColor || DEFAULT_BRAND_PALETTE.primaryColor;
+      const brandSecondary = state.settings.brand?.secondaryColor || DEFAULT_BRAND_PALETTE.secondaryColor;
+      const targets = state.agents.filter((a) => a.employmentStatus !== 'archived');
+      const nextMap = { ...state.agentAppearances };
+      for (const ag of targets) {
+        const base = nextMap[ag.id] || getDefaultAppearance(ag);
+        const updated: AgentAppearance = {
+          ...base,
+          outfitStyle: options.outfitStyle ?? base.outfitStyle,
+          useUniform: options.useUniform ?? true,
+          logoPlacement: options.logoPlacement ?? base.logoPlacement ?? 'chest',
+          showBadge: options.showBadge ?? base.showBadge ?? true,
+          outfitColor: options.tintWithBrandPrimary ? brandPrimary : base.outfitColor,
+          outfitAccent: options.tintWithBrandPrimary ? brandSecondary : base.outfitAccent,
+        };
+        nextMap[ag.id] = updated;
+        await repository.putAgentAppearance(updated);
+      }
+      set({ agentAppearances: nextMap });
+      return targets.length;
     },
   };
 });

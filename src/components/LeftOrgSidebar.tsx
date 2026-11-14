@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Building2, ChevronDown, ChevronRight, Search, UserPlus } from 'lucide-react';
+import { getLogoSvgDataUrl } from '../brand/logoBrand';
 import { foldVietnamese } from '../engine/roleTemplates';
 import { useCompanyStore } from '../store/useCompanyStore';
 
@@ -11,6 +12,8 @@ export function LeftOrgSidebar() {
   const selectedAgentId = useCompanyStore((s) => s.selectedAgentId);
   const runtimes = useCompanyStore((s) => s.runtimes);
   const accounts = useCompanyStore((s) => s.accounts);
+  const externalAccounts = useCompanyStore((s) => s.externalAccounts);
+  const settings = useCompanyStore((s) => s.settings);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
 
   const [query, setQuery] = useState('');
@@ -24,8 +27,13 @@ export function LeftOrgSidebar() {
       <div className="p-3 border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5 text-xs font-bold tracking-tight">
-            <Building2 className="w-4 h-4 text-sky-500" />
-            <span>Sơ đồ Tổ chức ({activeAgents.length})</span>
+            <img
+              src={settings.brand?.logoDataUrl || getLogoSvgDataUrl()}
+              alt="Logo"
+              className="w-4 h-4 rounded object-contain bg-white border border-slate-200 shrink-0"
+            />
+            <Building2 className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+            <span>Sơ đồ ({activeAgents.length})</span>
           </div>
           <button
             type="button"
@@ -110,6 +118,9 @@ export function LeftOrgSidebar() {
                   {members.map((agent) => {
                     const rt = runtimes[agent.id];
                     const acc = accounts.find((a) => a.agentId === agent.id);
+                    const ext = externalAccounts.find((e) => e.agentId === agent.id);
+                    const isUnlinkedReal =
+                      settings.envMode !== 'sandbox' && (!ext || ext.status === 'unlinked' || ext.status === 'pending_creation');
                     const isSelected = selectedAgentId === agent.id;
                     const status = rt?.status || 'idle';
                     const isSuspended = agent.employmentStatus === 'suspended' || acc?.status === 'suspended';
@@ -129,6 +140,9 @@ export function LeftOrgSidebar() {
                             <span className="truncate">{agent.name}</span>
                             {isSuspended && (
                               <span className="text-[9px] text-amber-500 font-bold">NGHỈ</span>
+                            )}
+                            {isUnlinkedReal && (
+                              <span className="text-[9px] text-amber-500 font-semibold">Chưa có TK</span>
                             )}
                             {rt?.isDelayed && (
                               <span className="text-[9px] text-rose-500 font-bold">TRỄ</span>

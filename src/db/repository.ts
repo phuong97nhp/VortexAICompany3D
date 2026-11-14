@@ -3,6 +3,7 @@ import {
   AdCampaignItem,
   AgentAccount,
   AgentAppearance,
+  AgentExternalAccount,
   AgentMemory,
   AgentProfile,
   ApprovalRequest,
@@ -13,11 +14,16 @@ import {
   CompanySettings,
   DepartmentConfig,
   DocumentItem,
+  EncryptedCredentialRecord,
   ExpenseBudget,
   ExpenseCategoryConfig,
   ExpenseItem,
   ExpenseRule,
   HrAuditEntry,
+  HubCwApiLog,
+  HubCwReconciliationReport,
+  HubCwSyncItem,
+  HubCwUndoSnapshot,
   LeadItem,
   MarketingChannelRecord,
   OutreachLogEntry,
@@ -29,6 +35,8 @@ import {
   VaultAccountStatus,
   WorkflowTrace,
 } from '../types';
+import { DEFAULT_BRAND_PALETTE } from '../brand/logoBrand';
+import { buildDefaultHubCwPermissions, DEFAULT_HUBCW_BASE_URL } from '../integrations/hubcw/hubcw.config';
 import { generateHashedAgentToken, generateSalt, hashPasswordPBKDF2 } from '../engine/auth';
 import { getDefaultAppearance } from '../engine/characterAppearance';
 import { buildRoutingPreset } from '../engine/llm/presets';
@@ -119,6 +127,21 @@ export interface IDataRepository {
   putExpenseBudget(budget: ExpenseBudget): Promise<void>;
   getExpenseCategories(): Promise<ExpenseCategoryConfig[]>;
   putExpenseCategory(cat: ExpenseCategoryConfig): Promise<void>;
+  getExternalAccounts(): Promise<AgentExternalAccount[]>;
+  putExternalAccount(acc: AgentExternalAccount): Promise<void>;
+  deleteExternalAccount(agentId: string): Promise<void>;
+  getEncryptedCredentials(): Promise<EncryptedCredentialRecord[]>;
+  getEncryptedCredential(agentId: string): Promise<EncryptedCredentialRecord | undefined>;
+  putEncryptedCredential(cred: EncryptedCredentialRecord): Promise<void>;
+  deleteEncryptedCredential(agentId: string): Promise<void>;
+  getHubCwApiLogs(): Promise<HubCwApiLog[]>;
+  addHubCwApiLog(log: HubCwApiLog): Promise<void>;
+  getHubCwSyncQueue(): Promise<HubCwSyncItem[]>;
+  putHubCwSyncItem(item: HubCwSyncItem): Promise<void>;
+  getHubCwUndoSnapshots(): Promise<HubCwUndoSnapshot[]>;
+  putHubCwUndoSnapshot(snap: HubCwUndoSnapshot): Promise<void>;
+  getHubCwReconciliations(): Promise<HubCwReconciliationReport[]>;
+  addHubCwReconciliation(report: HubCwReconciliationReport): Promise<void>;
   resetAll(): Promise<void>;
 }
 
@@ -152,6 +175,12 @@ class AICompanyDexieDB extends Dexie {
   expenseRules!: Table<ExpenseRule, string>;
   expenseBudgets!: Table<ExpenseBudget, string>;
   expenseCategories!: Table<ExpenseCategoryConfig, string>;
+  agentExternalAccounts!: Table<AgentExternalAccount, string>;
+  credentialVault!: Table<EncryptedCredentialRecord, string>;
+  hubcwApiLogs!: Table<HubCwApiLog, string>;
+  hubcwSyncQueue!: Table<HubCwSyncItem, string>;
+  hubcwUndoSnapshots!: Table<HubCwUndoSnapshot, string>;
+  hubcwReconciliations!: Table<HubCwReconciliationReport, string>;
 
   constructor() {
     super('AICompany3D_DB_v1');
@@ -248,6 +277,44 @@ class AICompanyDexieDB extends Dexie {
       expenseBudgets: 'id, monthKey, department, category',
       expenseCategories: 'id, name',
     });
+
+    this.version(5).stores({
+      settings: 'id',
+      agents: 'id, department, employmentStatus, createdAt',
+      departments: 'id, floor, isCustom',
+      hrAudits: 'id, targetId, action, timestamp',
+      tasks: 'id, taskCode, department, assignedTo, status, createdAt',
+      leads: 'id, stage, recommendedProductId, score, province, createdAt',
+      messages: 'id, channelId, senderId, timestamp',
+      documents: 'id, category, authorId, department, createdAt',
+      approvals: 'id, status, type, requestedBy, createdAt',
+      askCeoQuestions: 'id, status, agentId, urgency, createdAt',
+      auditLogs: 'id, agentId, result, timestamp',
+      outreachLogs: 'id, agentId, leadId, channel, timestamp',
+      accounts: 'agentId, role, department, status',
+      vaultStatuses: 'id, platform, status',
+      tokenUsage: 'id, dateKey, agentId, provider, model, timestamp',
+      agentMemories: 'agentId, updatedAt',
+      companyMemories: 'id, key',
+      workflows: 'id, createdAt',
+      agentAppearances: 'agentId',
+      brandKits: 'id, createdAt',
+      marketingChannels: 'id, status, updatedAt',
+      scheduledPosts: 'id, platform, dayNumber, status, createdAt',
+      adCampaigns: 'id, platform, status, createdAt',
+      socialComments: 'id, platform, status, createdAt',
+      socialLogs: 'id, platform, agentId, timestamp',
+      expenses: 'id, expenseCode, status, department, category, requesterId, vendor, createdAt',
+      expenseRules: 'id, ruleCode, enabled, category, createdAt',
+      expenseBudgets: 'id, monthKey, department, category',
+      expenseCategories: 'id, name',
+      agentExternalAccounts: 'agentId, system, externalUserId, status',
+      credentialVault: 'id, agentId, system, updatedAt',
+      hubcwApiLogs: 'id, agentId, module, method, result, timestamp',
+      hubcwSyncQueue: 'id, direction, module, status, createdAt',
+      hubcwUndoSnapshots: 'id, agentId, module, externalRecordId, reverted, createdAt',
+      hubcwReconciliations: 'id, createdAt',
+    });
   }
 }
 
@@ -311,6 +378,20 @@ export async function createDefaultSettings(): Promise<CompanySettings> {
     maxConcurrentAgents: 8,
     spendingPolicy: createDefaultSpendingPolicy(),
     dailyDigestEnabled: true,
+    envMode: 'sandbox',
+    hubcw: {
+      baseUrl: DEFAULT_HUBCW_BASE_URL,
+      connectionMode: 'sandbox',
+      hourlyWriteLimit: 30,
+      requireApprovalForCritical: true,
+      unclearWriteUnlocked: {
+        golden_pig: false,
+        automation: false,
+        resources: false,
+      },
+      moduleHealth: {},
+    },
+    brand: { ...DEFAULT_BRAND_PALETTE },
   };
 }
 
@@ -388,6 +469,18 @@ export async function seedInitialDatabase(): Promise<void> {
     if (adsAcc && !adsAcc.permissions.includes('ads:manage')) {
       await db.accounts.put({ ...adsAcc, permissions: [...adsAcc.permissions, 'ads:manage', 'budget:spend'] });
     }
+    const extCount = await db.agentExternalAccounts.count();
+    if (extCount === 0) {
+      const currentAgents = await db.agents.toArray();
+      await db.agentExternalAccounts.bulkPut(
+        currentAgents.map((a) => ({
+          agentId: a.id,
+          system: 'hubcw' as const,
+          externalPermissions: buildDefaultHubCwPermissions(a.department, a.role, a.title),
+          status: 'unlinked' as const,
+        }))
+      );
+    }
     return;
   }
 
@@ -428,6 +521,16 @@ export async function seedInitialDatabase(): Promise<void> {
     });
   }
   await db.accounts.bulkPut(accounts);
+
+  // Seed unlinked 1-to-1 HubCW external accounts with least-privilege permissions
+  await db.agentExternalAccounts.bulkPut(
+    seedAgents.map((a) => ({
+      agentId: a.id,
+      system: 'hubcw' as const,
+      externalPermissions: buildDefaultHubCwPermissions(a.department, a.role, a.title),
+      status: 'unlinked' as const,
+    }))
+  );
 
   // Seed initial agent memories
   await db.agentMemories.bulkPut(
@@ -942,6 +1045,23 @@ export class DexieRepository implements IDataRepository {
         ...defaults.spendingPolicy,
         ...(stored.spendingPolicy || {}),
       },
+      envMode: stored.envMode || defaults.envMode,
+      hubcw: {
+        ...defaults.hubcw,
+        ...(stored.hubcw || {}),
+        unclearWriteUnlocked: {
+          ...defaults.hubcw.unclearWriteUnlocked,
+          ...(stored.hubcw?.unclearWriteUnlocked || {}),
+        },
+        moduleHealth: {
+          ...defaults.hubcw.moduleHealth,
+          ...(stored.hubcw?.moduleHealth || {}),
+        },
+      },
+      brand: {
+        ...defaults.brand,
+        ...(stored.brand || {}),
+      },
       roleRoutes: Array.isArray(stored.roleRoutes) && stored.roleRoutes.length > 0 ? stored.roleRoutes : defaults.roleRoutes,
     };
   }
@@ -1127,6 +1247,51 @@ export class DexieRepository implements IDataRepository {
   }
   async putExpenseCategory(cat: ExpenseCategoryConfig) {
     await db.expenseCategories.put(cat);
+  }
+  async getExternalAccounts() {
+    return db.agentExternalAccounts.toArray();
+  }
+  async putExternalAccount(acc: AgentExternalAccount) {
+    await db.agentExternalAccounts.put(acc);
+  }
+  async deleteExternalAccount(agentId: string) {
+    await db.agentExternalAccounts.delete(agentId);
+  }
+  async getEncryptedCredentials() {
+    return db.credentialVault.toArray();
+  }
+  async getEncryptedCredential(agentId: string) {
+    return db.credentialVault.get(`${agentId}::hubcw`);
+  }
+  async putEncryptedCredential(cred: EncryptedCredentialRecord) {
+    await db.credentialVault.put(cred);
+  }
+  async deleteEncryptedCredential(agentId: string) {
+    await db.credentialVault.delete(`${agentId}::hubcw`);
+  }
+  async getHubCwApiLogs() {
+    return db.hubcwApiLogs.orderBy('timestamp').reverse().limit(400).toArray();
+  }
+  async addHubCwApiLog(log: HubCwApiLog) {
+    await db.hubcwApiLogs.put(log);
+  }
+  async getHubCwSyncQueue() {
+    return db.hubcwSyncQueue.orderBy('createdAt').reverse().toArray();
+  }
+  async putHubCwSyncItem(item: HubCwSyncItem) {
+    await db.hubcwSyncQueue.put(item);
+  }
+  async getHubCwUndoSnapshots() {
+    return db.hubcwUndoSnapshots.orderBy('createdAt').reverse().limit(150).toArray();
+  }
+  async putHubCwUndoSnapshot(snap: HubCwUndoSnapshot) {
+    await db.hubcwUndoSnapshots.put(snap);
+  }
+  async getHubCwReconciliations() {
+    return db.hubcwReconciliations.orderBy('createdAt').reverse().limit(30).toArray();
+  }
+  async addHubCwReconciliation(report: HubCwReconciliationReport) {
+    await db.hubcwReconciliations.put(report);
   }
   async resetAll() {
     await db.delete();

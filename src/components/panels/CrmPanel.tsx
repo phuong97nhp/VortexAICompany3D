@@ -167,6 +167,18 @@ export function CrmPanel() {
                         className="p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 cursor-pointer hover:border-sky-500/50 space-y-1"
                       >
                         <div className="text-xs font-semibold leading-snug line-clamp-2">{lead.name}</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(lead.origin === 'simulated' || lead.source.toLowerCase().includes('mô phỏng')) && (
+                            <span className="px-1 py-0.2 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-semibold">
+                              MÔ PHỎNG
+                            </span>
+                          )}
+                          {lead.externalRefId && (
+                            <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-500 text-[9.5px] font-mono-num font-semibold">
+                              HubCW #{lead.externalRefId}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-slate-400">
                           {lead.province} · {getProductById(lead.recommendedProductId).shortName}
                         </div>
@@ -206,7 +218,21 @@ export function CrmPanel() {
                   onClick={() => setSelectedLead(l)}
                   className="hover:bg-slate-100/70 dark:hover:bg-slate-900/50 cursor-pointer"
                 >
-                  <td className="p-2.5 font-medium">{l.name}</td>
+                  <td className="p-2.5 font-medium">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{l.name}</span>
+                      {(l.origin === 'simulated' || l.source.toLowerCase().includes('mô phỏng')) && (
+                        <span className="px-1 py-0.2 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-semibold">
+                          MÔ PHỎNG
+                        </span>
+                      )}
+                      {l.externalRefId && (
+                        <span className="px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-500 text-[9.5px] font-mono-num font-semibold">
+                          HubCW #{l.externalRefId}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-2.5 text-slate-400">{l.province}</td>
                   <td className="p-2.5 text-slate-400">{getProductById(l.recommendedProductId).shortName}</td>
                   <td className="p-2.5 text-right font-mono-num font-bold text-emerald-500">{l.score}</td>
@@ -224,9 +250,22 @@ export function CrmPanel() {
           <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 p-4 space-y-3 max-h-[90%] overflow-y-auto shadow-2xl">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <h4 className="font-bold text-sm">{selectedLead.name}</h4>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="font-bold text-sm">{selectedLead.name}</h4>
+                  {(selectedLead.origin === 'simulated' ||
+                    selectedLead.source.toLowerCase().includes('mô phỏng')) && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[10px] font-semibold">
+                      MÔ PHỎNG
+                    </span>
+                  )}
+                  {selectedLead.externalRefId && (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 text-[10px] font-mono-num font-semibold">
+                      Đã đồng bộ HubCW #{selectedLead.externalRefId}
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-slate-400">
-                  {selectedLead.category} · {selectedLead.address}, {selectedLead.province}
+                  {selectedLead.category} · {selectedLead.address}, {selectedLead.province} · Nguồn: {selectedLead.source}
                 </p>
               </div>
               <button type="button" onClick={() => setSelectedLead(null)} className="p-1 cursor-pointer">

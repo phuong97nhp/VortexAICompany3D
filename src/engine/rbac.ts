@@ -29,6 +29,8 @@ export const ALL_PERMISSIONS: Array<{ key: Permission; label: string; group: str
   { key: 'memory:write', label: 'Ghi bộ nhớ Agent', group: 'Bộ nhớ' },
   { key: 'post:publish', label: 'Đăng bài lên Kênh MXH', group: 'Marketing & Kênh' },
   { key: 'ads:manage', label: 'Tạo & đề xuất chiến dịch Ads', group: 'Marketing & Kênh' },
+  { key: 'hubcw:read', label: 'Đọc dữ liệu Hub.ChuyenWeb', group: 'Kết nối phần mềm thật' },
+  { key: 'hubcw:write', label: 'Ghi dữ liệu vào Hub.ChuyenWeb (qua Cổng kiểm soát)', group: 'Kết nối phần mềm thật' },
 ];
 
 export const TOOL_PERMISSION_MAP: Partial<Record<ToolName, Permission>> = {
@@ -63,6 +65,9 @@ export const TOOL_PERMISSION_MAP: Partial<Record<ToolName, Permission>> = {
   buy_domain: 'budget:spend',
   subscribe_tool: 'budget:spend',
   spend: 'budget:spend',
+  hubcw_read: 'hubcw:read',
+  hubcw_write: 'hubcw:write',
+  hubcw_sync: 'hubcw:write',
 };
 
 export const ROLE_LABELS: Record<RoleType, string> = {
@@ -85,6 +90,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
     'expense:request',
     'memory:read',
     'memory:write',
+    'hubcw:read',
+    'hubcw:write',
   ],
   'Dept Head': [
     'lead:read',
@@ -97,9 +104,20 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
     'expense:request',
     'memory:read',
     'memory:write',
+    'hubcw:read',
+    'hubcw:write',
   ],
-  Specialist: ['lead:read', 'doc:write', 'kpi:read', 'expense:request', 'memory:read', 'memory:write'],
-  'Read-only': ['lead:read', 'kpi:read', 'memory:read'],
+  Specialist: [
+    'lead:read',
+    'doc:write',
+    'kpi:read',
+    'expense:request',
+    'memory:read',
+    'memory:write',
+    'hubcw:read',
+    'hubcw:write',
+  ],
+  'Read-only': ['lead:read', 'kpi:read', 'memory:read', 'hubcw:read'],
 };
 
 export interface AuthorizationResult {

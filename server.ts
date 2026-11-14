@@ -414,6 +414,106 @@ async function startServer() {
     }
   });
 
+  // Hub.ChuyenWeb.com server-side proxy (enforces URL allowlist & agent identity headers, never logs secrets)
+  app.post('/api/hubcw/proxy', async (req, res) => {
+    const {
+      baseUrl = 'https://hub.chuyenweb.com',
+      url,
+      method = 'GET',
+      token,
+      agentId,
+      externalUserId,
+      requestId,
+      idempotencyKey,
+      payload,
+    } = (req.body || {}) as {
+      baseUrl?: string;
+      url?: string;
+      method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+      token?: string;
+      agentId?: string;
+      externalUserId?: string;
+      requestId?: string;
+      idempotencyKey?: string;
+      payload?: Record<string, unknown>;
+    };
+
+    const cleanBase = String(baseUrl || 'https://hub.chuyenweb.com').trim().replace(/\/+$/, '');
+    const targetUrl = String(url || '').trim();
+    if (!targetUrl.startsWith(cleanBase) || (!targetUrl.startsWith('https://') && !targetUrl.startsWith('http://'))) {
+      return res.status(400).json({
+        ok: false,
+        error: 'URL đích không thuộc baseUrl đã cấu hình cho Hub.ChuyenWeb.',
+      });
+    }
+
+    const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+    const upperMethod = String(method || 'GET').toUpperCase();
+    if (!allowedMethods.has(upperMethod)) {
+      return res.status(400).json({ ok: false, error: 'HTTP method không hợp lệ.' });
+    }
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Agent-Id': String(agentId || 'unknown'),
+        'X-Agent-Request-Id': String(requestId || `req_${Date.now()}`),
+      };
+      if (externalUserId) headers['X-External-User-Id'] = String(externalUserId);
+      if (idempotencyKey) headers['Idempotency-Key'] = String(idempotencyKey);
+      if (token && token.trim()) {
+        const cleanToken = token.trim();
+        headers.Authorization = cleanToken.toLowerCase().startsWith('bearer ')
+          ? cleanToken
+          : `Bearer ${cleanToken}`;
+      }
+
+      const upstream = await fetch(targetUrl, {
+        method: upperMethod,
+        headers,
+        body: upperMethod !== 'GET' && payload ? JSON.stringify(payload) : undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      const contentType = upstream.headers.get('content-type') || '';
+      const rawText = await upstream.text();
+      let parsed: Record<string, unknown> = {};
+      if (contentType.includes('application/json')) {
+        try {
+          parsed = JSON.parse(rawText) as Record<string, unknown>;
+        } catch {
+          parsed = { rawText: rawText.slice(0, 600) };
+        }
+      } else {
+        parsed = { rawText: rawText.slice(0, 600) };
+      }
+
+      return res.status(upstream.ok ? 200 : upstream.status).json({
+        ok: upstream.ok,
+        upstreamStatus: upstream.status,
+        ...parsed,
+      });
+    } catch (err) {
+      return res.status(502).json({
+        ok: false,
+        upstreamStatus: 502,
+        error: err instanceof Error ? err.message : 'Không kết nối được tới server Hub.ChuyenWeb',
+      });
+    }
+  });
+
+  app.get('/api/worker/status', (_req, res) => {
+    res.json({
+      ok: Boolean(process.env.WORKER_WS_URL),
+      workerUrl: process.env.WORKER_WS_URL || null,
+      dryRun: process.env.DRY_RUN !== 'false',
+    });
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

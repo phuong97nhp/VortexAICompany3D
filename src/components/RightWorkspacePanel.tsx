@@ -10,6 +10,7 @@ import {
   Megaphone,
   MessageSquare,
   Palette,
+  Plug,
   Receipt,
   ScrollText,
   Settings,
@@ -24,6 +25,7 @@ import { LogsPanel } from './panels/LogsPanel';
 import { DocsPanel } from './panels/DocsPanel';
 import { ApprovalsPanel } from './panels/ApprovalsPanel';
 import { FinanceAccountingPanel } from './panels/FinanceAccountingPanel';
+import { HubCwConnectorPanel } from './panels/HubCwConnectorPanel';
 import { HrManagementPanel } from './panels/HrManagementPanel';
 import { VaultPanel } from './panels/VaultPanel';
 import { TokenKpiPanel } from './panels/TokenKpiPanel';
@@ -44,6 +46,7 @@ const PRIMARY_TABS: TabDef[] = [
   { id: 'crm', label: 'CRM & Pipeline', shortLabel: 'CRM', icon: Briefcase },
   { id: 'approvals', label: 'Phê duyệt', shortLabel: 'Duyệt', icon: CheckSquare },
   { id: 'finance', label: 'Chi phí & Kế toán', shortLabel: 'Chi phí', icon: Receipt },
+  { id: 'hubcw', label: 'Kết nối phần mềm', shortLabel: 'HubCW', icon: Plug },
   { id: 'settings', label: 'Cài đặt', shortLabel: 'Cài đặt', icon: Settings },
 ];
 
@@ -229,6 +232,7 @@ export function RightWorkspacePanel() {
         {activeTab === 'docs' && <DocsPanel />}
         {activeTab === 'approvals' && <ApprovalsPanel />}
         {activeTab === 'finance' && <FinanceAccountingPanel />}
+        {activeTab === 'hubcw' && <HubCwConnectorPanel />}
         {activeTab === 'rbac' && <HrManagementPanel />}
         {activeTab === 'vault' && <VaultPanel />}
         {activeTab === 'tokens' && <TokenKpiPanel />}

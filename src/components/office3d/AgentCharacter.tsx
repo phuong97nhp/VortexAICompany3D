@@ -6,6 +6,7 @@ import { AgentProfile } from '../../types';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { getDefaultAppearance } from '../../engine/characterAppearance';
 import { ChibiModel } from './ChibiModel';
+import { DEFAULT_BRAND_PALETTE, DEFAULT_LOGO_PUBLIC_PATH } from '../../brand/logoBrand';
 
 const STATUS_VI: Record<string, { label: string; color: string }> = {
   idle: { label: 'Sẵn sàng', color: '#94A3B8' },
@@ -45,6 +46,11 @@ export function AgentCharacter({
   );
   const graphicsQuality = useCompanyStore((s) => s.settings.graphicsQuality);
   const paused = useCompanyStore((s) => s.settings.paused || s.settings.killSwitchActive);
+  const brand = useCompanyStore((s) => s.settings.brand) || DEFAULT_BRAND_PALETTE;
+  const envMode = useCompanyStore((s) => s.settings.envMode);
+  const externalAccount = useCompanyStore((s) =>
+    s.externalAccounts.find((e) => e.agentId === agent.id)
+  );
 
   const isSelected = selectedAgentId === agent.id;
   const status = runtime?.status || 'idle';
@@ -177,6 +183,9 @@ export function AgentCharacter({
         simplifiedLod={graphicsQuality === 'low' || isFarLod}
         showOutline={graphicsQuality !== 'low'}
         paused={paused}
+        brandLogoDataUrl={brand.logoDataUrl}
+        brandPrimary={brand.primaryColor}
+        brandSecondary={brand.secondaryColor}
       />
 
       {/* Rounded Head HUD & Speech Bubble */}
@@ -245,9 +254,10 @@ export function AgentCharacter({
                   : 'px-1.5 py-0.5 bg-slate-950/95 text-slate-100 border-slate-700'
               }`}
             >
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0 border border-white/50"
-                style={{ backgroundColor: agent.avatarColor }}
+              <img
+                src={brand.logoDataUrl || DEFAULT_LOGO_PUBLIC_PATH}
+                alt="Logo"
+                className="w-3.5 h-3.5 rounded-sm bg-white p-[1px] object-contain shrink-0"
               />
               <div className="flex flex-col leading-tight">
                 <div className="flex items-center gap-1 text-[10px] font-semibold">
@@ -256,6 +266,11 @@ export function AgentCharacter({
                     className="w-1.5 h-1.5 rounded-full shrink-0"
                     style={{ backgroundColor: statusInfo.color }}
                   />
+                  {envMode !== 'sandbox' && (!externalAccount || externalAccount.status !== 'active') && (
+                    <span className="px-1 py-0 rounded bg-amber-500/20 text-amber-300 border border-amber-500/50 text-[8px] font-mono">
+                      Chưa có TK
+                    </span>
+                  )}
                 </div>
                 {showDetailedHud && (
                   <div className="flex items-center gap-1 text-[8.5px] text-slate-300 max-w-[130px] truncate">

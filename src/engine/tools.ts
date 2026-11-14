@@ -1,13 +1,19 @@
 import { PRODUCTS, getProductById } from '../config/products';
+import { createHubCwConnector } from '../integrations/hubcw/BusinessSystemConnector';
+import { HUBCW_MODULE_MAP, maskCustomerPiiForPrompt } from '../integrations/hubcw/hubcw.config';
+import { executeHubCwWrite } from '../integrations/hubcw/writeGate';
 import { useCompanyStore } from '../store/useCompanyStore';
 import {
   AdCampaignItem,
   ApprovalType,
   AskCeoQuestion,
+  DataProvenance,
   DepartmentId,
   DocumentCategory,
+  HubCwModuleId,
   LeadItem,
   LeadStage,
+  OriginTag,
   Permission,
   ScheduledSocialPost,
   SocialPlatformId,
@@ -576,6 +582,61 @@ export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
       },
     },
   },
+  hubcw_read: {
+    type: 'function',
+    function: {
+      name: 'hubcw_read',
+      description: 'Đọc dữ liệu từ một trong 19 module của phần mềm quản trị Hub.ChuyenWeb bằng tài khoản riêng của chính Agent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          module: { type: 'string' },
+          limit: { type: 'number' },
+        },
+        required: ['module'],
+      },
+    },
+  },
+  hubcw_write: {
+    type: 'function',
+    function: {
+      name: 'hubcw_write',
+      description: 'Ghi dữ liệu vào Hub.ChuyenWeb qua Cổng kiểm soát dữ liệu thật (chỉ chạy ở chế độ LIVE, bắt buộc có provenance hợp lệ & phiếu chi #CP-xxx nếu là tài chính).',
+      parameters: {
+        type: 'object',
+        properties: {
+          module: { type: 'string' },
+          operation: { type: 'string', enum: ['create', 'update'] },
+          recordId: { type: 'string' },
+          payload: { type: 'object' },
+          provenanceSource: {
+            type: 'string',
+            enum: ['hubcw_record', 'user_input', 'external_document', 'verified_web', 'platform_api', 'calculation'],
+          },
+          provenanceRefId: { type: 'string' },
+          expenseCode: { type: 'string' },
+        },
+        required: ['module', 'operation', 'payload', 'provenanceSource'],
+      },
+    },
+  },
+  hubcw_sync: {
+    type: 'function',
+    function: {
+      name: 'hubcw_sync',
+      description: 'Đưa một bản ghi cần đồng bộ vào hàng đợi đồng bộ 2 chiều với Hub.ChuyenWeb.',
+      parameters: {
+        type: 'object',
+        properties: {
+          module: { type: 'string' },
+          entityType: { type: 'string', enum: ['lead', 'task', 'order', 'support', 'cashflow', 'report', 'notification'] },
+          payload: { type: 'object' },
+          provenanceSource: { type: 'string' },
+        },
+        required: ['module', 'entityType', 'payload'],
+      },
+    },
+  },
 };
 
 export function getToolsForAgent(allowedTools: ToolName[]): LlmToolDefinition[] {
@@ -1013,6 +1074,14 @@ export async function executeAgentTool(
           estimatedValueVnd: c.valueVnd,
           interactions: [],
           createdAt: Date.now(),
+          origin: 'simulated',
+          verificationStatus: 'simulated',
+          provenance: {
+            source: 'unknown',
+            origin: 'simulated',
+            sourceLabel: 'Sandbox Lead Pool (Mô phỏng)',
+            verifiedAt: now,
+          },
         };
         await store.putLead(lead);
         saved.push(lead);
@@ -2069,6 +2138,183 @@ export async function executeAgentTool(
     case 'call_meeting': {
       const topic = String(args.topic || 'Họp điều phối liên phòng ban');
       return { ok: true, output: { meetingStarted: true, topic } };
+    }
+
+    case 'hubcw_read': {
+      const mod = String(args.module || 'customers') as HubCwModuleId;
+      if (!HUBCW_MODULE_MAP[mod]) {
+        return { ok: false, output: { error: `Module Hub.ChuyenWeb không hợp lệ: '${mod}'.` } };
+      }
+      const extAcc = store.externalAccounts.find((e) => e.agentId === agentId);
+      const envMode = store.settings.envMode;
+      if (envMode !== 'sandbox' && (!extAcc || extAcc.status !== 'active')) {
+        return {
+          ok: false,
+          output: {
+            error: `Chưa có tài khoản Hub.ChuyenWeb hoạt động (trạng thái: ${extAcc?.status || 'unlinked'}). Vui lòng nhờ CEO liên kết tài khoản trước.`,
+          },
+        };
+      }
+      const modPerm = extAcc?.externalPermissions?.[mod];
+      if (extAcc && (!modPerm || !modPerm.read)) {
+        return {
+          ok: false,
+          output: { error: `Bạn không có quyền ĐỌC trên module '${HUBCW_MODULE_MAP[mod].label}'.` },
+        };
+      }
+
+      const secret = await store.getDecryptedAgentSecret(agentId);
+      const connector = createHubCwConnector(store.settings.hubcw.connectionMode, store.settings.hubcw.baseUrl);
+      const res = await connector.readModule(
+        {
+          agentId,
+          agentName: agent.name,
+          externalUserId: extAcc?.externalUserId,
+          credentialSecret: secret,
+          requestId: `read_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        },
+        mod,
+        args.limit ? { limit: Number(args.limit) } : undefined
+      );
+
+      await store.addHubCwApiLog({
+        id: `hcwlog_r_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        agentId,
+        agentName: agent.name,
+        externalUserId: extAcc?.externalUserId,
+        module: mod,
+        operation: 'read',
+        method: 'GET',
+        endpoint: HUBCW_MODULE_MAP[mod].readPath,
+        envMode,
+        connectionMode: store.settings.hubcw.connectionMode,
+        result: res.ok ? 'ok' : 'error',
+        statusCode: res.statusCode,
+        reason: res.error,
+        durationMs: 25,
+        timestamp: now,
+      });
+
+      if (!res.ok) {
+        return { ok: false, output: { error: res.error || 'Không đọc được dữ liệu từ HubCW.' } };
+      }
+
+      // Mask customer PII before feeding into LLM context
+      const maskedItems = res.items.slice(0, Number(args.limit || 20)).map((item) => {
+        const serialized = maskCustomerPiiForPrompt(JSON.stringify(item));
+        try {
+          return JSON.parse(serialized) as Record<string, unknown>;
+        } catch {
+          return item;
+        }
+      });
+
+      return {
+        ok: true,
+        output: {
+          module: mod,
+          origin: res.origin,
+          sourceLabel: res.sourceLabel,
+          total: res.total ?? maskedItems.length,
+          items: maskedItems,
+        },
+      };
+    }
+
+    case 'hubcw_write': {
+      const mod = String(args.module || '') as HubCwModuleId;
+      if (!HUBCW_MODULE_MAP[mod]) {
+        return { ok: false, output: { error: `Module Hub.ChuyenWeb không hợp lệ: '${mod}'.` } };
+      }
+      const op = args.operation === 'update' ? 'update' : args.operation === 'delete' ? 'delete' : 'create';
+      const payload = (args.payload && typeof args.payload === 'object' ? args.payload : {}) as Record<string, unknown>;
+      const provenance: DataProvenance = {
+        source: (args.provenanceSource as DataProvenance['source']) || 'unknown',
+        refId: args.provenanceRefId ? String(args.provenanceRefId) : undefined,
+        origin: payload.origin === 'simulated' ? 'simulated' : undefined,
+        verifiedAt: now,
+      };
+      const rbacAcc = store.accounts.find((a) => a.agentId === agentId);
+      const extAcc = store.externalAccounts.find((e) => e.agentId === agentId);
+      const secret = await store.getDecryptedAgentSecret(agentId);
+      const connector = createHubCwConnector(store.settings.hubcw.connectionMode, store.settings.hubcw.baseUrl);
+
+      const outcome = await executeHubCwWrite(
+        {
+          agentId,
+          agentName: agent.name,
+          module: mod,
+          operation: op,
+          recordId: args.recordId ? String(args.recordId) : undefined,
+          payload,
+          origin: (payload.origin as OriginTag | undefined),
+          provenance,
+          expenseCode: args.expenseCode ? String(args.expenseCode) : undefined,
+        },
+        {
+          settings: store.settings,
+          rbacAccount: rbacAcc,
+          externalAccount: extAcc,
+          decryptedSecret: secret,
+          expenses: store.expenses,
+          recentApiLogs: store.hubcwApiLogs,
+          connector,
+          onWriteLog: (log) => store.addHubCwApiLog(log),
+          onWriteAudit: (aud) => store.addAuditLog(aud),
+          onSaveUndoSnapshot: (snap) => store.addHubCwUndoSnapshot(snap),
+          onNotifyBlocked: async (req, reason) => {
+            await store.addMessage({
+              channelId: 'ask_ceo',
+              senderId: agentId,
+              senderName: agent.name,
+              senderTitle: agent.title,
+              department: agent.department,
+              content: `**Cổng kiểm soát Hub.ChuyenWeb đã chặn lệnh ghi** vào \`${req.module}\`: ${reason}`,
+              busType: 'escalation',
+            });
+          },
+        }
+      );
+
+      if (!outcome.ok) {
+        return {
+          ok: false,
+          output: {
+            blocked: true,
+            blockedCode: outcome.gateResult.blockedCode,
+            error: outcome.gateResult.reason || outcome.writeResult?.error || 'Lệnh ghi bị Cổng kiểm soát từ chối.',
+          },
+        };
+      }
+
+      return {
+        ok: true,
+        output: {
+          externalRecordId: outcome.writeResult?.externalRecordId,
+          version: outcome.writeResult?.version,
+          undoSnapshotId: outcome.undoSnapshotId,
+          idempotencyKey: outcome.idempotencyKey,
+        },
+      };
+    }
+
+    case 'hubcw_sync': {
+      const mod = String(args.module || 'tasks') as HubCwModuleId;
+      const entityType = (String(args.entityType || 'task') as 'lead' | 'task' | 'order' | 'support' | 'cashflow' | 'report' | 'notification');
+      const payload = (args.payload && typeof args.payload === 'object' ? args.payload : {}) as Record<string, unknown>;
+      const queued = await store.enqueueHubCwSync({
+        direction: 'push_to_hubcw',
+        module: mod,
+        agentId,
+        entityType,
+        payload,
+        provenance: {
+          source: (args.provenanceSource as DataProvenance['source']) || 'unknown',
+          origin: store.settings.envMode === 'sandbox' ? 'simulated' : undefined,
+          verifiedAt: now,
+        },
+      });
+      return { ok: true, output: { syncId: queued.id, status: queued.status } };
     }
 
     default:

@@ -316,13 +316,22 @@ export async function runSingleAgentTurn(
   store.setAgentStatus(agentId, 'typing', 'Đang thực thi...', undefined, 50);
 
   const tools = getToolsForAgent(agent.allowedTools);
+  const extAcc = store.externalAccounts.find((e) => e.agentId === agentId);
+  const envLabel =
+    store.settings.envMode === 'live'
+      ? 'LIVE (Phần mềm thật hub.chuyenweb.com)'
+      : store.settings.envMode === 'read_only'
+        ? 'READ-ONLY (Chỉ đọc dữ liệu thật từ hub.chuyenweb.com, cấm ghi)'
+        : 'SANDBOX (Mô phỏng — không chạm phần mềm thật)';
   const systemDirective = [
     agent.systemPrompt,
     ``,
-    `## Quy tắc Trung thực BẮT BUỘC`,
-    `- Chỉ tuyên bố đã làm được những gì bạn THỰC SỰ gọi tool và nhận ok=true.`,
-    `- TUYỆT ĐỐI KHÔNG tự nói "đã hoàn tất" khi chưa tạo ra dữ liệu/tài liệu thực hoặc khi tool trả lỗi.`,
-    `- Mọi hành động chi tiền (chạy Ads, mua domain, mua tool) BẮT BUỘC phải gọi request_expense trước để lấy phiếu chi #CP-... đã duyệt.`,
+    `## Quy tắc Trung thực & Chống Dữ liệu Ảo BẮT BUỘC (Môi trường: ${envLabel})`,
+    `- Tài khoản Hub.ChuyenWeb của bạn: ${extAcc?.status === 'active' ? `Đã liên kết (${extAcc.username || extAcc.externalUserId})` : `Chưa liên kết / ${extAcc?.status || 'unlinked'}`}.`,
+    `- Chỉ tuyên bố đã làm hoặc đã ghi lên Hub.ChuyenWeb khi tool thực sự trả ok=true VÀ có externalRecordId + version xác nhận.`,
+    `- TUYỆT ĐỐI KHÔNG tự bịa số liệu còn thiếu (nếu thiếu hãy báo "Chưa có số liệu"), KHÔNG bịa khách hàng/SĐT/email mẫu để ghi sang phần mềm thật.`,
+    `- Mọi dữ liệu gắn nhãn MÔ PHỎNG / Sandbox tuyệt đối không được sao chép sang hubcw_write.`,
+    `- Mọi hành động chi tiền (Ads, domain, tool) hoặc ghi tài chính HubCW BẮT BUỘC phải có phiếu chi #CP-... đã duyệt.`,
     ``,
     `## Nhân sự công ty hiện có:`,
     activeRoster,

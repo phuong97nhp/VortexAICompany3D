@@ -5,15 +5,22 @@ import {
   Cpu,
   KeyRound,
   MessageCircle,
+  Palette,
   RefreshCw,
   RotateCcw,
   Save,
   Server,
+  Upload,
 } from 'lucide-react';
+import {
+  DEFAULT_BRAND_PALETTE,
+  extractPaletteFromImageDataUrl,
+  getLogoSvgDataUrl,
+} from '../../brand/logoBrand';
 import { PRODUCTS } from '../../config/products';
 import { listLocalModels, ROUTING_PRESET_LABELS, testLocalConnection } from '../../engine/llm';
 import { useCompanyStore } from '../../store/useCompanyStore';
-import { GraphicsQuality, ProviderId, RoutingPresetId } from '../../types';
+import { GraphicsQuality, OutfitStyleId, ProviderId, RoutingPresetId } from '../../types';
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Google Gemini (Mặc định AI Studio)',
@@ -35,9 +42,12 @@ export function SettingsPanel() {
   const resetDatabase = useCompanyStore((s) => s.resetDatabase);
   const show3dDiagnostics = useCompanyStore((s) => s.show3dDiagnostics);
   const toggle3dDiagnostics = useCompanyStore((s) => s.toggle3dDiagnostics);
+  const updateBrandSettings = useCompanyStore((s) => s.updateBrandSettings);
+  const applyUniformToCompany = useCompanyStore((s) => s.applyUniformToCompany);
 
   const [geminiKeyDraft, setGeminiKeyDraft] = useState(settings.geminiApiKey);
   const [deepseekKeyDraft, setDeepseekKeyDraft] = useState(settings.deepseekApiKey);
+  const [brandNotice, setBrandNotice] = useState<string | null>(null);
   const [localTestStatus, setLocalTestStatus] = useState<{
     loading: boolean;
     ok?: boolean;
@@ -714,6 +724,125 @@ export function SettingsPanel() {
             <span>Khởi tạo lại dữ liệu mẫu</span>
           </button>
         </div>
+      </section>
+
+      {/* 4. Thương hiệu & Logo 3D (BỔ SUNG G3) */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="font-bold text-sm flex items-center gap-1.5">
+            <Palette className="w-4 h-4 text-sky-500" />
+            <span>4. Thương hiệu & Logo 3D</span>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              await updateBrandSettings({ ...DEFAULT_BRAND_PALETTE });
+              setBrandNotice('Đã khôi phục logo mặc định HubCW (Chuyên Web).');
+              setTimeout(() => setBrandNotice(null), 2200);
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-[10.5px] font-medium cursor-pointer"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Khôi phục logo mặc định HubCW</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3 p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+          <img
+            src={settings.brand?.logoDataUrl || getLogoSvgDataUrl()}
+            alt="Logo công ty"
+            className="w-12 h-12 rounded-xl object-contain bg-white border border-slate-200 p-1 shrink-0"
+          />
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="font-semibold truncate">
+              {settings.brand?.logoName || 'logo_mini.svg (Chuyên Web)'}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10.5px] text-slate-400">Bảng màu trích xuất:</span>
+              <span
+                className="w-4 h-4 rounded border border-slate-300"
+                style={{ backgroundColor: settings.brand?.primaryColor || DEFAULT_BRAND_PALETTE.primaryColor }}
+                title="Màu chính"
+              />
+              <span
+                className="w-4 h-4 rounded border border-slate-300"
+                style={{ backgroundColor: settings.brand?.secondaryColor || DEFAULT_BRAND_PALETTE.secondaryColor }}
+                title="Màu phụ"
+              />
+              <span
+                className="w-4 h-4 rounded border border-slate-300"
+                style={{ backgroundColor: settings.brand?.accentColor || DEFAULT_BRAND_PALETTE.accentColor }}
+                title="Màu nhấn"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold cursor-pointer shrink-0">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Tải SVG/PNG</span>
+            <input
+              type="file"
+              accept="image/svg+xml,image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async () => {
+                  const dataUrl = String(reader.result || '');
+                  if (!dataUrl) return;
+                  const palette = await extractPaletteFromImageDataUrl(dataUrl);
+                  await updateBrandSettings({
+                    logoDataUrl: dataUrl,
+                    logoName: file.name,
+                    primaryColor: palette.primaryColor,
+                    secondaryColor: palette.secondaryColor,
+                    accentColor: palette.accentColor,
+                  });
+                  setBrandNotice(`Đã cập nhật logo "${file.name}" và trích xuất màu thương hiệu vào 3D.`);
+                  setTimeout(() => setBrandNotice(null), 2600);
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 items-center">
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Kiểu đồng phục mặc định</label>
+            <select
+              value={settings.brand?.defaultUniformStyle || 'vest'}
+              onChange={(e) =>
+                updateBrandSettings({ defaultUniformStyle: e.target.value as OutfitStyleId })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+            >
+              <option value="vest">Vest công sở</option>
+              <option value="shirt">Áo sơ mi</option>
+              <option value="casual">Áo thun đồng phục</option>
+              <option value="hoodie">Áo hoodie Tech</option>
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const count = await applyUniformToCompany({
+                outfitStyle: settings.brand?.defaultUniformStyle || 'vest',
+                useUniform: true,
+                showBadge: true,
+                tintWithBrandPrimary: true,
+              });
+              setBrandNotice(`Đã đồng bộ đồng phục thương hiệu cho ${count} nhân viên.`);
+              setTimeout(() => setBrandNotice(null), 2200);
+            }}
+            className="mt-4 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer"
+          >
+            Áp dụng đồng phục toàn công ty
+          </button>
+        </div>
+
+        {brandNotice && <div className="text-[11px] text-emerald-500 font-medium">{brandNotice}</div>}
       </section>
     </div>
   );

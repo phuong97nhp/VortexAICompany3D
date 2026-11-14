@@ -21,6 +21,7 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
+import { getLogoSvgDataUrl } from '../../brand/logoBrand';
 import { formatVnd } from '../../engine/expenseEngine';
 import { handleCeoChatCommand, runSingleAgentTurn } from '../../engine/orchestrator';
 import { foldVietnamese } from '../../engine/roleTemplates';
@@ -66,6 +67,8 @@ export function ChatPanel() {
   const documents = useCompanyStore((s) => s.documents);
   const leads = useCompanyStore((s) => s.leads);
   const workflows = useCompanyStore((s) => s.workflows);
+  const settings = useCompanyStore((s) => s.settings);
+  const externalAccounts = useCompanyStore((s) => s.externalAccounts);
   const resumeFromKillSwitch = useCompanyStore((s) => s.resumeFromKillSwitch);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
 
@@ -339,16 +342,43 @@ export function ChatPanel() {
                 {/* Header */}
                 <div className="flex items-center justify-between gap-3 mb-1">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span
-                      className="w-5 h-5 rounded-md text-[10px] font-bold text-white flex items-center justify-center shrink-0"
-                      style={{ backgroundColor: deptColor }}
-                    >
-                      {msg.senderName.split(' ').slice(-1)[0]?.[0] || 'A'}
-                    </span>
+                    {!isCeo && msg.senderId !== 'system' ? (
+                      <div className="relative shrink-0">
+                        <span
+                          className="w-5 h-5 rounded-md text-[10px] font-bold text-white flex items-center justify-center"
+                          style={{ backgroundColor: deptColor }}
+                        >
+                          {msg.senderName.split(' ').slice(-1)[0]?.[0] || 'A'}
+                        </span>
+                        <img
+                          src={settings.brand?.logoDataUrl || getLogoSvgDataUrl()}
+                          alt=""
+                          className="w-2.5 h-2.5 rounded-sm bg-white border border-slate-300 object-contain absolute -bottom-0.5 -right-0.5"
+                        />
+                      </div>
+                    ) : (
+                      <span
+                        className="w-5 h-5 rounded-md text-[10px] font-bold text-white flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: deptColor }}
+                      >
+                        {msg.senderName.split(' ').slice(-1)[0]?.[0] || 'A'}
+                      </span>
+                    )}
                     <span className="text-xs font-bold truncate">{msg.senderName}</span>
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                       {msg.senderTitle} · {timeStr}
                     </span>
+                    {!isCeo &&
+                      msg.senderId !== 'system' &&
+                      settings.envMode !== 'sandbox' &&
+                      (() => {
+                        const ext = externalAccounts.find((e) => e.agentId === msg.senderId);
+                        return !ext || ext.status === 'unlinked' || ext.status === 'pending_creation';
+                      })() && (
+                        <span className="px-1 py-0.2 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-semibold">
+                          Chưa có TK
+                        </span>
+                      )}
                     {msg.isInternalPeek && (
                       <span className="text-[10px] text-violet-400 font-semibold">· Nội bộ</span>
                     )}
@@ -851,7 +881,14 @@ export function ChatPanel() {
                 {leadObj && (
                   <div className="mt-2 p-2.5 rounded-xl bg-white dark:bg-slate-950 border border-emerald-500/40 flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate">{leadObj.name}</div>
+                      <div className="text-xs font-semibold truncate flex items-center gap-1.5">
+                        <span className="truncate">{leadObj.name}</span>
+                        {(leadObj.origin === 'simulated' || leadObj.source.toLowerCase().includes('mô phỏng')) && (
+                          <span className="px-1 py-0.2 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-semibold shrink-0">
+                            MÔ PHỎNG
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-400">
                         {leadObj.province} · Điểm:{' '}
                         <span className="font-mono-num text-emerald-500 font-bold">{leadObj.score}/100</span>

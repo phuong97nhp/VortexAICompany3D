@@ -67,3 +67,95 @@ export async function generateHashedAgentToken(agentId: string): Promise<{ rawPr
     hash,
   };
 }
+
+// === WebCrypto AES-256-GCM Vault Encryption (zero plaintext secrets stored in DB) ===
+const VAULT_LOCAL_MASTER_KEY_STORAGE = 'aic_vault_master_seed_v1';
+
+function getOrCreateMasterSeed(): string {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    let existing = window.localStorage.getItem(VAULT_LOCAL_MASTER_KEY_STORAGE);
+    if (!existing) {
+      existing = `aic_master_${generateSalt(24)}`;
+      window.localStorage.setItem(VAULT_LOCAL_MASTER_KEY_STORAGE, existing);
+    }
+    return existing;
+  }
+  return 'aic_master_node_runtime_deterministic_seed_2025';
+}
+
+async function deriveAesKey(seed: string): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const hash = await crypto.subtle.digest('SHA-256', enc.encode(seed));
+  return crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+  if (typeof Buffer !== 'undefined') {
+    const buf = Buffer.from(b64, 'base64');
+    const out = new Uint8Array(new ArrayBuffer(buf.length));
+    out.set(buf);
+    return out;
+  }
+  const binary = atob(b64);
+  const out = new Uint8Array(new ArrayBuffer(binary.length));
+  for (let i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+export async function encryptSecretAesGcm(plaintext: string): Promise<{
+  ivHex: string;
+  ciphertextB64: string;
+  keyFingerprint: string;
+}> {
+  const seed = getOrCreateMasterSeed();
+  const key = await deriveAesKey(seed);
+  const iv = new Uint8Array(12);
+  crypto.getRandomValues(iv);
+  const enc = new TextEncoder();
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(plaintext)
+  );
+  const fpBuf = await crypto.subtle.digest('SHA-256', enc.encode(seed.slice(0, 16)));
+  return {
+    ivHex: toHex(iv.buffer),
+    ciphertextB64: bytesToBase64(new Uint8Array(cipherBuf)),
+    keyFingerprint: toHex(fpBuf).slice(0, 12),
+  };
+}
+
+export async function decryptSecretAesGcm(ivHex: string, ciphertextB64: string): Promise<string> {
+  const seed = getOrCreateMasterSeed();
+  const key = await deriveAesKey(seed);
+  const ivBytes = new Uint8Array(
+    ivHex.match(/.{1,2}/g)?.map((byte) => parseInt(byte, 16)) || new Array(12).fill(0)
+  );
+  const cipherBytes = base64ToBytes(ciphertextB64);
+  const plainBuf = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: ivBytes },
+    key,
+    cipherBytes
+  );
+  return new TextDecoder().decode(plainBuf);
+}
+
+export function maskSecretForLog(raw: string): string {
+  if (!raw) return '—';
+  if (raw.length <= 6) return '••••••';
+  return `${raw.slice(0, 3)}••••${raw.slice(-3)}`;
+}
+

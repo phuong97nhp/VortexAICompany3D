@@ -6,14 +6,17 @@ import {
   Building2,
   Check,
   Copy,
+  Database,
   Download,
   Edit3,
   History,
   KeyRound,
+  Link2,
   Lock,
   PauseCircle,
   PlayCircle,
   Plus,
+  RefreshCw,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -49,10 +52,12 @@ import {
   suggestToolsForDescription,
 } from '../../engine/roleTemplates';
 import { executeAgentTool } from '../../engine/tools';
+import { HUBCW_MODULES } from '../../integrations/hubcw/hubcw.config';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import {
   AccessoryId,
   AgentAppearance,
+  AgentExternalAccount,
   AgentProfile,
   EmploymentStatus,
   HairStyleId,
@@ -129,6 +134,7 @@ export function HrManagementPanel() {
   const approvals = useCompanyStore((s) => s.approvals);
   const settings = useCompanyStore((s) => s.settings);
   const agentAppearances = useCompanyStore((s) => s.agentAppearances);
+  const externalAccounts = useCompanyStore((s) => s.externalAccounts);
 
   const selectAgent = useCompanyStore((s) => s.selectAgent);
   const hireAgent = useCompanyStore((s) => s.hireAgent);
@@ -148,6 +154,12 @@ export function HrManagementPanel() {
   const toggleAccountPermission = useCompanyStore((s) => s.toggleAccountPermission);
   const toggleAccountSuspended = useCompanyStore((s) => s.toggleAccountSuspended);
   const resetAgentToken = useCompanyStore((s) => s.resetAgentToken);
+  const linkExistingExternalAccount = useCompanyStore((s) => s.linkExistingExternalAccount);
+  const proposeCreateExternalAccount = useCompanyStore((s) => s.proposeCreateExternalAccount);
+  const testExternalAccountLogin = useCompanyStore((s) => s.testExternalAccountLogin);
+  const lockExternalAccount = useCompanyStore((s) => s.lockExternalAccount);
+  const rotateExternalToken = useCompanyStore((s) => s.rotateExternalToken);
+  const updateAgentHubCwPermissions = useCompanyStore((s) => s.updateAgentHubCwPermissions);
 
   const [subTab, setSubTab] = useState<HrSubTab>('roster');
   const [search, setSearch] = useState('');
@@ -219,6 +231,79 @@ export function HrManagementPanel() {
   const [selectedRbacId, setSelectedRbacId] = useState<string>(agents[0]?.id || 'secretary');
   const [tokenNotice, setTokenNotice] = useState<string | null>(null);
   const [testNotice, setTestNotice] = useState<string | null>(null);
+  const [showHubCwMatrix, setShowHubCwMatrix] = useState(false);
+
+  // HubCW 1-to-1 Account Modal state
+  const [hubcwTarget, setHubcwTarget] = useState<AgentProfile | null>(null);
+  const [hubcwModalMode, setHubcwModalMode] = useState<'link' | 'propose' | 'rotate'>('link');
+  const [hcwUsername, setHcwUsername] = useState('');
+  const [hcwEmail, setHcwEmail] = useState('');
+  const [hcwUserId, setHcwUserId] = useState('');
+  const [hcwRole, setHcwRole] = useState('Nhân viên');
+  const [hcwAuthType, setHcwAuthType] = useState<'token' | 'password_session'>('token');
+  const [hcwSecret, setHcwSecret] = useState('');
+  const [hcwGuide, setHcwGuide] = useState<string | null>(null);
+  const [hcwModalMsg, setHcwModalMsg] = useState<string | null>(null);
+
+  const openHubCwModal = (agent: AgentProfile, mode: 'link' | 'propose' | 'rotate' = 'link') => {
+    const ext = externalAccounts.find((e) => e.agentId === agent.id);
+    const rbac = accounts.find((a) => a.agentId === agent.id);
+    setHubcwTarget(agent);
+    setHubcwModalMode(mode);
+    setHcwUsername(ext?.username || rbac?.username || agent.id);
+    setHcwEmail(ext?.email || rbac?.internalEmail || `${agent.id}@chuyenweb.com`);
+    setHcwUserId(ext?.externalUserId || '');
+    setHcwRole(ext?.externalRole || agent.title);
+    setHcwAuthType('token');
+    setHcwSecret('');
+    setHcwGuide(ext?.handoverNote || null);
+    setHcwModalMsg(null);
+  };
+
+  const renderHubCwBadge = (ext?: AgentExternalAccount) => {
+    if (!ext || ext.status === 'unlinked') {
+      return (
+        <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9.5px] font-semibold">
+          Chưa có TK
+        </span>
+      );
+    }
+    if (ext.status === 'pending_creation') {
+      return (
+        <span className="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-500 text-[9.5px] font-semibold">
+          Chờ tạo TK
+        </span>
+      );
+    }
+    if (ext.status === 'suspended') {
+      return (
+        <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 text-[9.5px] font-semibold">
+          Khóa HubCW
+        </span>
+      );
+    }
+    if (ext.status === 'error') {
+      return (
+        <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 text-[9.5px] font-semibold">
+          Lỗi HubCW
+        </span>
+      );
+    }
+    const expiringSoon =
+      ext.tokenExpiresAt && ext.tokenExpiresAt - Date.now() < 5 * 86400_000;
+    if (expiringSoon) {
+      return (
+        <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 text-[9.5px] font-semibold">
+          Token sắp hết hạn
+        </span>
+      );
+    }
+    return (
+      <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 text-[9.5px] font-semibold">
+        HubCW: {ext.username || 'Active'}
+      </span>
+    );
+  };
 
   const activeAgents = useMemo(
     () => agents.filter((a) => a.employmentStatus !== 'archived'),
@@ -645,6 +730,7 @@ export function HrManagementPanel() {
                 const dept = departments.find((d) => d.id === a.department);
                 const empStatus = a.employmentStatus || 'active';
                 const est = estimateMonthlyTokenCost(a, settings);
+                const extAcc = externalAccounts.find((e) => e.agentId === a.id);
                 return (
                   <div
                     key={a.id}
@@ -656,7 +742,7 @@ export function HrManagementPanel() {
                         onClick={() => empStatus !== 'archived' && selectAgent(a.id, true)}
                         className="text-left min-w-0 flex-1 cursor-pointer group"
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span
                             className="w-2.5 h-2.5 rounded-full shrink-0"
                             style={{ backgroundColor: dept?.color || a.avatarColor }}
@@ -678,6 +764,7 @@ export function HrManagementPanel() {
                           >
                             {empStatus === 'active' ? 'Hoạt động' : empStatus === 'suspended' ? 'Tạm nghỉ' : 'Đã nghỉ'}
                           </span>
+                          {renderHubCwBadge(extAcc)}
                         </div>
                         <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">
                           {a.title} · {dept?.shortName || a.department} · {ROLE_LABELS[a.role]} ·{' '}
@@ -689,6 +776,15 @@ export function HrManagementPanel() {
                       <div className="flex flex-wrap items-center gap-1 shrink-0">
                         {empStatus !== 'archived' ? (
                           <>
+                            <button
+                              type="button"
+                              onClick={() => openHubCwModal(a, extAcc?.status === 'active' ? 'rotate' : 'link')}
+                              title="Quản lý tài khoản thật Hub.ChuyenWeb (1-1)"
+                              className="px-2 py-1 rounded border border-sky-500/40 text-sky-500 hover:bg-sky-500/10 text-[11px] flex items-center gap-1 cursor-pointer"
+                            >
+                              <Link2 className="w-3 h-3" />
+                              <span>TK HubCW</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => openHireWizard(a)}
@@ -1089,6 +1185,124 @@ export function HrManagementPanel() {
                     })}
                   </div>
                 </div>
+
+                {/* BỔ SUNG G2: 1-Agent-1-HubCW Account & 19-Module Permissions Matrix */}
+                {(() => {
+                  const ext = externalAccounts.find((e) => e.agentId === selectedRbacAcc.agentId);
+                  return (
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold">
+                          <Database className="w-3.5 h-3.5 text-sky-500" />
+                          <span>Tài khoản thật Hub.ChuyenWeb (1-1)</span>
+                          {renderHubCwBadge(ext)}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowHubCwMatrix((v) => !v)}
+                          className="text-[11px] text-sky-500 hover:underline cursor-pointer"
+                        >
+                          {showHubCwMatrix ? 'Ẩn ma trận 19 module' : 'Mở ma trận 19 module'}
+                        </button>
+                      </div>
+
+                      {selectedRbacAgent && (
+                        <div className="flex flex-wrap gap-1.5 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => openHubCwModal(selectedRbacAgent, 'link')}
+                            className="px-2 py-1 rounded-lg bg-sky-600 text-white font-semibold cursor-pointer"
+                          >
+                            Liên kết TK có sẵn
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openHubCwModal(selectedRbacAgent, 'propose')}
+                            className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 font-medium cursor-pointer"
+                          >
+                            Đề xuất tạo TK mới
+                          </button>
+                          {ext && ext.status !== 'unlinked' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const res = await testExternalAccountLogin(selectedRbacAgent.id);
+                                  setTokenNotice(res.message);
+                                }}
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg border border-emerald-500/40 text-emerald-500 font-semibold cursor-pointer"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                <span>Kiểm tra đăng nhập</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openHubCwModal(selectedRbacAgent, 'rotate')}
+                                className="px-2 py-1 rounded-lg border border-amber-500/40 text-amber-500 font-semibold cursor-pointer"
+                              >
+                                Xoay vòng Token
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => lockExternalAccount(selectedRbacAgent.id)}
+                                className="px-2 py-1 rounded-lg border border-rose-500/40 text-rose-500 font-semibold cursor-pointer"
+                              >
+                                {ext.status === 'suspended' ? 'Mở khóa TK' : 'Khóa TK'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {showHubCwMatrix && ext && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pt-1 max-h-56 overflow-y-auto">
+                          {HUBCW_MODULES.map((m) => {
+                            const flag = ext.externalPermissions?.[m.id] || { read: false, write: false };
+                            return (
+                              <div
+                                key={m.id}
+                                className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10.5px]"
+                              >
+                                <span className="truncate font-medium">{m.label}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <label className="flex items-center gap-1 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={flag.read}
+                                      onChange={() =>
+                                        updateAgentHubCwPermissions(selectedRbacAcc.agentId, m.id, {
+                                          ...flag,
+                                          read: !flag.read,
+                                        })
+                                      }
+                                      className="accent-sky-600"
+                                    />
+                                    <span>Đọc</span>
+                                  </label>
+                                  <label className="flex items-center gap-1 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      disabled={!m.supportsWrite}
+                                      checked={flag.write}
+                                      onChange={() =>
+                                        updateAgentHubCwPermissions(selectedRbacAcc.agentId, m.id, {
+                                          ...flag,
+                                          write: !flag.write,
+                                        })
+                                      }
+                                      className="accent-rose-600"
+                                    />
+                                    <span>Ghi</span>
+                                  </label>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 <div>
                   <div className="text-xs font-semibold mb-1">Nhật ký kiểm tra quyền gần nhất</div>
@@ -1920,6 +2134,230 @@ export function HrManagementPanel() {
                 className="px-3 py-1.5 rounded-lg bg-rose-600 disabled:opacity-40 text-white font-semibold cursor-pointer"
               >
                 Xóa vĩnh viễn
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BỔ SUNG G2: 1-AGENT-1-HUBCW ACCOUNT MODAL */}
+      {hubcwTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 space-y-3 shadow-2xl text-xs">
+            <div className="flex items-center justify-between">
+              <div className="font-bold text-sm flex items-center gap-2">
+                <Database className="w-4 h-4 text-sky-500" />
+                <span>Tài khoản Hub.ChuyenWeb: {hubcwTarget.name}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHubcwTarget(null)}
+                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setHubcwModalMode('link')}
+                className={`py-1.5 rounded-lg border font-semibold cursor-pointer ${
+                  hubcwModalMode === 'link'
+                    ? 'bg-sky-600 text-white border-sky-500'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                Liên kết TK có sẵn
+              </button>
+              <button
+                type="button"
+                onClick={() => setHubcwModalMode('propose')}
+                className={`py-1.5 rounded-lg border font-semibold cursor-pointer ${
+                  hubcwModalMode === 'propose'
+                    ? 'bg-sky-600 text-white border-sky-500'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                Đề xuất tạo TK mới
+              </button>
+              <button
+                type="button"
+                onClick={() => setHubcwModalMode('rotate')}
+                className={`py-1.5 rounded-lg border font-semibold cursor-pointer ${
+                  hubcwModalMode === 'rotate'
+                    ? 'bg-amber-500 text-slate-950 border-amber-400'
+                    : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                Xoay vòng Token
+              </button>
+            </div>
+
+            {hubcwModalMode === 'link' && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Username trên HubCW</label>
+                    <input
+                      value={hcwUsername}
+                      onChange={(e) => setHcwUsername(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">User ID HubCW (nếu có)</label>
+                    <input
+                      value={hcwUserId}
+                      onChange={(e) => setHcwUserId(e.target.value)}
+                      placeholder="vd: 42"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono-num"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Email trên HubCW</label>
+                    <input
+                      value={hcwEmail}
+                      onChange={(e) => setHcwEmail(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Loại xác thực</label>
+                    <select
+                      value={hcwAuthType}
+                      onChange={(e) =>
+                        setHcwAuthType(e.target.value as 'token' | 'password_session')
+                      }
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                    >
+                      <option value="token">API Token / Bearer (Ưu tiên)</option>
+                      <option value="password_session">Mật khẩu (Playwright Session)</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    API Token hoặc Mật khẩu (mã hóa AES-256-GCM trong Credential Vault)
+                  </label>
+                  <input
+                    type="password"
+                    value={hcwSecret}
+                    onChange={(e) => setHcwSecret(e.target.value)}
+                    placeholder="Dán Token hoặc mật khẩu..."
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono-num"
+                  />
+                </div>
+              </div>
+            )}
+
+            {hubcwModalMode === 'propose' && (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-400">
+                  Sinh thông tin đề xuất để CEO tạo tài khoản cho nhân sự trên {settings.hubcw.baseUrl}/users (không bao giờ tự tạo lén nếu API chưa cho phép).
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Username đề xuất</label>
+                    <input
+                      value={hcwUsername}
+                      onChange={(e) => setHcwUsername(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Vai trò HubCW</label>
+                    <input
+                      value={hcwRole}
+                      onChange={(e) => setHcwRole(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Email đề xuất</label>
+                  <input
+                    value={hcwEmail}
+                    onChange={(e) => setHcwEmail(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  />
+                </div>
+                {hcwGuide && (
+                  <pre className="p-2 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[10.5px] whitespace-pre-wrap">
+                    {hcwGuide}
+                  </pre>
+                )}
+              </div>
+            )}
+
+            {hubcwModalMode === 'rotate' && (
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    API Token mới (gia hạn 30 ngày & mã hóa AES-256-GCM)
+                  </label>
+                  <input
+                    type="password"
+                    value={hcwSecret}
+                    onChange={(e) => setHcwSecret(e.target.value)}
+                    placeholder="Dán Token mới từ HubCW..."
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 font-mono-num"
+                  />
+                </div>
+              </div>
+            )}
+
+            {hcwModalMsg && (
+              <div className="p-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 text-[11px]">
+                {hcwModalMsg}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setHubcwTarget(null)}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 cursor-pointer"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (hubcwModalMode === 'link') {
+                    const res = await linkExistingExternalAccount({
+                      agentId: hubcwTarget.id,
+                      username: hcwUsername,
+                      secret: hcwSecret,
+                      authType: hcwAuthType,
+                      externalUserId: hcwUserId.trim() || undefined,
+                      email: hcwEmail.trim() || undefined,
+                      externalRole: hcwRole.trim() || undefined,
+                    });
+                    setHcwModalMsg(res.message);
+                  } else if (hubcwModalMode === 'propose') {
+                    const res = await proposeCreateExternalAccount({
+                      agentId: hubcwTarget.id,
+                      username: hcwUsername,
+                      email: hcwEmail,
+                      externalRole: hcwRole,
+                    });
+                    setHcwGuide(res.setupGuide);
+                    setHcwModalMsg(res.message);
+                  } else {
+                    const res = await rotateExternalToken(hubcwTarget.id, hcwSecret);
+                    setHcwModalMsg(res.message);
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold cursor-pointer"
+              >
+                {hubcwModalMode === 'link'
+                  ? 'Lưu & Mã hóa Token'
+                  : hubcwModalMode === 'propose'
+                    ? 'Tạo hướng dẫn cấp TK'
+                    : 'Cập nhật Token mới'}
               </button>
             </div>
           </div>

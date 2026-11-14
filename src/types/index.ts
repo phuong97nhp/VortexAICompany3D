@@ -41,7 +41,9 @@ export type Permission =
   | 'expense:approve_final'
   | 'expense:rule_manage'
   | 'policy:write'
-  | 'expense:mark_paid';
+  | 'expense:mark_paid'
+  | 'hubcw:read'
+  | 'hubcw:write';
 
 export type AgentStatus =
   | 'idle'
@@ -91,7 +93,10 @@ export type ToolName =
   | 'pay_expense'
   | 'buy_domain'
   | 'subscribe_tool'
-  | 'spend';
+  | 'spend'
+  | 'hubcw_read'
+  | 'hubcw_write'
+  | 'hubcw_sync';
 
 export type EmploymentStatus = 'active' | 'suspended' | 'archived';
 
@@ -265,6 +270,10 @@ export interface TaskItem {
   createdAt: number;
   updatedAt: number;
   dueLabel?: string;
+  origin?: OriginTag;
+  provenance?: DataProvenance;
+  externalRefId?: string;
+  verificationStatus?: VerificationStatus;
 }
 
 export type LeadStage = 'new' | 'contacted' | 'replied' | 'demo' | 'proposal' | 'won' | 'lost';
@@ -303,6 +312,10 @@ export interface LeadItem {
   estimatedValueVnd: number;
   interactions: LeadInteraction[];
   createdAt: number;
+  origin?: OriginTag;
+  provenance?: DataProvenance;
+  externalRefId?: string;
+  verificationStatus?: VerificationStatus;
 }
 
 export type ChatChannelId =
@@ -373,6 +386,10 @@ export interface DocumentItem {
   content: string;
   createdAt: number;
   updatedAt: number;
+  origin?: OriginTag;
+  provenance?: DataProvenance;
+  externalRefId?: string;
+  verificationStatus?: VerificationStatus;
 }
 
 export type ApprovalType = 'budget' | 'quote' | 'contract' | 'public_post' | 'outreach' | 'permission' | 'expense' | 'hr_hire';
@@ -426,6 +443,9 @@ export interface AuditLogEntry {
   resource?: string;
   result: 'allowed' | 'denied';
   reason?: string;
+  externalRefId?: string;
+  idempotencyKey?: string;
+  origin?: OriginTag;
   timestamp: number;
 }
 
@@ -524,6 +544,8 @@ export type OutfitStyleId = 'casual' | 'vest' | 'hoodie' | 'shirt';
 
 export type AccessoryId = 'none' | 'glasses' | 'headset' | 'tie' | 'beret' | 'badge' | 'backpack';
 
+export type LogoPlacement = 'chest' | 'chest_back' | 'chest_cap';
+
 export interface AgentAppearance {
   agentId: string;
   hairStyle: HairStyleId;
@@ -534,6 +556,9 @@ export interface AgentAppearance {
   outfitAccent: string;
   pantsColor: string;
   accessory: AccessoryId;
+  useUniform?: boolean;
+  logoPlacement?: LogoPlacement;
+  showBadge?: boolean;
 }
 
 export type AutonomyLevel = 1 | 2 | 3;
@@ -597,6 +622,10 @@ export interface ExpenseItem {
   history: ExpenseAuditStep[];
   createdAt: number;
   updatedAt: number;
+  origin?: OriginTag;
+  provenance?: DataProvenance;
+  externalRefId?: string;
+  verificationStatus?: VerificationStatus;
 }
 
 export type ExpenseRuleType = 'accountant_auto' | 'full_auto';
@@ -719,6 +748,10 @@ export interface CompanySettings {
   spendingPolicy: SpendingPolicy;
   // BỔ SUNG F: Daily digest summary toggle
   dailyDigestEnabled: boolean;
+  // BỔ SUNG G & H: Environment, HubCW Connector & Brand Uniform
+  envMode: SystemEnvMode;
+  hubcw: HubCwSettings;
+  brand: BrandSettings;
 }
 
 export type SocialPlatformId =
@@ -890,3 +923,201 @@ export interface Scene3dDiagnostics {
   webglError: string | null;
   updatedAt: number;
 }
+
+// === BỔ SUNG G & H: HUB.CHUYENWEB.COM CONNECTOR, UNIFORM & HARD DATA PROVENANCE ===
+
+export type SystemEnvMode = 'sandbox' | 'read_only' | 'live';
+
+export type OriginTag = 'simulated' | 'hubcw_live' | 'user_verified' | 'system_calculated';
+
+export type VerificationStatus = 'verified' | 'pending_verification' | 'simulated' | 'blocked';
+
+export type ProvenanceSource =
+  | 'hubcw_record'
+  | 'user_input'
+  | 'external_document'
+  | 'verified_web'
+  | 'platform_api'
+  | 'calculation'
+  | 'llm_generated'
+  | 'estimated'
+  | 'unknown';
+
+export interface DataProvenance {
+  source: ProvenanceSource;
+  origin?: OriginTag;
+  refId?: string;
+  sourceLabel?: string;
+  verifiedAt?: number;
+  verifiedBy?: string;
+  inputs?: Record<string, unknown>;
+  formula?: string;
+}
+
+export type HubCwModuleId =
+  | 'dashboard'
+  | 'customers'
+  | 'orders'
+  | 'wallet'
+  | 'golden_pig'
+  | 'resources'
+  | 'automation'
+  | 'accounts'
+  | 'licenses'
+  | 'products'
+  | 'cashflow'
+  | 'reports'
+  | 'users'
+  | 'tasks'
+  | 'support'
+  | 'documents'
+  | 'permissions'
+  | 'notifications'
+  | 'settings';
+
+export type HubCwConnectionMode = 'api' | 'browser' | 'sandbox';
+
+export interface HubCwModuleHealth {
+  moduleId: HubCwModuleId;
+  status: 'ok' | 'error' | 'unsupported' | 'untested';
+  latencyMs?: number;
+  lastCheckedAt?: number;
+  message?: string;
+}
+
+export interface BrandSettings {
+  logoDataUrl?: string;
+  logoName?: string;
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
+  defaultUniformStyle: OutfitStyleId;
+}
+
+export interface HubCwSettings {
+  baseUrl: string;
+  connectionMode: HubCwConnectionMode;
+  hourlyWriteLimit: number;
+  requireApprovalForCritical: boolean;
+  unclearWriteUnlocked: Partial<Record<'golden_pig' | 'automation' | 'resources', boolean>>;
+  lastHealthCheckAt?: number;
+  moduleHealth: Record<string, HubCwModuleHealth>;
+}
+
+export type ExternalAccountStatus =
+  | 'unlinked'
+  | 'pending_creation'
+  | 'active'
+  | 'suspended'
+  | 'error';
+
+export interface HubCwModulePermissionFlag {
+  read: boolean;
+  write: boolean;
+}
+
+export interface AgentExternalAccount {
+  agentId: string;
+  system: 'hubcw';
+  externalUserId?: string;
+  username?: string;
+  email?: string;
+  externalRole?: string;
+  externalPermissions: Record<HubCwModuleId, HubCwModulePermissionFlag>;
+  status: ExternalAccountStatus;
+  linkedAt?: number;
+  lastActivityAt?: number;
+  tokenExpiresAt?: number;
+  lastError?: string;
+  handoverNote?: string;
+}
+
+export interface EncryptedCredentialRecord {
+  id: string; // `${agentId}::hubcw`
+  agentId: string;
+  system: 'hubcw';
+  authType: 'token' | 'password_session';
+  ivHex: string;
+  ciphertextB64: string;
+  keyFingerprint: string;
+  updatedAt: number;
+}
+
+export interface HubCwApiLog {
+  id: string;
+  agentId: string;
+  agentName: string;
+  externalUserId?: string;
+  module: HubCwModuleId;
+  operation: string;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'BROWSER';
+  endpoint: string;
+  envMode: SystemEnvMode;
+  connectionMode: HubCwConnectionMode;
+  result: 'ok' | 'blocked_gate' | 'blocked_permission' | 'blocked_killswitch' | 'error';
+  statusCode?: number;
+  externalRecordId?: string;
+  idempotencyKey?: string;
+  requestId?: string;
+  reason?: string;
+  durationMs: number;
+  timestamp: number;
+}
+
+export interface HubCwSyncItem {
+  id: string;
+  direction: 'pull_from_hubcw' | 'push_to_hubcw';
+  module: HubCwModuleId;
+  agentId: string;
+  entityType: 'lead' | 'task' | 'order' | 'support' | 'cashflow' | 'report' | 'notification';
+  localId?: string;
+  externalId?: string;
+  payload: Record<string, unknown>;
+  provenance?: DataProvenance;
+  status: 'queued' | 'synced' | 'conflict' | 'blocked' | 'failed';
+  errorMessage?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HubCwUndoSnapshot {
+  id: string;
+  agentId: string;
+  agentName: string;
+  module: HubCwModuleId;
+  operation: 'create' | 'update' | 'delete';
+  externalRecordId: string;
+  endpoint: string;
+  beforeData?: Record<string, unknown> | null;
+  afterData: Record<string, unknown>;
+  idempotencyKey: string;
+  requestId: string;
+  reverted: boolean;
+  revertedAt?: number;
+  createdAt: number;
+}
+
+export interface HubCwReconciliationDiscrepancy {
+  id: string;
+  module: HubCwModuleId;
+  localId?: string;
+  externalId?: string;
+  field: string;
+  localValue: string;
+  hubcwValue: string;
+  severity: 'info' | 'warning' | 'critical';
+  note: string;
+}
+
+export interface HubCwReconciliationReport {
+  id: string;
+  totalLocalRecords: number;
+  validProvenanceCount: number;
+  validProvenancePercent: number;
+  simulatedRecordCount: number;
+  blockedWriteCount: number;
+  topBlockedReasons: Array<{ reason: string; count: number }>;
+  discrepancies: HubCwReconciliationDiscrepancy[];
+  createdAt: number;
+}
+

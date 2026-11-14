@@ -113,3 +113,23 @@ Gói `/worker` dùng chung cấu hình AI đa nhà cung cấp (`LLM_PROVIDER`, `
    - Mọi chiến dịch **Paid Ads** (Facebook Lead Ads, TikTok Ads, Zalo Ads), bài đầu tiên trên mỗi nền tảng mới, và nội dung chứa **giá/cam kết hiệu quả/so sánh đối thủ** đều phải qua hàng đợi **Phê duyệt CEO** (Mức tự chủ 2) và bị chặn ngay lập tức khi bật **KILL SWITCH**.
    - Không sử dụng từ ngữ khẳng định tuyệt đối vi phạm Luật Quảng cáo Việt Nam ("số 1", "tốt nhất tuyệt đối", "cam kết hoàn hảo 100%") khi chưa có tài liệu kiểm chứng hợp pháp.
 
+## 8. Kết nối phần mềm thật Hub.ChuyenWeb.com, Tài khoản 1-1, Cổng Dữ Liệu Thật & Đồng phục Logo 3D
+
+1. **Khuyến nghị thử nghiệm Staging trước khi bật `LIVE`:**
+   - Mặc định hệ thống khởi chạy ở chế độ **`SANDBOX`** (an toàn tuyệt đối, không chạm dữ liệu thật).
+   - Trước khi bật **`LIVE` (`Ghi dữ liệu thật`)** lên `https://hub.chuyenweb.com`, khuyến nghị trỏ `baseUrl` trong tab **Kết nối phần mềm** sang môi trường thử nghiệm/staging (hoặc bật `READ-ONLY` để kiểm tra sức khỏe 19 module trước).
+   - Để chuyển sang `LIVE`, CEO phải vượt qua **Pre-flight Checklist 4 điều kiện** và nhập đúng **mật khẩu CEO** (xác thực PBKDF2) kèm cụm từ xác nhận `"XÁC NHẬN CHẠY THẬT"`.
+2. **Tài khoản riêng 1-1 cho từng nhân viên AI (`Credential Vault`):**
+   - Mỗi nhân viên gắn tối đa **1 tài khoản thật duy nhất** trên HubCW (không dùng chung tài khoản). Mật khẩu/API Token được mã hóa **AES-256-GCM** qua Vault ở backend (`/api/vault/credentials`) với khóa `HUBCW_VAULT_SECRET`, không bao giờ lưu plain-text trong localStorage/IndexedDB hay log ra giao diện.
+   - Bảng phân quyền HubCW 19 module cho phép bật/tắt quyền Đọc/Ghi độc lập theo từng nhân viên. 3 module chưa rõ cấu trúc (`Heo vàng`, `Tự động`, `Tài nguyên`) mặc định bị khóa ghi cho tới khi CEO tự xác nhận trong `HUBCW_API_MAP.md` và mở khóa thủ công.
+3. **Cổng kiểm soát ghi dữ liệu thật (Hard Write Gate — Anti-Fake-Data Firewall):**
+   - Mọi thao tác ghi lên HubCW bắt buộc đi qua hàm duy nhất `executeHubCwWrite` (`src/integrations/hubcw/writeGate.ts`).
+   - Tự động chặn 100% dữ liệu mô phỏng (`origin === 'simulated'`), dữ liệu không có nguồn xác thực (`provenance`), số điện thoại/email/tên giả (`0900000000`, `test@`, `Nguyễn Văn A`...), lệch công thức tiền/ngày tháng, hoặc ghi tài chính thiếu mã phiếu `#CP-xxx` đã được CEO duyệt.
+   - Mỗi lệnh ghi thành công đều lưu **Undo Snapshot** và **Audit Log** có truy xuất nguồn gốc (`agentId`, `hubcwUsername`, `taskId`, `provenance`).
+4. **Đồng phục & Logo thương hiệu trong văn phòng 3D:**
+   - Upload logo công ty (SVG/PNG) tại **Cài đặt → Thương hiệu & Logo 3D**, hệ thống tự trích xuất bảng màu chủ đạo, gắn logo lên đồng phục 3D của nhân viên, bảng tên phòng, màn hình KPI 3D và avatar chat. Tùy chỉnh riêng hoặc áp dụng đồng loạt theo phòng ban / toàn công ty tại **Tùy biến nhân vật**.
+5. **Tham khảo tài liệu API & Kiểm thử:**
+   - Xem `HUBCW_API_MAP.md` để đối chiếu danh sách 19 module, giả định endpoint và các điểm CEO cần xác nhận với đội kỹ thuật Hub.ChuyenWeb.
+   - Chạy kiểm thử cổng Write Gate: `npx tsx src/integrations/hubcw/writeGate.test.ts`.
+
+

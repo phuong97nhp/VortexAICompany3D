@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { MEETING_SEATS } from '../../engine/waypoints';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { KpiScreen3D } from './KpiScreen3D';
+import { DEFAULT_BRAND_PALETTE, getSharedLogoTexture } from '../../brand/logoBrand';
 
 const MEETING_ROOM_RENDER = {
   id: 'room-meeting',
@@ -122,7 +123,13 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
   const agents = useCompanyStore((s) => s.agents);
   const departments = useCompanyStore((s) => s.departments);
   const expenses = useCompanyStore((s) => s.expenses);
+  const brand = useCompanyStore((s) => s.settings.brand) || DEFAULT_BRAND_PALETTE;
   const isNight = dayNightMode === 'night';
+
+  const sharedOfficeLogoTex = useMemo(
+    () => getSharedLogoTexture(brand.logoDataUrl, brand.primaryColor, brand.secondaryColor),
+    [brand.logoDataUrl, brand.primaryColor, brand.secondaryColor]
+  );
 
   const showF1 = visibleFloor === 'all' || visibleFloor === 1;
   const showF2 = visibleFloor === 'all' || visibleFloor === 2;
@@ -433,8 +440,20 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
             </mesh>
             <mesh position={[-12.88, 1.65, 5.1]} rotation={[0, Math.PI / 2, 0]}>
               <boxGeometry args={[2.8, 1.1, 0.08]} />
-              <meshStandardMaterial color="#0F172A" emissive="#F97316" emissiveIntensity={0.22} />
+              <meshStandardMaterial color="#0F172A" emissive={brand.primaryColor} emissiveIntensity={0.22} />
             </mesh>
+            {sharedOfficeLogoTex && (
+              <>
+                <mesh position={[-12.82, 1.65, 5.1]} rotation={[0, Math.PI / 2, 0]}>
+                  <planeGeometry args={[0.85, 0.85]} />
+                  <meshBasicMaterial map={sharedOfficeLogoTex} transparent polygonOffset polygonOffsetFactor={-2} />
+                </mesh>
+                <mesh position={[-7.65, 0.62, 5.1]} rotation={[0, Math.PI / 2, 0]}>
+                  <planeGeometry args={[0.62, 0.62]} />
+                  <meshBasicMaterial map={sharedOfficeLogoTex} transparent polygonOffset polygonOffsetFactor={-2} />
+                </mesh>
+              </>
+            )}
             <PottedPlant position={[-12.3, 0, 8.3]} />
             <PottedPlant position={[-5.7, 0, 8.3]} />
           </group>
@@ -483,6 +502,12 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
                 <planeGeometry args={[4.1, 1.82]} />
                 <meshStandardMaterial color="#1E3A8A" emissive="#0EA5E9" emissiveIntensity={0.22} side={THREE.DoubleSide} />
               </mesh>
+              {sharedOfficeLogoTex && (
+                <mesh position={[0, 1.75, -3.65]}>
+                  <planeGeometry args={[0.92, 0.92]} />
+                  <meshBasicMaterial map={sharedOfficeLogoTex} transparent polygonOffset polygonOffsetFactor={-2} />
+                </mesh>
+              )}
             </group>
             {MEETING_SEATS.map((seat, i) => (
               <mesh key={i} position={[seat[0], 0.32, seat[2]]} castShadow>

@@ -12,6 +12,8 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
   const tokenUsage = useCompanyStore((s) => s.tokenUsage);
   const expenses = useCompanyStore((s) => s.expenses);
   const expenseBudgets = useCompanyStore((s) => s.expenseBudgets);
+  const envMode = useCompanyStore((s) => s.settings.envMode);
+  const brand = useCompanyStore((s) => s.settings.brand);
 
   const canvas = useMemo(() => {
     const c = document.createElement('canvas');
@@ -33,10 +35,10 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
     const totalLeads = leads.length;
     const sent = outreachLogs.filter((o) => o.result === 'sent_dry_run' || o.result === 'sent_live').length;
     const replied = leads.filter((l) => ['replied', 'demo', 'proposal', 'won'].includes(l.stage)).length;
-    const replyRate = totalLeads > 0 ? Math.round((replied / totalLeads) * 100) : 0;
+    const replyRate = totalLeads > 0 ? `${Math.round((replied / totalLeads) * 100)}%` : '—';
     const demos = leads.filter((l) => l.stage === 'demo').length;
     const won = leads.filter((l) => l.stage === 'won');
-    const revenueM = (won.reduce((s, l) => s + l.estimatedValueVnd, 0) / 1_000_000).toFixed(1);
+    const revenueM = won.length > 0 ? `${(won.reduce((s, l) => s + l.estimatedValueVnd, 0) / 1_000_000).toFixed(1)}M` : '—';
     const todayKey = new Date().toISOString().slice(0, 10);
     const monthKey = todayKey.slice(0, 7);
     const todayTok = tokenUsage
@@ -61,53 +63,67 @@ export function KpiScreen3D({ position }: { position: [number, number, number] }
     ctx.fillStyle = '#0B1324';
     ctx.fillRect(0, 0, 512, 256);
 
-    // Header bar
-    ctx.fillStyle = '#1E3A8A';
+    // Header bar using brand primary color
+    ctx.fillStyle = brand?.primaryColor || '#1B55E3';
     ctx.fillRect(0, 0, 512, 44);
-    ctx.fillStyle = '#E0F2FE';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('DATA & ANALYTICS · KPI TRỰC TIẾP', 18, 29);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('DATA & ANALYTICS · KPI HỆ THỐNG', 16, 28);
 
-    // 6 Metric tiles
+    // Environment badge pill
+    const envBadge =
+      envMode === 'live'
+        ? { label: 'LIVE · HUBCW', bg: '#DC2626' }
+        : envMode === 'read_only'
+          ? { label: 'READ-ONLY', bg: '#0284C7' }
+          : { label: 'SANDBOX (MÔ PHỎNG)', bg: '#D97706' };
+    ctx.fillStyle = envBadge.bg;
+    ctx.fillRect(354, 10, 144, 24);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(envBadge.label, 362, 26);
+
+    // 6 Metric tiles (use '—' on empty gaps, never invent numbers)
     const tiles = [
-      { label: 'TỔNG LEAD CRM', val: String(totalLeads), color: '#38BDF8' },
-      { label: 'TIN ĐÃ GỬI', val: String(sent), color: '#34D399' },
-      { label: 'PHẢN HỒI / DEMO', val: `${replyRate}% · ${demos}`, color: '#FBBF24' },
-      { label: 'DEAL THÀNH CÔNG', val: String(won.length), color: '#10B981' },
-      { label: 'DOANH THU (TR.Đ)', val: `${revenueM}M`, color: '#F472B6' },
-      { label: 'CHI PHÍ THÁNG', val: `${(monthSpentVnd / 1_000_000).toFixed(1)}M`, color: '#FB923C' },
+      { label: 'TỔNG LEAD CRM', val: totalLeads > 0 ? String(totalLeads) : '—', color: '#38BDF8' },
+      { label: 'TIN ĐÃ GỬI', val: sent > 0 ? String(sent) : '—', color: '#34D399' },
+      { label: 'PHẢN HỒI / DEMO', val: `${replyRate} · ${demos}`, color: '#FBBF24' },
+      { label: 'DEAL THÀNH CÔNG', val: won.length > 0 ? String(won.length) : '—', color: '#10B981' },
+      { label: 'DOANH THU (TR.Đ)', val: revenueM, color: '#F472B6' },
+      { label: 'CHI PHÍ THÁNG', val: monthSpentVnd > 0 ? `${(monthSpentVnd / 1_000_000).toFixed(1)}M` : '—', color: '#FB923C' },
     ];
 
     tiles.forEach((t, i) => {
       const col = i % 3;
       const row = Math.floor(i / 3);
       const x = 16 + col * 164;
-      const y = 58 + row * 82;
+      const y = 56 + row * 80;
       ctx.fillStyle = '#142038';
-      ctx.fillRect(x, y, 152, 70);
+      ctx.fillRect(x, y, 152, 68);
       ctx.strokeStyle = 'rgba(148,163,184,0.28)';
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(x, y, 152, 70);
+      ctx.strokeRect(x, y, 152, 68);
 
       ctx.fillStyle = '#94A3B8';
       ctx.font = 'bold 11px sans-serif';
-      ctx.fillText(t.label, x + 10, y + 20);
+      ctx.fillText(t.label, x + 10, y + 19);
 
       ctx.fillStyle = t.color;
-      ctx.font = 'bold 24px monospace';
-      ctx.fillText(t.val, x + 10, y + 54);
+      ctx.font = 'bold 23px monospace';
+      ctx.fillText(t.val, x + 10, y + 52);
     });
 
+    const stamp = new Date().toLocaleTimeString('vi-VN');
     ctx.fillStyle = '#94A3B8';
-    ctx.font = '12px monospace';
+    ctx.font = '11px monospace';
     ctx.fillText(
-      `TOKEN: ${todayTok.toLocaleString('vi-VN')}  ·  NGÂN SÁCH: ${(monthBudgetVnd / 1_000_000).toFixed(0)}M  ·  CHỜ DUYỆT CHI: ${pendingExp}`,
-      18,
+      `NGUỒN: ${envMode === 'sandbox' ? 'DEXIE SANDBOX' : 'HUB.CHUYENWEB'} · ${stamp} · TOK: ${todayTok.toLocaleString('vi-VN')} · CHỜ DUYỆT: ${pendingExp} (${(monthBudgetVnd / 1_000_000).toFixed(0)}M)`,
+      16,
       240
     );
 
     texture.needsUpdate = true;
-  }, [canvas, texture, leads, outreachLogs, tokenUsage, expenses, expenseBudgets]);
+  }, [canvas, texture, leads, outreachLogs, tokenUsage, expenses, expenseBudgets, envMode, brand]);
 
   useEffect(() => {
     return () => texture.dispose();

@@ -113,6 +113,9 @@ export function getDefaultAppearance(agent: AgentProfile): AgentAppearance {
     outfitAccent: agent.accentColor,
     pantsColor: seed % 3 === 0 ? '#1E293B' : seed % 3 === 1 ? '#334155' : '#0F172A',
     accessory,
+    useUniform: true,
+    logoPlacement: 'chest',
+    showBadge: true,
   };
 }
 
@@ -128,5 +131,8 @@ export function generateRandomAppearance(agentId: string, baseDeptColor: string)
     outfitAccent: '#F8FAFC',
     pantsColor: pick(['#1E293B', '#334155', '#0F172A', '#312E81']),
     accessory: pick(ACCESSORIES).id,
+    useUniform: true,
+    logoPlacement: 'chest',
+    showBadge: true,
   };
 }

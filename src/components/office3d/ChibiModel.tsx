@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { AgentAppearance, AgentStatus } from '../../types';
+import { getSharedLogoTexture, getSharedStaffBadgeTexture, DEFAULT_BRAND_PALETTE } from '../../brand/logoBrand';
 
 interface ChibiModelProps {
   appearance: AgentAppearance;
@@ -11,6 +12,9 @@ interface ChibiModelProps {
   showOutline?: boolean;
   paused?: boolean;
   rotationY?: number;
+  brandLogoDataUrl?: string;
+  brandPrimary?: string;
+  brandSecondary?: string;
 }
 
 const CONFETTI_OFFSETS: Array<[number, number, number, string]> = [
@@ -29,6 +33,9 @@ export function ChibiModel({
   showOutline = true,
   paused = false,
   rotationY,
+  brandLogoDataUrl,
+  brandPrimary = DEFAULT_BRAND_PALETTE.primaryColor,
+  brandSecondary = DEFAULT_BRAND_PALETTE.secondaryColor,
 }: ChibiModelProps) {
   const bodyRootRef = useRef<THREE.Group>(null);
   const torsoRef = useRef<THREE.Group>(null);
@@ -250,6 +257,25 @@ export function ChibiModel({
 
   const outlineColor = '#0F172A';
   const showEdges = showOutline && !simplifiedLod;
+  const wearUniform = appearance.useUniform !== false;
+  const placement = appearance.logoPlacement || 'chest';
+  const showStaffBadge = appearance.showBadge !== false;
+
+  const sharedLogoTex = useMemo(
+    () =>
+      !simplifiedLod && wearUniform
+        ? getSharedLogoTexture(brandLogoDataUrl, brandPrimary, brandSecondary)
+        : null,
+    [simplifiedLod, wearUniform, brandLogoDataUrl, brandPrimary, brandSecondary]
+  );
+
+  const sharedBadgeTex = useMemo(
+    () =>
+      !simplifiedLod && showStaffBadge
+        ? getSharedStaffBadgeTexture(brandPrimary, brandSecondary)
+        : null,
+    [simplifiedLod, showStaffBadge, brandPrimary, brandSecondary]
+  );
 
   return (
     <group scale={1.12}>
@@ -337,6 +363,51 @@ export function ChibiModel({
             </>
           )}
 
+          {/* Uniform Branded Left-Chest Logo & Optional Back Logo (uses single shared CanvasTexture) */}
+          {sharedLogoTex && (
+            <>
+              <mesh position={[0.088, 0.068, 0.184]} rotation={[0, 0.24, 0]}>
+                <planeGeometry args={[0.105, 0.105]} />
+                <meshBasicMaterial
+                  map={sharedLogoTex}
+                  transparent
+                  polygonOffset
+                  polygonOffsetFactor={-2}
+                />
+              </mesh>
+              {placement === 'chest_back' && (
+                <mesh position={[0, 0.06, -0.188]} rotation={[0, Math.PI, 0]}>
+                  <planeGeometry args={[0.19, 0.19]} />
+                  <meshBasicMaterial
+                    map={sharedLogoTex}
+                    transparent
+                    polygonOffset
+                    polygonOffsetFactor={-2}
+                  />
+                </mesh>
+              )}
+            </>
+          )}
+
+          {/* Collar Lanyard & Staff Card Badge */}
+          {showStaffBadge && !simplifiedLod && sharedBadgeTex && (
+            <group>
+              <mesh position={[0, 0.155, 0.04]} rotation={[0.45, 0, 0]}>
+                <torusGeometry args={[0.135, 0.011, 5, 14]} />
+                <meshStandardMaterial color={brandPrimary} roughness={0.4} />
+              </mesh>
+              <mesh position={[-0.085, 0.02, 0.189]} rotation={[0, -0.18, 0]}>
+                <planeGeometry args={[0.072, 0.098]} />
+                <meshBasicMaterial
+                  map={sharedBadgeTex}
+                  transparent
+                  polygonOffset
+                  polygonOffsetFactor={-2}
+                />
+              </mesh>
+            </group>
+          )}
+
           {/* Torso Accessories */}
           {appearance.accessory === 'tie' && (
             <mesh position={[0, 0.01, 0.18]}>
@@ -344,7 +415,7 @@ export function ChibiModel({
               <meshStandardMaterial color="#DC2626" roughness={0.35} />
             </mesh>
           )}
-          {appearance.accessory === 'badge' && (
+          {appearance.accessory === 'badge' && !showStaffBadge && (
             <mesh position={[0.1, 0.06, 0.185]}>
               <boxGeometry args={[0.08, 0.06, 0.02]} />
               <meshStandardMaterial color="#F8FAFC" emissive={appearance.outfitAccent || '#38BDF8'} emissiveIntensity={0.4} />
@@ -590,6 +661,28 @@ export function ChibiModel({
               <mesh position={[0, 0.1, 0.2]} rotation={[0.18, 0, 0]} castShadow>
                 <boxGeometry args={[0.32, 0.03, 0.2]} />
                 <meshStandardMaterial color="#0F172A" roughness={0.45} />
+              </mesh>
+              {sharedLogoTex && (
+                <mesh position={[0, 0.18, 0.238]} rotation={[-0.25, 0, 0]}>
+                  <planeGeometry args={[0.095, 0.095]} />
+                  <meshBasicMaterial map={sharedLogoTex} transparent polygonOffset polygonOffsetFactor={-2} />
+                </mesh>
+              )}
+            </group>
+          )}
+          {appearance.hairStyle !== 'cap_hat' && placement === 'chest_cap' && sharedLogoTex && (
+            <group>
+              <mesh position={[0, 0.17, 0]} scale={[1.05, 0.45, 1.05]}>
+                <sphereGeometry args={[0.23, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.45]} />
+                <meshStandardMaterial color={brandPrimary} roughness={0.45} />
+              </mesh>
+              <mesh position={[0, 0.15, 0.2]} rotation={[0.18, 0, 0]}>
+                <boxGeometry args={[0.3, 0.025, 0.18]} />
+                <meshStandardMaterial color="#0F172A" roughness={0.45} />
+              </mesh>
+              <mesh position={[0, 0.22, 0.21]} rotation={[-0.25, 0, 0]}>
+                <planeGeometry args={[0.085, 0.085]} />
+                <meshBasicMaterial map={sharedLogoTex} transparent polygonOffset polygonOffsetFactor={-2} />
               </mesh>
             </group>
           )}

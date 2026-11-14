@@ -18,6 +18,8 @@ export function TokenKpiPanel() {
   const settings = useCompanyStore((s) => s.settings);
   const leads = useCompanyStore((s) => s.leads);
   const outreachLogs = useCompanyStore((s) => s.outreachLogs);
+  const hubcwReconciliations = useCompanyStore((s) => s.hubcwReconciliations);
+  const hubcwApiLogs = useCompanyStore((s) => s.hubcwApiLogs);
 
   const todayKey = new Date().toISOString().slice(0, 10);
   const todayRecords = tokenUsage.filter((t) => t.dateKey === todayKey);
@@ -70,42 +72,74 @@ export function TokenKpiPanel() {
   const revenueVnd = won.reduce((s, l) => s + l.estimatedValueVnd, 0);
   const sentCount = outreachLogs.filter((o) => o.result === 'sent_dry_run' || o.result === 'sent_live').length;
 
+  const latestRecon = hubcwReconciliations[0];
+  const blockedWrites = hubcwApiLogs.filter((l) => l.result.startsWith('blocked')).length;
+  const simulatedLeads = leads.filter(
+    (l) => l.origin === 'simulated' || l.source.toLowerCase().includes('mô phỏng')
+  ).length;
+  const dataSourceLabel =
+    settings.envMode === 'live'
+      ? `Hub.ChuyenWeb LIVE (${settings.hubcw.baseUrl})`
+      : settings.envMode === 'read_only'
+        ? `Hub.ChuyenWeb READ-ONLY (${settings.hubcw.baseUrl})`
+        : 'Dexie Sandbox (Mô phỏng nội bộ)';
+
   return (
     <div className="flex flex-col h-full p-3 gap-3 overflow-y-auto">
+      {/* BỔ SUNG H: Data Provenance & Trust Header */}
+      <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+        <div>
+          <span className="text-slate-400">Nguồn KPI: </span>
+          <strong className="text-sky-500">{dataSourceLabel}</strong>
+          <span className="text-slate-400"> · Cập nhật: {new Date().toLocaleTimeString('vi-VN')}</span>
+        </div>
+        <div className="flex items-center gap-2 font-mono-num">
+          <span className="text-emerald-500 font-semibold">
+            Tin cậy: {latestRecon ? `${latestRecon.validProvenancePercent}%` : '—'}
+          </span>
+          <span className="text-amber-500">Mô phỏng: {simulatedLeads} lead</span>
+          <span className="text-rose-500">Bị chặn: {blockedWrites}</span>
+        </div>
+      </div>
+
       {/* KPI Summary Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-400">Tổng Lead CRM</div>
-          <div className="text-lg font-bold font-mono-num text-sky-500">{leads.length}</div>
+          <div className="text-lg font-bold font-mono-num text-sky-500">
+            {leads.length > 0 ? leads.length : '—'}
+          </div>
         </div>
         <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-400">Tin đã gửi / Tỉ lệ PH</div>
           <div className="text-lg font-bold font-mono-num text-emerald-500">
-            {sentCount} <span className="text-xs text-slate-400">({replyRate}%)</span>
+            {sentCount > 0 ? sentCount : '—'}{' '}
+            <span className="text-xs text-slate-400">({leads.length > 0 ? `${replyRate}%` : '—'})</span>
           </div>
         </div>
         <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-400">Demo / Chốt Deal</div>
           <div className="text-lg font-bold font-mono-num text-amber-500">
-            {demos} / {won.length}
+            {leads.length > 0 ? `${demos} / ${won.length}` : '—'}
           </div>
         </div>
         <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-400">Doanh thu ghi nhận</div>
           <div className="text-base font-bold font-mono-num text-emerald-500">
-            {(revenueVnd / 1_000_000).toFixed(1)} triệu đ
+            {revenueVnd > 0 ? `${(revenueVnd / 1_000_000).toFixed(1)} triệu đ` : '—'}
           </div>
         </div>
         <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-400">Token hôm nay</div>
           <div className="text-base font-bold font-mono-num text-sky-400">
-            {todayTokens.toLocaleString('vi-VN')}
+            {todayTokens > 0 ? todayTokens.toLocaleString('vi-VN') : '—'}
           </div>
         </div>
         <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
           <div className="text-[10px] text-slate-400">Chi phí ước tính</div>
           <div className="text-base font-bold font-mono-num text-violet-400">
-            ${todayCostUsd.toFixed(4)} <span className="text-[10px] text-slate-400">({cachedCount} cache)</span>
+            {todayCostUsd > 0 ? `$${todayCostUsd.toFixed(4)}` : '—'}{' '}
+            <span className="text-[10px] text-slate-400">({cachedCount} cache)</span>
           </div>
         </div>
       </div>

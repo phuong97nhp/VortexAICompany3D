@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { RotateCcw, Save, Shuffle } from 'lucide-react';
+import { RotateCcw, Save, Shirt, Shuffle, Users } from 'lucide-react';
 import {
   ACCESSORIES,
   generateRandomAppearance,
@@ -12,7 +12,7 @@ import {
   SKIN_TONES,
 } from '../../engine/characterAppearance';
 import { useCompanyStore } from '../../store/useCompanyStore';
-import { AgentAppearance, AgentStatus } from '../../types';
+import { AgentAppearance, AgentStatus, LogoPlacement } from '../../types';
 import { ChibiModel } from '../office3d/ChibiModel';
 
 const OUTFIT_COLORS = [
@@ -43,8 +43,11 @@ export function CharacterCustomizerPanel() {
   const agents = useCompanyStore((s) => s.agents);
   const selectedAgentId = useCompanyStore((s) => s.selectedAgentId);
   const agentAppearances = useCompanyStore((s) => s.agentAppearances);
+  const brand = useCompanyStore((s) => s.settings.brand);
   const saveAgentAppearance = useCompanyStore((s) => s.saveAgentAppearance);
   const resetAgentAppearance = useCompanyStore((s) => s.resetAgentAppearance);
+  const applyUniformToDept = useCompanyStore((s) => s.applyUniformToDept);
+  const applyUniformToCompany = useCompanyStore((s) => s.applyUniformToCompany);
 
   const activeAgents = useMemo(
     () => agents.filter((a) => a.employmentStatus !== 'archived'),
@@ -54,6 +57,7 @@ export function CharacterCustomizerPanel() {
   const [targetId, setTargetId] = useState<string>(selectedAgentId || activeAgents[0]?.id || 'secretary');
   const [previewStatus, setPreviewStatus] = useState<AgentStatus>('idle');
   const [savedFlag, setSavedFlag] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
   const targetAgent = activeAgents.find((a) => a.id === targetId) || activeAgents[0];
   const storedAppearance = targetAgent
@@ -134,7 +138,14 @@ export function CharacterCustomizerPanel() {
               <circleGeometry args={[1.05, 32]} />
               <meshStandardMaterial color="#1E293B" roughness={0.7} />
             </mesh>
-            <ChibiModel appearance={draft} status={previewStatus} showOutline />
+            <ChibiModel
+              appearance={draft}
+              status={previewStatus}
+              showOutline
+              brandLogoDataUrl={brand.logoDataUrl}
+              brandPrimary={brand.primaryColor}
+              brandSecondary={brand.secondaryColor}
+            />
           </Suspense>
           <OrbitControls enablePan={false} minDistance={1.7} maxDistance={4.2} target={[0, 0.72, 0]} />
         </Canvas>
@@ -286,6 +297,89 @@ export function CharacterCustomizerPanel() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Uniform & Brand Logo Controls (BỔ SUNG G3) */}
+        <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
+          <div className="font-semibold flex items-center gap-1.5">
+            <Shirt className="w-3.5 h-3.5 text-sky-500" />
+            <span>Đồng phục & Logo Công ty 3D</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draft.useUniform ?? true}
+                onChange={(e) => setDraft({ ...draft, useUniform: e.target.checked })}
+                className="w-4 h-4 accent-sky-600"
+              />
+              <span>In logo lên đồng phục</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draft.showBadge ?? true}
+                onChange={(e) => setDraft({ ...draft, showBadge: e.target.checked })}
+                className="w-4 h-4 accent-sky-600"
+              />
+              <span>Đeo thẻ tên nhân viên</span>
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-slate-400 mb-1">Vị trí in Logo</label>
+            <select
+              value={draft.logoPlacement || 'chest'}
+              onChange={(e) =>
+                setDraft({ ...draft, logoPlacement: e.target.value as LogoPlacement })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1.5"
+            >
+              <option value="chest">Ngực trái (Mặc định)</option>
+              <option value="chest_back">Ngực trái + Sau lưng áo</option>
+              <option value="chest_cap">Ngực trái + Trước nón (nếu đội nón)</option>
+            </select>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            <button
+              type="button"
+              onClick={async () => {
+                const count = await applyUniformToDept(targetAgent.department, {
+                  outfitStyle: draft.outfitStyle,
+                  outfitColor: draft.outfitColor,
+                  logoPlacement: draft.logoPlacement || 'chest',
+                  showBadge: draft.showBadge ?? true,
+                  useUniform: draft.useUniform ?? true,
+                });
+                setBulkNotice(`Đã áp dụng đồng phục cho ${count} nhân viên phòng ${targetAgent.department}.`);
+                setTimeout(() => setBulkNotice(null), 2500);
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold cursor-pointer"
+            >
+              <Users className="w-3 h-3" />
+              <span>Áp dụng cho phòng ban</span>
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const count = await applyUniformToCompany({
+                  outfitStyle: draft.outfitStyle,
+                  logoPlacement: draft.logoPlacement || 'chest',
+                  showBadge: draft.showBadge ?? true,
+                  useUniform: draft.useUniform ?? true,
+                  tintWithBrandPrimary: true,
+                });
+                setBulkNotice(`Đã áp dụng đồng phục + màu thương hiệu cho toàn công ty (${count} người).`);
+                setTimeout(() => setBulkNotice(null), 2500);
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-sky-500/40 text-sky-500 hover:bg-sky-500/10 font-semibold cursor-pointer"
+            >
+              <span>Áp dụng toàn công ty</span>
+            </button>
+          </div>
+          {bulkNotice && <div className="text-[11px] text-emerald-500 font-medium">{bulkNotice}</div>}
         </div>
 
         {/* Actions */}
