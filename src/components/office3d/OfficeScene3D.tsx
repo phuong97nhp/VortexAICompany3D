@@ -33,6 +33,42 @@ function SimulationTicker() {
   return null;
 }
 
+function AmbientSunlitDust({ isNight }: { isNight: boolean }) {
+  const pointsRef = useRef<THREE.Points>(null);
+  const { geometry, material } = useMemo(() => {
+    const count = 90;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * 26;
+      positions[i * 3 + 1] = 0.6 + Math.random() * 10.5;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 18;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: isNight ? '#93C5FD' : '#FEF3C7',
+      size: 0.08,
+      transparent: true,
+      opacity: isNight ? 0.28 : 0.42,
+      depthWrite: false,
+    });
+    return { geometry: geo, material: mat };
+  }, [isNight]);
+
+  useEffect(() => () => {
+    geometry.dispose();
+    material.dispose();
+  }, [geometry, material]);
+
+  useFrame((state) => {
+    if (pointsRef.current) {
+      pointsRef.current.rotation.y = state.clock.elapsedTime * 0.015;
+    }
+  });
+
+  return <points ref={pointsRef} geometry={geometry} material={material} />;
+}
+
 function EnvironmentRig() {
   const { gl, scene } = useThree();
 
@@ -169,6 +205,13 @@ export function OfficeScene3D() {
   const flyCameraTo = useCompanyStore((s) => s.flyCameraTo);
   const show3dDiagnostics = useCompanyStore((s) => s.show3dDiagnostics);
   const toggle3dDiagnostics = useCompanyStore((s) => s.toggle3dDiagnostics);
+  const officeLayouts = useCompanyStore((s) => s.officeLayouts);
+  const activeOfficeLayoutId = useCompanyStore((s) => s.settings.activeOfficeLayoutId);
+
+  const activeLayout = useMemo(
+    () => officeLayouts.find((p) => p.id === activeOfficeLayoutId) || officeLayouts[0],
+    [officeLayouts, activeOfficeLayoutId]
+  );
 
   const buildingRootRef = useRef<THREE.Group | null>(null);
   const [showLabels, setShowLabels] = useState(true);
@@ -222,8 +265,19 @@ export function OfficeScene3D() {
     };
   }, []);
 
-  const minimapRooms = useMemo(
-    () => [
+  const minimapRooms = useMemo(() => {
+    if (activeLayout && activeLayout.rooms.length > 0) {
+      return activeLayout.rooms.map((r) => ({
+        id: r.id,
+        name: r.name,
+        shortName: r.shortName,
+        floor: r.floor,
+        center: r.center,
+        size: r.size,
+        color: r.color,
+      }));
+    }
+    return [
       ...departments.map((d) => ({
         id: d.roomId,
         name: d.name,
@@ -234,9 +288,8 @@ export function OfficeScene3D() {
         color: d.color,
       })),
       MEETING_MINIMAP_ROOM,
-    ],
-    [departments]
-  );
+    ];
+  }, [departments, activeLayout]);
 
   const mapBounds = useMemo(() => {
     let minX = -13.2;
@@ -358,6 +411,7 @@ export function OfficeScene3D() {
             </Bounds>
           </Suspense>
 
+          {effectiveQuality !== 'low' && <AmbientSunlitDust isNight={isNight} />}
           <SimulationTicker />
           <CameraRig />
           <SceneDiagnosticsProbe

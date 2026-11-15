@@ -9,6 +9,7 @@ interface ChibiModelProps {
   status?: AgentStatus;
   isSpeaking?: boolean;
   isPostingSocial?: boolean;
+  isControllingDevice?: boolean;
   simplifiedLod?: boolean;
   showOutline?: boolean;
   paused?: boolean;
@@ -31,6 +32,7 @@ export function ChibiModel({
   status = 'idle',
   isSpeaking = false,
   isPostingSocial = false,
+  isControllingDevice = false,
   simplifiedLod = false,
   showOutline = true,
   paused = false,
@@ -44,6 +46,8 @@ export function ChibiModel({
   const headRef = useRef<THREE.Group>(null);
   const leftEyeRef = useRef<THREE.Mesh>(null);
   const rightEyeRef = useRef<THREE.Mesh>(null);
+  const leftBrowRef = useRef<THREE.Mesh>(null);
+  const rightBrowRef = useRef<THREE.Mesh>(null);
   const mouthRef = useRef<THREE.Mesh>(null);
   const leftArmRef = useRef<THREE.Group>(null);
   const rightArmRef = useRef<THREE.Group>(null);
@@ -70,12 +74,34 @@ export function ChibiModel({
     const t = state.clock.elapsedTime + phaseSeed;
     const d = Math.min(delta, 0.05);
 
-    // 1. Eye Blinking (or closed when sleeping)
+    // 1. Eye Blinking & Expressive Eyebrows
     const blinkCycle = t % 3.6;
     const blinkScaleY = status === 'sleeping' ? 0.1 : blinkCycle > 3.46 ? 0.1 : 1;
     if (leftEyeRef.current && rightEyeRef.current) {
       leftEyeRef.current.scale.y = THREE.MathUtils.damp(leftEyeRef.current.scale.y, blinkScaleY, 28, d);
       rightEyeRef.current.scale.y = THREE.MathUtils.damp(rightEyeRef.current.scale.y, blinkScaleY, 28, d);
+    }
+    if (leftBrowRef.current && rightBrowRef.current) {
+      let lBrowZ = 0;
+      let rBrowZ = 0;
+      let browY = 0.068;
+      if (status === 'thinking') {
+        lBrowZ = 0.18;
+        rBrowZ = -0.06;
+        browY = 0.074;
+      } else if (status === 'blocked' || status === 'error') {
+        lBrowZ = -0.22;
+        rBrowZ = 0.22;
+        browY = 0.064;
+      } else if (status === 'done') {
+        browY = 0.082;
+      } else if (status === 'talking' || isSpeaking) {
+        browY = 0.072 + Math.abs(Math.sin(t * 7)) * 0.008;
+      }
+      leftBrowRef.current.rotation.z = THREE.MathUtils.damp(leftBrowRef.current.rotation.z, lBrowZ, 16, d);
+      rightBrowRef.current.rotation.z = THREE.MathUtils.damp(rightBrowRef.current.rotation.z, rBrowZ, 16, d);
+      leftBrowRef.current.position.y = THREE.MathUtils.damp(leftBrowRef.current.position.y, browY, 16, d);
+      rightBrowRef.current.position.y = THREE.MathUtils.damp(rightBrowRef.current.position.y, browY, 16, d);
     }
 
     // 2. Mouth Reaction & Voice Lip-Sync
@@ -181,11 +207,22 @@ export function ChibiModel({
       rArmX = swing * 0.8;
       lLegX = swing;
       rLegX = -swing;
+    } else if (isControllingDevice) {
+      // Holding smartphone near chest and tapping screen
+      rArmX = -0.82;
+      rArmZ = -0.18;
+      rForeX = -0.95 + Math.sin(t * 9) * 0.08;
+      lArmX = -0.45;
+      lForeX = -0.55;
     } else if (status === 'typing') {
       lArmX = -0.65;
       rArmX = -0.65;
       lForeX = -0.7 + Math.sin(t * 18) * 0.25;
       rForeX = -0.7 + Math.cos(t * 18) * 0.25;
+    } else if (status === 'idle' && Math.sin(t * 0.35) > 0.72) {
+      // Casual coffee cup sip gesture
+      rArmX = -0.92;
+      rForeX = -1.05;
     } else if (status === 'sleeping') {
       lArmX = -0.4;
       rArmX = -0.4;
@@ -315,17 +352,21 @@ export function ChibiModel({
           </mesh>
         </group>
 
-        {/* TORSO */}
+        {/* TORSO (Humanized tapered silhouette + subtle neck joint) */}
         <group ref={torsoRef} position={[0, 0.62, 0]}>
+          <mesh position={[0, 0.22, 0]} castShadow>
+            <cylinderGeometry args={[0.058, 0.072, 0.11, simplifiedLod ? 6 : 10]} />
+            <meshStandardMaterial color={appearance.skinTone} roughness={0.45} />
+          </mesh>
           <mesh castShadow>
-            <capsuleGeometry args={[0.185, 0.2, 6, simplifiedLod ? 8 : 14]} />
+            <capsuleGeometry args={[0.168, 0.22, 6, simplifiedLod ? 8 : 14]} />
             <meshStandardMaterial color={appearance.outfitColor} roughness={0.48} metalness={0.08} />
           </mesh>
 
           {/* Inverted-hull outline on Torso */}
           {showEdges && (
             <mesh scale={1.07}>
-              <capsuleGeometry args={[0.185, 0.2, 4, 12]} />
+              <capsuleGeometry args={[0.168, 0.22, 4, 12]} />
               <meshBasicMaterial color={outlineColor} side={THREE.BackSide} />
             </mesh>
           )}
@@ -463,45 +504,79 @@ export function ChibiModel({
                 <meshStandardMaterial color={appearance.skinTone} roughness={0.45} />
               </mesh>
               <mesh position={[0, -0.16, 0]}>
-                <sphereGeometry args={[0.055, 8, 8]} />
+                <sphereGeometry args={[0.052, 8, 8]} />
                 <meshStandardMaterial color={appearance.skinTone} roughness={0.45} />
               </mesh>
+              {/* Handheld Smartphone prop when controlling Android device */}
+              {isControllingDevice && (
+                <group position={[0, -0.17, 0.06]} rotation={[0.4, 0, 0]}>
+                  <mesh>
+                    <boxGeometry args={[0.075, 0.13, 0.015]} />
+                    <meshStandardMaterial color="#0F172A" roughness={0.3} metalness={0.5} />
+                  </mesh>
+                  <mesh position={[0, 0, 0.009]}>
+                    <planeGeometry args={[0.062, 0.112]} />
+                    <meshStandardMaterial color="#38BDF8" emissive="#10B981" emissiveIntensity={0.85} />
+                  </mesh>
+                </group>
+              )}
+              {/* Casual coffee cup prop when idle */}
+              {!isControllingDevice && status === 'idle' && !simplifiedLod && (
+                <mesh position={[0, -0.17, 0.055]}>
+                  <cylinderGeometry args={[0.036, 0.03, 0.075, 8]} />
+                  <meshStandardMaterial color="#F8FAFC" roughness={0.35} />
+                </mesh>
+              )}
             </group>
           </group>
         </group>
 
-        {/* CHIBI HEAD (~1/3 total height, cute rounded toy proportions) */}
+        {/* HUMANIZED STYLIZED HEAD */}
         <group ref={headRef} position={[0, 1.07, 0]}>
-          <mesh scale={[1.05, 0.96, 1.0]} castShadow>
-            <sphereGeometry args={[0.235, simplifiedLod ? 12 : 20, simplifiedLod ? 10 : 16]} />
+          <mesh scale={[0.98, 0.94, 0.96]} castShadow>
+            <sphereGeometry args={[0.225, simplifiedLod ? 12 : 20, simplifiedLod ? 10 : 16]} />
             <meshStandardMaterial color={appearance.skinTone} roughness={0.42} metalness={0.04} />
           </mesh>
 
           {/* Head Outline */}
           {showEdges && (
-            <mesh scale={[1.11, 1.02, 1.06]}>
-              <sphereGeometry args={[0.235, 16, 12]} />
+            <mesh scale={[1.04, 1.0, 1.02]}>
+              <sphereGeometry args={[0.225, 16, 12]} />
               <meshBasicMaterial color={outlineColor} side={THREE.BackSide} />
             </mesh>
           )}
 
+          {/* Expressive Eyebrows */}
+          {!simplifiedLod && (
+            <>
+              <mesh ref={leftBrowRef} position={[-0.082, 0.068, 0.21]}>
+                <boxGeometry args={[0.058, 0.015, 0.016]} />
+                <meshStandardMaterial color={appearance.hairColor} roughness={0.6} />
+              </mesh>
+              <mesh ref={rightBrowRef} position={[0.082, 0.068, 0.21]}>
+                <boxGeometry args={[0.058, 0.015, 0.016]} />
+                <meshStandardMaterial color={appearance.hairColor} roughness={0.6} />
+              </mesh>
+            </>
+          )}
+
           {/* Left & Right Eyes with Iris + Catchlight */}
-          <mesh ref={leftEyeRef} position={[-0.085, 0.015, 0.215]}>
-            <sphereGeometry args={[0.036, 10, 10]} />
+          <mesh ref={leftEyeRef} position={[-0.082, 0.014, 0.205]}>
+            <sphereGeometry args={[0.034, 10, 10]} />
             <meshStandardMaterial color="#0F172A" roughness={0.15} />
             {!simplifiedLod && (
-              <mesh position={[0.011, 0.012, 0.028]}>
-                <sphereGeometry args={[0.012, 6, 6]} />
+              <mesh position={[0.01, 0.011, 0.026]}>
+                <sphereGeometry args={[0.011, 6, 6]} />
                 <meshBasicMaterial color="#FFFFFF" />
               </mesh>
             )}
           </mesh>
-          <mesh ref={rightEyeRef} position={[0.085, 0.015, 0.215]}>
-            <sphereGeometry args={[0.036, 10, 10]} />
+          <mesh ref={rightEyeRef} position={[0.082, 0.014, 0.205]}>
+            <sphereGeometry args={[0.034, 10, 10]} />
             <meshStandardMaterial color="#0F172A" roughness={0.15} />
             {!simplifiedLod && (
-              <mesh position={[0.011, 0.012, 0.028]}>
-                <sphereGeometry args={[0.012, 6, 6]} />
+              <mesh position={[0.01, 0.011, 0.026]}>
+                <sphereGeometry args={[0.011, 6, 6]} />
                 <meshBasicMaterial color="#FFFFFF" />
               </mesh>
             )}

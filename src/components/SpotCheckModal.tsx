@@ -10,6 +10,7 @@ import {
   PauseCircle,
   RefreshCw,
   Shuffle,
+  Smartphone,
   Star,
   Terminal,
   X,
@@ -36,6 +37,14 @@ export function SpotCheckModal() {
   const agents = useCompanyStore((s) => s.agents);
   const spotChecks = useCompanyStore((s) => s.spotChecks);
   const timelineEvents = useCompanyStore((s) => s.timelineEvents);
+  const managedDevices = useCompanyStore((s) => s.managedDevices);
+  const grabDeviceControlStop = useCompanyStore((s) => s.grabDeviceControlStop);
+  const executeDeviceCommand = useCompanyStore((s) => s.executeDeviceCommand);
+
+  const assignedPhone = useMemo(
+    () => (activeAgentId ? managedDevices.find((d) => d.assignedAgentId === activeAgentId) : undefined),
+    [managedDevices, activeAgentId]
+  );
 
   const [snapshot, setSnapshot] = useState<AgentScreenSnapshot | null>(null);
   const [sliderIdx, setSliderIdx] = useState<number>(0);
@@ -259,6 +268,61 @@ export function SpotCheckModal() {
                 </div>
               )}
             </div>
+
+            {/* Assigned Android Phone Live Frame (BỔ SUNG X) */}
+            {assignedPhone && (
+              <div className="p-3 rounded-lg border border-sky-500/40 bg-sky-500/5 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-semibold flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5 text-sky-500" />
+                    <span>Điện thoại USB/ADB đang gán · {assignedPhone.modelName}</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => executeDeviceCommand({ deviceId: assignedPhone.id, agentId: 'ceo', action: 'screenshot' })}
+                      className="px-2 py-1 rounded border border-slate-300 dark:border-slate-700 text-[11px] font-medium cursor-pointer"
+                    >
+                      Chụp ĐT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await grabDeviceControlStop(assignedPhone.id);
+                        setFeedbackMsg(`CEO đã giành quyền & DỪNG thao tác trên ${assignedPhone.modelName}.`);
+                      }}
+                      className="px-2.5 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      Giành quyền / Dừng ĐT
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  {assignedPhone.lastScreenshotDataUrl && (
+                    <img
+                      src={assignedPhone.lastScreenshotDataUrl}
+                      alt="Màn hình điện thoại agent"
+                      className="w-24 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-950 shrink-0"
+                    />
+                  )}
+                  <div className="space-y-1 text-[11px] min-w-0">
+                    <div className="font-mono-num">
+                      Trạng thái: <strong>{assignedPhone.status}</strong> · Chế độ: <strong>{assignedPhone.controlMode}</strong>
+                    </div>
+                    <div className="text-slate-500 truncate">App hiện tại: {assignedPhone.foregroundPackage}</div>
+                    {assignedPhone.pausedTask && (
+                      <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-300">
+                        Tiến độ bảo lưu: {assignedPhone.pausedTask.taskTitle} ({assignedPhone.pausedTask.progressPercent}%)
+                        {assignedPhone.pausedTask.pausedReason ? ` — ${assignedPhone.pausedTask.pausedReason}` : ''}
+                      </div>
+                    )}
+                    <div className="text-slate-500 break-words">
+                      OCR (đã che): {assignedPhone.lastOcrTextMasked || 'Trống'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Frame (c): Active Draft */}
             <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1.5">

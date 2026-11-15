@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { AlertCircle, AlertTriangle, RotateCcw, Trash2, WifiOff, X } from 'lucide-react';
 import { AgentProfileModal } from './components/AgentProfileModal';
 import { CeoSecurityModal } from './components/CeoSecurityModal';
+import { CommandPaletteModal } from './components/CommandPaletteModal';
 import { DigitalMeetingModal } from './components/DigitalMeetingModal';
+import { HelpGuideModal } from './components/HelpGuideModal';
 import { LeftOrgSidebar } from './components/LeftOrgSidebar';
 import { MonitorWallModal } from './components/MonitorWallModal';
 import { OnboardingWizardModal } from './components/OnboardingWizardModal';
 import { OfficeScene3D } from './components/office3d/OfficeScene3D';
+import { OfflineIndicator } from './components/pwa/OfflineIndicator';
 import { RightWorkspacePanel } from './components/RightWorkspacePanel';
 import { SpotCheckModal } from './components/SpotCheckModal';
 import { TopBar } from './components/TopBar';
@@ -26,6 +29,7 @@ export default function App() {
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const toggle3dDiagnostics = useCompanyStore((s) => s.toggle3dDiagnostics);
   const instantRevertToSafeMode = useCompanyStore((s) => s.instantRevertToSafeMode);
+  const setCommandPaletteOpen = useCompanyStore((s) => s.setCommandPaletteOpen);
 
   const [showLeft, setShowLeft] = useState(true);
   const [showRight, setShowRight] = useState(true);
@@ -39,20 +43,26 @@ export default function App() {
     });
   }, [init]);
 
-  // Keyboard shortcuts (Alt + 1..9 to switch tabs, Alt+D for 3D diagnostics)
+  // Keyboard shortcuts (Ctrl/Cmd+K Command Palette, Alt + 1..9 tabs, Alt+D 3D diagnostics)
   useEffect(() => {
     const tabMap: RightPanelTab[] = [
+      'ceo_dashboard',
       'chat',
-      'tasks',
       'crm',
-      'approvals',
-      'affiliate',
-      'legal',
+      'helpdesk',
+      'engineering',
+      'marketing',
       'finance',
-      'health',
-      'settings',
+      'approvals',
+      'office_editor',
     ];
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        const cur = useCompanyStore.getState().commandPaletteOpen;
+        setCommandPaletteOpen(!cur);
+        return;
+      }
       if (e.altKey && (e.key === 'd' || e.key === 'D')) {
         e.preventDefault();
         toggle3dDiagnostics();
@@ -69,7 +79,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [setActiveTab, toggle3dDiagnostics]);
+  }, [setActiveTab, toggle3dDiagnostics, setCommandPaletteOpen]);
 
   const handleHardResetLocalData = async () => {
     try {
@@ -145,8 +155,16 @@ export default function App() {
     );
   }
 
+  const fontScaleCls =
+    settings.fontSizeScale === 'sm'
+      ? 'text-[12.5px]'
+      : settings.fontSizeScale === 'lg'
+      ? 'text-[15.5px]'
+      : 'text-[14px]';
+
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden bg-slate-100 dark:bg-slate-950">
+    <div className={`h-screen w-screen flex flex-col overflow-hidden bg-slate-100 dark:bg-slate-950 ${fontScaleCls}`}>
+      <OfflineIndicator />
       <TopBar
         onToggleLeftSidebar={() => setShowLeft((v) => !v)}
         onToggleRightPanel={() => setShowRight((v) => !v)}
@@ -258,6 +276,8 @@ export default function App() {
       <SpotCheckModal />
       <MonitorWallModal />
       <DigitalMeetingModal />
+      <CommandPaletteModal onOpenRightPanel={() => setShowRight(true)} />
+      <HelpGuideModal />
     </div>
   );
 }

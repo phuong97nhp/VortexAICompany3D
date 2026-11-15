@@ -207,3 +207,39 @@ export function checkOutgoingClaimsAndBankSafety(params: {
     bankSafetyBlocked,
   };
 }
+
+export function formatVerifiedBankPaymentSnippet(params: {
+  bankAccounts: PaymentBankAccount[];
+  refCode: string;
+}): string {
+  const bank = params.bankAccounts.find((b) => b.isDefault) || params.bankAccounts[0];
+  if (!bank) {
+    return `[Chưa có Tài khoản Ngân hàng công ty do CEO xác thực 2FA — không tự nhập STK. Mã đối soát: ${params.refCode}]`;
+  }
+  return `Tài khoản thanh toán chính thức (chèn tự động từ Kho STK đã xác thực CEO): ${bank.bankName} (${bank.bankCode}) · STK ${bank.accountNumberMasked} · Chủ TK: ${bank.accountHolderName} · Chi nhánh: ${bank.branchName} · Mã đối soát: ${params.refCode}`;
+}
+
+export function buildProductMasterContext(products: ProductMasterRecord[]): string {
+  if (!products.length) return '';
+  return products
+    .filter((p) => p.lifecycle !== 'archived')
+    .slice(0, 6)
+    .map((p) => {
+      const avail = p.features.filter((f) => f.status === 'available').map((f) => f.label).slice(0, 4).join('; ');
+      const inDev = p.features.filter((f) => f.status === 'in_dev').map((f) => `${f.label} (ETA: ${f.eta || 'chưa chốt'})`).join('; ');
+      const na = p.features.filter((f) => f.status === 'not_available').map((f) => f.label).join('; ');
+      const priceStr = p.tiers.map((t) => `${t.name}: ${t.priceLabel} (giảm tối đa ${t.maxDiscountPercent}%)`).join(' | ');
+      return [
+        `* ${p.name} [${p.code} v${p.version}]:`,
+        `  - ĐÃ CÓ: ${avail || '—'}`,
+        inDev ? `  - ĐANG PHÁT TRIỂN (không hứa có sẵn): ${inDev}` : '',
+        na ? `  - KHÔNG CÓ (cấm bịa): ${na}` : '',
+        `  - Giá & trần chiết khấu: ${priceStr}`,
+        `  - CẤM HỨA: ${p.forbiddenClaims.join(', ')}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .join('\n');
+}
+

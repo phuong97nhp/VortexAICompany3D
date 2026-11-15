@@ -30,23 +30,44 @@ import {
   validateCriticOutput,
 } from '../engine/qualityCouncilEngine';
 import { checkZaloPersonalOutboundGuardrails } from '../integrations/zaloPersonal/zaloPersonalGuardrails';
-import { buildSeedOkrObjectives, calculateRevenueFunnel } from '../engine/okrEngine';
+import {
+  buildRevenueBreakdownDashboard,
+  buildSeedOkrObjectives,
+  calculateRevenueFunnel,
+} from '../engine/okrEngine';
 import {
   analyzeWorkloadForHrRecommendations,
   buildSeedRoleSops,
+  buildSopRuntimeContext,
   checkOutputAgainstSop,
+  evaluatePeriodicAgentReviews,
   gradeAgentOnboardingExam,
 } from '../engine/hrSopEngine';
 import {
+  buildProductMasterContext,
   buildSeedBankAccounts,
   buildSeedProductMasters,
   checkOutgoingClaimsAndBankSafety,
+  formatVerifiedBankPaymentSnippet,
 } from '../engine/productBankEngine';
 import {
+  analyzeCompanyBottlenecks,
+  buildCrossDeptIdleBrainstormDossier,
+  buildDeptBlockerMatrix,
+  buildPlaybookRuntimeContext,
+  buildSeedCompetitorWatches,
+  buildSeedExperienceMemories,
+  buildSeedPlaybooks,
   canUsePlaybookFastTrack,
   evaluateGitRepoMetadata,
   evaluateHandoverSlaMetrics,
+  findMatchingPlaybook,
+  generateCompetitorPeriodReport,
+  isHighRiskInstruction,
+  isUnsafeSelfUpgradeProposal,
+  matchExperienceMemories,
   recordPlaybookOutcome,
+  runPlaybookRegressionSuite,
 } from '../engine/collaborationEngine';
 import { AgentProfile, CrossDeptHandoverTicket, PlaybookSkill, TaskItem, ZaloPersonalMessageLog } from '../types';
 
@@ -277,21 +298,37 @@ async function runAddonsLtoWTests() {
     console.log('PASS [O] Zalo Cá nhân có rào chắn: xác nhận CEO, chặn DNC, chặn Cold Marketing, trần <=20/ngày, miễn trần tin trả lời');
   }
 
-  // P: OKR & Revenue Funnel
+  // P: OKR & Revenue Funnel + Goal Tree + Breakdown Dashboard
   {
-    const okr = buildSeedOkrObjectives()[0];
+    const okrs = buildSeedOkrObjectives();
+    assert.ok(okrs.length >= 3, 'Should seed 3-level Goal Tree (year -> quarter -> month)');
+    assert.equal(okrs[1].parentObjectiveId, okrs[0].id);
+    assert.equal(okrs[2].parentObjectiveId, okrs[1].id);
+    const products = buildSeedProductMasters();
     const funnel = calculateRevenueFunnel({
-      objective: okr,
+      objective: okrs[2],
       leads: [],
       commissions: [],
       expenses: [],
+      products,
       elapsedRatio: 0.4,
     });
     assert.equal(funnel.aovIsReal, false);
     assert.ok(funnel.steps.some((s) => s.statusTag === 'giả định, cần kiểm chứng'));
+    assert.ok(funnel.steps.every((s) => Boolean(s.sourceLabel) && Boolean(s.confidence)));
     assert.equal(funnel.behindAlertTriggered, true);
     assert.ok(funnel.steps[0].lowScenario! > funnel.steps[0].highScenario!);
-    console.log('PASS [P] OKR & Doanh thu: gắn nhãn "giả định, cần kiểm chứng", Low/Mid/High & cảnh báo chậm tiến độ');
+
+    const dashboard = buildRevenueBreakdownDashboard({
+      leads: [],
+      commissions: [],
+      products,
+      agents: [makeAgent('ae_1', 'Phạm Gia Bảo')],
+      tasks: [],
+    });
+    assert.ok(dashboard.byProduct.length > 0);
+    assert.ok(dashboard.agentKpiRows.length > 0);
+    console.log('PASS [P] OKR & Doanh thu: Cây mục tiêu 3 tầng, nguồn+độ tin cậy, "giả định, cần kiểm chứng", Low/Mid/High & breakdown');
   }
 
   // Q: SOP + Onboarding Exam + Workload Scale
@@ -348,7 +385,12 @@ async function runAddonsLtoWTests() {
       settings: buildFallbackBaseSettings(),
     });
     assert.ok(recs.some((r) => r.type === 'clone' && r.targetDepartment === 'sales'));
-    console.log('PASS [Q] SOP & HR Động: chặn từ cấm SOP, thi thử việc tình huống, đề xuất nhân bản khi quá tải');
+    const sopPromptCtx = buildSopRuntimeContext(agent, sops);
+    assert.ok(sopPromptCtx.includes('QUY CHUẨN SOP'));
+    const reviews = evaluatePeriodicAgentReviews({ agents: [agent], tasks: overloadedTasks, sops });
+    assert.equal(reviews.length, 1);
+    assert.ok(reviews[0].action.length > 0);
+    console.log('PASS [Q] SOP & HR Động: chặn từ cấm SOP, inject SOP vào prompt, thi thử việc, đánh giá định kỳ & nhân bản khi quá tải');
   }
 
   // R: Product Master & Bank Safety
@@ -371,7 +413,12 @@ async function runAddonsLtoWTests() {
     });
     assert.equal(cleanClaim.passed, true);
     assert.equal(cleanClaim.hasUnknownQuestion, true);
-    console.log('PASS [R] Product Master & Ngân hàng: chặn cam kết cấm, giảm >10%, STK lạ & lừa đảo đổi STK');
+
+    const bankSnippet = formatVerifiedBankPaymentSnippet({ bankAccounts: banks, refCode: '#QT-TEST1' });
+    assert.ok(bankSnippet.includes('#QT-TEST1') && bankSnippet.includes(banks[0].bankCode));
+    const prodCtx = buildProductMasterContext(products);
+    assert.ok(prodCtx.includes('ĐÃ CÓ') && prodCtx.includes('CẤM HỨA'));
+    console.log('PASS [R] Product Master & Ngân hàng: chặn cam kết cấm, biến STK + mã đối soát, ngữ cảnh 3 trạng thái & chống lừa đảo đổi STK');
   }
 
   // S, V, W: Handover SLA, Git Repo Scout, Playbook Fast-Track & Auto Rollback
@@ -414,6 +461,14 @@ async function runAddonsLtoWTests() {
     assert.equal(sla.overdueCount, 1);
     assert.equal(sla.completedCount, 1);
     assert.equal(sla.onTimeRate, 50);
+    assert.equal(sla.bottleneckDept, 'legal');
+    assert.ok(sla.avgWaitMinutes >= 0);
+
+    const blockerMatrix = buildDeptBlockerMatrix(tickets);
+    assert.equal(blockerMatrix.length, 1);
+    assert.equal(blockerMatrix[0].waitingDept, 'sales');
+    assert.equal(blockerMatrix[0].blockingDept, 'legal');
+    assert.equal(blockerMatrix[0].isOverdue, true);
 
     const repoReport = evaluateGitRepoMetadata({
       query: 'zalo automation',
@@ -445,11 +500,82 @@ async function runAddonsLtoWTests() {
     assert.equal(canUsePlaybookFastTrack({ playbook: pb, isHighRiskTask: true }).allowed, false);
     assert.equal(canUsePlaybookFastTrack({ playbook: pb, isHighRiskTask: false }).allowed, true);
 
-    const regressed = recordPlaybookOutcome(pb, 20);
+    const regressed = recordPlaybookOutcome(pb, 20, { durationMs: 4200, tokensUsed: 2000, reworked: true });
     assert.equal(regressed.dirtyNeedsReview, true);
     assert.equal(regressed.allowFastTrack, false);
     assert.equal(regressed.rolledBackFromVersion, 1);
-    console.log('PASS [S/V/W] Bàn giao SLA, Git Repo Scout & Playbook Fast-Track + Auto Rollback');
+    assert.equal(regressed.reworkCount, 1);
+
+    // T: Cross-dept Idle Brainstorm & Competitor Watch Report
+    const watches = buildSeedCompetitorWatches();
+    const compReport = generateCompetitorPeriodReport(watches);
+    assert.equal(compReport.matrixRows.length, 2);
+    assert.ok(compReport.matrixRows[0].weaknesses.length > 5);
+
+    const idleIdea = buildCrossDeptIdleBrainstormDossier({
+      leads: [],
+      commissions: [],
+      watches,
+      tasks: [],
+      existingTitles: [],
+      proposedBy: 'cmo',
+      department: 'marketing',
+    });
+    assert.equal(idleIdea.ceoApproved, false);
+    assert.equal(idleIdea.legalSignoff, 'pending');
+    assert.ok(idleIdea.rolloutSteps && idleIdea.rolloutSteps.length >= 3);
+    assert.ok(idleIdea.kpis && idleIdea.kpis.length >= 2);
+    assert.ok(idleIdea.tamSamAssumptions.includes('GIẢ ĐỊNH'));
+
+    // U: Bottleneck Analyzer + Unsafe Self-Upgrade Guard
+    assert.equal(isUnsafeSelfUpgradeProposal('AI tự sửa mã nguồn gốc và bypass CEO').unsafe, true);
+    assert.equal(isUnsafeSelfUpgradeProposal('Chuẩn hóa checklist bàn giao').unsafe, false);
+    const bottlenecks = analyzeCompanyBottlenecks({
+      tasks: [],
+      handoverTickets: tickets,
+      upgradeProposals: [],
+      healthLogs: [],
+    });
+    assert.ok(bottlenecks.length >= 1);
+    assert.ok(bottlenecks[0].testPlan && bottlenecks[0].risksAndRollback);
+
+    // V: Full Git Repo Report fields
+    const safeRepo = evaluateGitRepoMetadata({
+      query: 'ocr invoice',
+      repoFullName: 'clean/ocr-lib',
+      repoUrl: 'https://github.com/clean/ocr-lib',
+      commitSha: 'main@abc1234',
+      purpose: 'Trích xuất hóa đơn tiếng Việt',
+      stars: 250,
+      lastUpdated: '2026-11-01',
+      license: 'MIT',
+    });
+    assert.equal(safeRepo.legalLicenseOk, true);
+    assert.equal(safeRepo.verificationLabel, 'CHƯA KIỂM CHỨNG');
+    assert.equal(safeRepo.commitSha, 'main@abc1234');
+    assert.equal(safeRepo.recommendedAction, 'use');
+
+    // W: Semantic Playbook & Experience Matching + High-risk Fallback + Regression Suite
+    const seedPbs = buildSeedPlaybooks();
+    const seedExps = buildSeedExperienceMemories();
+    const matchedPb = findMatchingPlaybook('tìm lead trung tâm ngoại ngữ ở Hà Nội', 'sales', seedPbs);
+    assert.equal(matchedPb?.id, 'pb_lead_educenter');
+    const matchedMem = matchExperienceMemories('giảm giá chiết khấu hợp đồng', 'sales', seedExps);
+    assert.ok(matchedMem.length >= 1);
+
+    assert.equal(isHighRiskInstruction('Chuyển khoản thanh toán hợp đồng thật qua STK'), true);
+    assert.equal(isHighRiskInstruction('Tìm lead trung tâm ngoại ngữ tại TP.HCM'), false);
+
+    const safeCtx = buildPlaybookRuntimeContext({ playbook: matchedPb, memories: matchedMem, isHighRisk: false });
+    assert.ok(safeCtx.includes('TĂNG TỐC CÓ KIỂM SOÁT') && safeCtx.includes('Verifier'));
+    const riskCtx = buildPlaybookRuntimeContext({ playbook: matchedPb, memories: matchedMem, isHighRisk: true });
+    assert.ok(riskCtx.includes('KIỂM CHỨNG ĐẦY ĐỦ'));
+
+    const regSuite = runPlaybookRegressionSuite(seedPbs);
+    assert.equal(regSuite.allPassed, true);
+    assert.equal(regSuite.passedCount, 4);
+
+    console.log('PASS [S/T/U/V/W] Idle Brainstorm, Đối thủ Matrix, #NC An toàn, Git Repo & Playbook Regression 4/4');
   }
 
   console.log('=== TẤT CẢ 8/8 BỘ TEST BỔ SUNG L -> W ĐỀU ĐẠT 100% ===');

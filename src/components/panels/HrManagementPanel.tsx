@@ -47,6 +47,7 @@ import {
   collectAgentHandoverItems,
   estimateMonthlyTokenCost,
 } from '../../engine/hrEngine';
+import { checkOutputAgainstSop, evaluatePeriodicAgentReviews } from '../../engine/hrSopEngine';
 import { ALL_PERMISSIONS, ROLE_DEFAULT_PERMISSIONS, ROLE_LABELS } from '../../engine/rbac';
 import {
   buildVietnameseSystemPrompt,
@@ -77,7 +78,7 @@ import {
 } from '../../types';
 import { ChibiModel } from '../office3d/ChibiModel';
 
-type HrSubTab = 'roster' | 'depts' | 'rbac' | 'sop' | 'scaling' | 'audit';
+type HrSubTab = 'roster' | 'depts' | 'rbac' | 'sop' | 'scaling' | 'ops_admin' | 'audit';
 
 const ALL_TOOLS: Array<{ name: ToolName; label: string }> = [
   { name: 'write_document', label: 'Viết tài liệu' },
@@ -143,6 +144,14 @@ export function HrManagementPanel() {
   const settings = useCompanyStore((s) => s.settings);
   const agentAppearances = useCompanyStore((s) => s.agentAppearances);
   const externalAccounts = useCompanyStore((s) => s.externalAccounts);
+  const leaveRequests = useCompanyStore((s) => s.leaveRequests);
+  const announcements = useCompanyStore((s) => s.announcements);
+  const roomBookings = useCompanyStore((s) => s.roomBookings);
+  const approvalMatrix = useCompanyStore((s) => s.approvalMatrix);
+  const vendorSubscriptions = useCompanyStore((s) => s.vendorSubscriptions);
+  const digitalAssets = useCompanyStore((s) => s.digitalAssets);
+  const resolveLeaveRequest = useCompanyStore((s) => s.resolveLeaveRequest);
+  const putAnnouncement = useCompanyStore((s) => s.putAnnouncement);
 
   const selectAgent = useCompanyStore((s) => s.selectAgent);
   const hireAgent = useCompanyStore((s) => s.hireAgent);
@@ -623,6 +632,7 @@ export function HrManagementPanel() {
               { id: 'rbac', label: 'Phân quyền & Token' },
               { id: 'sop', label: `SOP & Thi thử việc (${roleSops.length})` },
               { id: 'scaling', label: `Co giãn HR (${hrRecommendations.filter((r) => r.status === 'pending_ceo').length})` },
+              { id: 'ops_admin', label: 'Vận hành & Tài sản số' },
               { id: 'audit', label: `Lịch sử HR (${hrAudits.length})` },
             ] as const
           ).map((t) => (
@@ -1416,9 +1426,11 @@ export function HrManagementPanel() {
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-bold">
-              <BookOpen className="w-4 h-4 text-sky-500" />
-              <span>Thư viện Quy chuẩn SOP có phiên bản ({roleSops.length} bộ quy trình)</span>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <BookOpen className="w-4 h-4 text-sky-500" />
+                <span>Thư viện Quy chuẩn SOP có phiên bản ({roleSops.length} bộ quy trình)</span>
+              </div>
             </div>
 
             {editingSop && (
@@ -1440,6 +1452,13 @@ export function HrManagementPanel() {
                 />
                 <input
                   type="text"
+                  value={editingSop.toneGuide}
+                  onChange={(e) => setEditingSop({ ...editingSop, toneGuide: e.target.value })}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  placeholder="Giọng điệu giao tiếp chuẩn..."
+                />
+                <input
+                  type="text"
                   value={editingSop.bannedPhrases.join(', ')}
                   onChange={(e) =>
                     setEditingSop({
@@ -1453,6 +1472,13 @@ export function HrManagementPanel() {
                   className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
                   placeholder="Cụm từ cấm (cách nhau dấu phẩy)..."
                 />
+                <input
+                  type="text"
+                  value={editingSop.diffNote || ''}
+                  onChange={(e) => setEditingSop({ ...editingSop, diffNote: e.target.value })}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  placeholder="Ghi chú thay đổi phiên bản (diff note)..."
+                />
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
@@ -1460,6 +1486,7 @@ export function HrManagementPanel() {
                       await upsertRoleSop({
                         ...editingSop,
                         version: editingSop.version + 1,
+                        ceoApproved: false,
                         updatedAt: Date.now(),
                       });
                       setNotice(`Đã nâng cấp SOP ${editingSop.roleTitle} lên v${editingSop.version + 1}.`);
@@ -1478,26 +1505,95 @@ export function HrManagementPanel() {
                 key={sop.id}
                 className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 space-y-1.5 text-xs"
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="font-semibold">
                     {sop.roleTitle}{' '}
                     <span className="font-mono-num text-[11px] text-sky-500">v{sop.version}</span>{' '}
-                    <span className="text-[11px] text-slate-400">· Hiệu lực: {sop.effectiveFrom}</span>
+                    <span className="text-[11px] text-slate-400">· Hiệu lực: {sop.effectiveFrom}</span>{' '}
+                    <span className={sop.ceoApproved ? 'text-[10.5px] text-emerald-500' : 'text-[10.5px] text-amber-500'}>
+                      · {sop.ceoApproved ? 'CEO Đã duyệt' : 'Chờ CEO duyệt'}
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setEditingSop(sop)}
-                    className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 hover:border-sky-500 text-[11px] cursor-pointer"
-                  >
-                    Sửa SOP
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {!sop.ceoApproved && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await useCompanyStore.getState().approveRoleSop(sop.id);
+                          setNotice(`CEO đã phê duyệt SOP ${sop.roleTitle} v${sop.version}.`);
+                        }}
+                        className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[11px] font-semibold cursor-pointer"
+                      >
+                        Duyệt SOP
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setEditingSop(sop)}
+                      className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 hover:border-sky-500 text-[11px] cursor-pointer"
+                    >
+                      Sửa SOP
+                    </button>
+                  </div>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400">{sop.mission}</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[10.5px] pt-1 border-t border-slate-100 dark:border-slate-800">
+                  <div>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Các bước chuẩn:</span>{' '}
+                    {sop.steps.join(' → ')}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Checklist bàn giao:</span>{' '}
+                    {sop.handoverChecklist.join('; ')}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Giới hạn:</span>{' '}
+                    {sop.limits.join(' | ')}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-600 dark:text-slate-300">Giọng điệu & Leo thang:</span>{' '}
+                    {sop.toneGuide} ({sop.escalationRules[0] || 'Theo quy trình'})
+                  </div>
+                </div>
                 <div className="text-[10.5px] text-rose-500">
                   Cấm nói: {sop.bannedPhrases.join(' · ') || 'Không có'}
                 </div>
+                {sop.history && sop.history.length > 0 && (
+                  <div className="text-[10px] text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+                    Lịch sử phiên bản: {sop.history.map((h) => `v${h.version} (${h.diffNote})`).join(' | ')}
+                  </div>
+                )}
               </div>
             ))}
+
+            {/* Quick Runtime SOP Rule Checker */}
+            {roleSops[0] && (
+              <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 space-y-1.5 text-xs">
+                <div className="font-semibold">Kiểm thử Đầu ra theo SOP (Rule Checker)</div>
+                <div className="flex gap-2">
+                  <input
+                    id="sop_rule_tester_input"
+                    defaultValue="Bên em cam kết 100% đạt KPI trong 7 ngày."
+                    className="flex-1 px-2 py-1 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const el = document.getElementById('sop_rule_tester_input') as HTMLInputElement | null;
+                      const res = checkOutputAgainstSop(el?.value || '', roleSops[0]);
+                      setNotice(
+                        res.compliant
+                          ? `ĐẠT SOP (${roleSops[0].roleTitle} v${roleSops[0].version})`
+                          : `VI PHẠM SOP: ${res.violations.join('; ')}`
+                      );
+                    }}
+                    className="px-2.5 py-1 rounded bg-sky-600 text-white text-[11px] font-semibold cursor-pointer"
+                  >
+                    Kiểm tra SOP
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1650,6 +1746,34 @@ export function HrManagementPanel() {
               ))
             )}
           </div>
+
+          {/* Periodic Agent Review Table (BỔ SUNG Q) */}
+          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2 text-xs">
+            <div className="font-bold">Đánh giá Định kỳ Nhân sự (Cảnh cáo / Huấn luyện lại / Đề xuất thay thế)</div>
+            <div className="space-y-1">
+              {evaluatePeriodicAgentReviews({ agents, tasks, sops: roleSops }).map((rv) => (
+                <div
+                  key={rv.agentId}
+                  className="flex items-center justify-between gap-2 p-2 rounded bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-[11px]"
+                >
+                  <div className="min-w-0">
+                    <span className="font-semibold">{rv.name}</span>{' '}
+                    <span className="text-slate-400">({rv.department})</span>
+                    <div className="text-[10.5px] text-slate-500">
+                      Đúng hạn {rv.onTimeRate}% · Trễ {rv.delayedCount} · {rv.doneCount} việc xong
+                    </div>
+                  </div>
+                  <span
+                    className={`font-semibold shrink-0 ${
+                      rv.score >= 80 ? 'text-emerald-500' : rv.score >= 60 ? 'text-amber-500' : 'text-rose-500'
+                    }`}
+                  >
+                    {rv.score}/100 · {rv.action}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1679,6 +1803,100 @@ export function HrManagementPanel() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* SUBTAB Z.7: VẬN HÀNH HÀNH CHÍNH, PHÊ DUYỆT, NHÀ CUNG CẤP SAAS & TÀI SẢN SỐ */}
+      {subTab === 'ops_admin' && (
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="font-bold">Bảng Thông báo Nội bộ ({announcements.length})</div>
+              <button
+                type="button"
+                onClick={() =>
+                  putAnnouncement({
+                    id: `ann_${Date.now().toString(36)}`,
+                    title: 'Thông báo lịch kiểm tra bất chợt & đối soát HubCW',
+                    content: 'Đề nghị các phòng rà soát backlog trước 17:00 hằng ngày.',
+                    authorName: 'CEO (Chủ tịch)',
+                    pinned: false,
+                    department: 'all',
+                    createdAt: Date.now(),
+                  })
+                }
+                className="px-2 py-1 rounded bg-sky-600 text-white text-[11px] font-semibold cursor-pointer"
+              >
+                + Đăng thông báo
+              </button>
+            </div>
+            {announcements.map((a) => (
+              <div key={a.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="font-semibold">{a.title}</div>
+                <div className="text-[11px] text-slate-400">{a.content} — {a.authorName}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+            <div className="font-bold">Yêu cầu Nghỉ phép / Bảo trì & Đặt phòng họp</div>
+            {leaveRequests.map((lv) => (
+              <div key={lv.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{lv.agentName} ({lv.kind}) · {lv.startDate}</div>
+                  <div className="text-[11px] text-slate-400">{lv.reason} · Trạng thái: {lv.status}</div>
+                </div>
+                {lv.status === 'pending' && (
+                  <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => resolveLeaveRequest(lv.id, 'approved')}
+                      className="px-2 py-1 rounded bg-emerald-600 text-white text-[10.5px] cursor-pointer"
+                    >
+                      Duyệt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resolveLeaveRequest(lv.id, 'rejected')}
+                      className="px-2 py-1 rounded bg-rose-600/20 text-rose-500 text-[10.5px] cursor-pointer"
+                    >
+                      Từ chối
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {roomBookings.map((rb) => (
+              <div key={rb.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="font-semibold">{rb.roomName}: {rb.title}</div>
+                <div className="text-[11px] text-slate-400">{rb.startTime} · {rb.durationMinutes} phút</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+            <div className="font-bold">Ma trận Phê duyệt & Nhà cung cấp SaaS / Tài sản số</div>
+            {approvalMatrix.map((am) => (
+              <div key={am.id} className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 text-[11px]">
+                <span><strong>{am.label}</strong> ({am.approverRole})</span>
+                <span className="font-mono-num text-sky-500">SLA {am.slaHours}h · Ngưỡng CEO &gt; {formatVnd(am.requiresCeoAboveVnd)}</span>
+              </div>
+            ))}
+            {vendorSubscriptions.map((vs) => (
+              <div key={vs.id} className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 text-[11px]">
+                <span>[SaaS] {vs.vendorName} ({vs.category})</span>
+                <span className="font-mono-num text-amber-500">{formatVnd(vs.monthlyCostVnd)}/th · Gia hạn {vs.nextRenewalDate}</span>
+              </div>
+            ))}
+            {digitalAssets.map((da) => (
+              <div key={da.id} className="flex justify-between py-1 text-[11px]">
+                <span>[{da.kind}] <strong>{da.identifier}</strong> ({da.provider})</span>
+                <span className={da.status === 'healthy' ? 'text-emerald-500 font-mono-num' : 'text-rose-500 font-bold font-mono-num'}>
+                  Hết hạn: {da.expiresAt} ({da.status})
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

@@ -59,6 +59,7 @@ export function ChatPanel() {
   const runtimes = useCompanyStore((s) => s.runtimes);
   const tasks = useCompanyStore((s) => s.tasks);
   const moveTaskStatus = useCompanyStore((s) => s.moveTaskStatus);
+  const recordTaskRevisionFeedback = useCompanyStore((s) => s.recordTaskRevisionFeedback);
   const approvals = useCompanyStore((s) => s.approvals);
   const resolveApproval = useCompanyStore((s) => s.resolveApproval);
   const askCeoQuestions = useCompanyStore((s) => s.askCeoQuestions);
@@ -563,6 +564,7 @@ export function ChatPanel() {
                                 if (!fb) return;
                                 setRevisionOpenId(null);
                                 setRevisionText('');
+                                recordTaskRevisionFeedback(reportTaskObj.id, fb);
                                 runSingleAgentTurn(
                                   msg.senderId,
                                   `Chỉnh sửa lại ${reportTaskObj.taskCode} (${reportTaskObj.title}): ${fb}`,

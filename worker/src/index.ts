@@ -1,5 +1,10 @@
 import 'dotenv/config';
+import { execFile } from 'node:child_process';
+import { promises as fsPromises } from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { PrismaClient } from '@prisma/client';
@@ -248,6 +253,107 @@ app.post('/repos/sandbox-test', async (req, res) => {
   const { repoUrl, fullName } = req.body as { repoUrl: string; fullName: string };
   const out = await runRepoInDockerSandbox(String(repoUrl || ''), String(fullName || ''));
   res.json(out);
+});
+
+const execFileAsync = promisify(execFile);
+
+// Local Vietnamese Edge-TTS (pip install edge-tts)
+app.post('/voice/edge-tts', async (req, res) => {
+  const text = String(req.body?.text || '').trim().slice(0, 600);
+  const voiceName = String(req.body?.voiceName || 'vi-VN-HoaiMyNeural');
+  const rate = Number(req.body?.rate ?? 1);
+  const pitch = Number(req.body?.pitch ?? 1);
+  if (!text) return res.status(400).json({ ok: false, error: 'Thiếu nội dung đọc' });
+
+  const ratePct = Math.round((Math.max(0.7, Math.min(1.4, rate)) - 1) * 100);
+  const pitchHz = Math.round((Math.max(0.8, Math.min(1.2, pitch)) - 1) * 50);
+  const rateFlag = `${ratePct >= 0 ? '+' : ''}${ratePct}%`;
+  const pitchFlag = `${pitchHz >= 0 ? '+' : ''}${pitchHz}Hz`;
+  const outFile = path.join(os.tmpdir(), `aicw_edge_${Date.now()}_${Math.random().toString(36).slice(2, 7)}.mp3`);
+
+  try {
+    await execFileAsync(
+      process.env.EDGE_TTS_BIN || 'edge-tts',
+      ['--voice', voiceName, `--rate=${rateFlag}`, `--pitch=${pitchFlag}`, '--text', text, '--write-media', outFile],
+      { timeout: 15000 }
+    );
+    const buf = await fsPromises.readFile(outFile);
+    await fsPromises.unlink(outFile).catch(() => {});
+    return res.json({
+      ok: true,
+      audioBase64: buf.toString('base64'),
+      mimeType: 'audio/mpeg',
+    });
+  } catch (err) {
+    await fsPromises.unlink(outFile).catch(() => {});
+    return res.json({
+      ok: false,
+      error: `Edge-TTS local chưa sẵn sàng (${err instanceof Error ? err.message : 'not installed'}). Cài trên máy: pip install edge-tts.`,
+    });
+  }
+});
+
+// Local Piper Offline Vietnamese TTS
+app.post('/voice/piper-tts', async (req, res) => {
+  const text = String(req.body?.text || '').trim().slice(0, 600);
+  if (!text) return res.status(400).json({ ok: false, error: 'Thiếu nội dung đọc' });
+  const piperBin = process.env.PIPER_BIN_PATH || 'piper';
+  const modelPath = process.env.PIPER_VI_MODEL_PATH || '';
+  if (!modelPath) {
+    return res.json({ ok: false, error: 'Chưa cấu hình PIPER_VI_MODEL_PATH (.onnx tiếng Việt) trên máy Worker.' });
+  }
+  const outFile = path.join(os.tmpdir(), `aicw_piper_${Date.now()}.wav`);
+  try {
+    const child = execFile(piperBin, ['--model', modelPath, '--output_file', outFile], { timeout: 15000 });
+    await new Promise<void>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`Piper exit ${code}`))));
+      child.stdin?.write(text + '\n');
+      child.stdin?.end();
+    });
+    const buf = await fsPromises.readFile(outFile);
+    await fsPromises.unlink(outFile).catch(() => {});
+    return res.json({ ok: true, audioBase64: buf.toString('base64'), mimeType: 'audio/wav' });
+  } catch (err) {
+    await fsPromises.unlink(outFile).catch(() => {});
+    return res.json({
+      ok: false,
+      error: `Piper offline chưa sẵn sàng (${err instanceof Error ? err.message : 'piper missing'}).`,
+    });
+  }
+});
+
+// Local Whisper Vietnamese STT
+app.post('/voice/whisper-stt', async (req, res) => {
+  const audioBase64 = String(req.body?.audioBase64 || '').trim();
+  const mimeType = String(req.body?.mimeType || 'audio/webm');
+  if (!audioBase64) return res.status(400).json({ ok: false, error: 'Thiếu dữ liệu âm thanh' });
+  const ext = mimeType.includes('wav') ? 'wav' : mimeType.includes('mp4') ? 'm4a' : 'webm';
+  const tmpDir = os.tmpdir();
+  const baseName = `aicw_stt_${Date.now()}`;
+  const inFile = path.join(tmpDir, `${baseName}.${ext}`);
+  const txtFile = path.join(tmpDir, `${baseName}.txt`);
+
+  try {
+    await fsPromises.writeFile(inFile, Buffer.from(audioBase64, 'base64'));
+    const whisperBin = process.env.WHISPER_BIN_PATH || 'whisper';
+    await execFileAsync(
+      whisperBin,
+      [inFile, '--language', 'vi', '--model', process.env.WHISPER_MODEL || 'base', '--output_format', 'txt', '--output_dir', tmpDir],
+      { timeout: 30000 }
+    );
+    const transcript = (await fsPromises.readFile(txtFile, 'utf8')).trim();
+    await fsPromises.unlink(inFile).catch(() => {});
+    await fsPromises.unlink(txtFile).catch(() => {});
+    return res.json({ ok: true, text: transcript, confidence: 0.88, provider: 'worker_whisper' });
+  } catch (err) {
+    await fsPromises.unlink(inFile).catch(() => {});
+    await fsPromises.unlink(txtFile).catch(() => {});
+    return res.json({
+      ok: false,
+      error: `Whisper local chưa cài đặt (${err instanceof Error ? err.message : 'whisper missing'}).`,
+    });
+  }
 });
 
 // Plug-and-Play Android Device Farm (BỔ SUNG X+)

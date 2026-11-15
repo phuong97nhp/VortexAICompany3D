@@ -13,6 +13,7 @@ import { DEFAULT_BRAND_PALETTE } from '../brand/logoBrand';
 import { buildRoutingPreset } from '../engine/llm/presets';
 import { buildSeedAgents, buildSeedDepartments } from '../engine/liveRegistry';
 import { CURRENT_SCHEMA_VERSION } from '../engine/runtime247';
+import { DEFAULT_VI_ACRONYM_DICT } from '../engine/vietnameseSpeechNormalizer';
 
 export function createDefaultOnboardingState(): OnboardingState {
   return {
@@ -203,7 +204,25 @@ export function buildFallbackBaseSettings(partial?: Partial<CompanySettings>): C
       alertOnAbnormal: true,
     },
     voice: {
-      provider: 'web_speech',
+      provider: 'azure_tts',
+      priorityOrder: [
+        'azure_tts',
+        'edge_tts',
+        'google_tts',
+        'gemini_tts',
+        'fpt_tts',
+        'worker_piper',
+        'web_speech',
+        'text_only',
+      ],
+      rate: 1.0,
+      pitch: 1.0,
+      volume: 1.0,
+      azureRegion: 'southeastasia',
+      sttProvider: 'web_speech',
+      sttAutoSendHighConfidence: false,
+      ceoAcronymMode: 'xi_i_au',
+      acronymDict: { ...DEFAULT_VI_ACRONYM_DICT },
       autoReadResponses: false,
       handsFreeListening: false,
       quickMeetingDefaultMinutes: 5,
@@ -227,6 +246,18 @@ export function buildFallbackBaseSettings(partial?: Partial<CompanySettings>): C
       autoScaleMode: 'l1_propose',
       requireExamPassForLive: true,
     },
+    locale: 'vi',
+    currencyUnit: 'VND',
+    workingDays: [1, 2, 3, 4, 5, 6],
+    holidays: [
+      { date: '2026-04-30', name: 'Ngày Giải phóng miền Nam 30/4' },
+      { date: '2026-05-01', name: 'Quốc tế Lao động 1/5' },
+      { date: '2026-09-02', name: 'Quốc khánh 2/9' },
+    ],
+    fontSizeScale: 'md',
+    ambientAudioEnabled: false,
+    activeOfficeLayoutId: 'preset_standard_3f',
+    pwaPushEnabled: false,
     ...(partial || {}),
   };
 }
@@ -296,13 +327,32 @@ export function migrateSettingsRecord(raw: unknown): {
     legal: { ...defaults.legal, ...(stored.legal || {}) },
     onboarding: { ...defaults.onboarding, ...(stored.onboarding || {}) },
     spotCheck: { ...defaults.spotCheck!, ...(stored.spotCheck || {}) },
-    voice: { ...defaults.voice!, ...(stored.voice || {}) },
+    voice: {
+      ...defaults.voice!,
+      ...(stored.voice || {}),
+      acronymDict: {
+        ...(defaults.voice!.acronymDict || {}),
+        ...(stored.voice?.acronymDict || {}),
+      },
+      priorityOrder:
+        Array.isArray(stored.voice?.priorityOrder) && stored.voice!.priorityOrder.length > 0
+          ? stored.voice!.priorityOrder
+          : defaults.voice!.priorityOrder,
+    },
     zaloPersonal: {
       ...defaults.zaloPersonal!,
       ...(stored.zaloPersonal || {}),
       dailyColdOutboundCap: Math.min(20, Math.max(1, Number(stored.zaloPersonal?.dailyColdOutboundCap ?? 20))),
     },
     hrAutonomy: { ...defaults.hrAutonomy!, ...(stored.hrAutonomy || {}) },
+    locale: stored.locale === 'en' ? 'en' : 'vi',
+    currencyUnit: stored.currencyUnit === 'USD' ? 'USD' : 'VND',
+    workingDays: Array.isArray(stored.workingDays) && stored.workingDays.length > 0 ? stored.workingDays : defaults.workingDays,
+    holidays: Array.isArray(stored.holidays) ? stored.holidays : defaults.holidays,
+    fontSizeScale: stored.fontSizeScale === 'sm' || stored.fontSizeScale === 'lg' ? stored.fontSizeScale : 'md',
+    ambientAudioEnabled: Boolean(stored.ambientAudioEnabled),
+    activeOfficeLayoutId: stored.activeOfficeLayoutId || defaults.activeOfficeLayoutId,
+    pwaPushEnabled: Boolean(stored.pwaPushEnabled),
     roleRoutes:
       Array.isArray(stored.roleRoutes) && stored.roleRoutes.length > 0
         ? stored.roleRoutes

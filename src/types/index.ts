@@ -141,6 +141,20 @@ export type ToolName =
   | 'propose_upgrade'
   | 'scout_git_repo'
   | 'run_device_action'
+  | 'device_list'
+  | 'device_screenshot'
+  | 'device_read_screen'
+  | 'device_open_app'
+  | 'device_tap'
+  | 'device_swipe'
+  | 'device_type'
+  | 'device_key'
+  | 'device_wait_for'
+  | 'device_find_element'
+  | 'device_install_apk'
+  | 'device_push_file'
+  | 'device_pull_file'
+  | 'device_run_playbook'
   | 'send_zalo_personal';
 
 export type EmploymentStatus = 'active' | 'suspended' | 'archived';
@@ -841,6 +855,15 @@ export interface CompanySettings {
   zaloPersonal?: ZaloPersonalConfig;
   // BỔ SUNG Q: HR Dynamic Autonomy & Caps
   hrAutonomy?: HrAutonomySettings;
+  // BỔ SUNG Y & Z: Localization, Org Schedule, Ambient Audio, Office Layout, Accessibility
+  locale?: 'vi' | 'en';
+  currencyUnit?: 'VND' | 'USD';
+  workingDays?: number[]; // 1=Mon..7=Sun
+  holidays?: Array<{ date: string; name: string }>;
+  fontSizeScale?: 'sm' | 'md' | 'lg';
+  ambientAudioEnabled?: boolean;
+  activeOfficeLayoutId?: string;
+  pwaPushEnabled?: boolean;
 }
 
 export type SocialPlatformId =
@@ -1739,7 +1762,15 @@ export interface SpotCheckRecord {
 // BỔ SUNG M: GIỌNG NÓI + HỌP TRỰC TIẾP
 // =====================================================================
 
-export type VoiceProviderId = 'web_speech' | 'gemini_tts' | 'worker_piper' | 'text_only';
+export type VoiceProviderId =
+  | 'azure_tts'
+  | 'edge_tts'
+  | 'google_tts'
+  | 'gemini_tts'
+  | 'fpt_tts'
+  | 'worker_piper'
+  | 'web_speech'
+  | 'text_only';
 
 export type VoiceTimbreStyle = 'warm' | 'crisp' | 'energetic' | 'calm' | 'authoritative';
 
@@ -1750,12 +1781,23 @@ export interface AgentVoiceProfile {
   gender: 'female' | 'male';
   pitch: number; // 0.75..1.35
   rate: number; // 0.8..1.3
+  volume?: number; // 0.2..1.0
   timbre: VoiceTimbreStyle;
   geminiVoiceName?: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
+  azureVoiceName?: 'vi-VN-HoaiMyNeural' | 'vi-VN-NamMinhNeural';
 }
 
 export interface VoiceSettings {
   provider: VoiceProviderId;
+  priorityOrder?: VoiceProviderId[];
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  azureRegion?: string;
+  sttProvider?: 'web_speech' | 'gemini_stt' | 'worker_whisper';
+  sttAutoSendHighConfidence?: boolean;
+  ceoAcronymMode?: 'xi_i_au' | 'chu_tich';
+  acronymDict?: Record<string, string>;
   autoReadResponses: boolean;
   handsFreeListening: boolean;
   quickMeetingDefaultMinutes: number;
@@ -1924,6 +1966,7 @@ export interface KeyResult {
 
 export interface OkrObjective {
   id: string;
+  parentObjectiveId?: string;
   periodType: 'year' | 'quarter' | 'month' | 'week';
   periodLabel: string;
   title: string;
@@ -1934,6 +1977,7 @@ export interface OkrObjective {
   deadline: string;
   assumptions: string[];
   keyResults: KeyResult[];
+  linkedTaskIds?: string[];
   status: 'on_track' | 'at_risk' | 'behind' | 'completed';
   createdAt: number;
   updatedAt: number;
@@ -1945,6 +1989,8 @@ export interface RevenueFunnelLine {
   conversionRatePercent: number | null;
   isRealMetric: boolean;
   statusTag: 'Thực tế' | 'Dự báo' | 'Mục tiêu' | 'giả định, cần kiểm chứng';
+  sourceLabel?: string;
+  confidence?: 'high' | 'medium' | 'low';
   lowScenario?: number;
   midScenario?: number;
   highScenario?: number;
@@ -1996,6 +2042,14 @@ export interface RoleSopDocument {
   ceoApproved: boolean;
   ceoApprovedAt?: number;
   diffNote?: string;
+  history?: Array<{
+    version: number;
+    effectiveFrom: string;
+    diffNote: string;
+    missionSnapshot: string;
+    bannedPhrasesSnapshot: string[];
+    updatedAt: number;
+  }>;
   updatedAt: number;
 }
 
@@ -2158,6 +2212,9 @@ export interface MoneyIdeaCard {
   icpAndChannels: string;
   competitorDiff: string;
   revenueModel: string;
+  rolloutSteps?: string[];
+  resourcedAgents?: string[];
+  kpis?: string[];
   scenarios: {
     lowVndMonth: number;
     midVndMonth: number;
@@ -2166,8 +2223,10 @@ export interface MoneyIdeaCard {
   estimatedCostVnd: number;
   stopLossRule: string;
   microExperimentPlan: string;
+  realTestResult?: string;
   councilScore: number;
   legalSignoff: 'pending' | 'approved' | 'rejected';
+  legalReviewedBy?: string;
   ceoApproved: boolean;
   createdAt: number;
   updatedAt: number;
@@ -2180,6 +2239,9 @@ export interface CompetitorWatchTarget {
   niche: string;
   lastPriceNote: string;
   lastFeaturesNote: string;
+  strengths?: string;
+  weaknesses?: string;
+  majorAlertNote?: string;
   lastCheckedAt: number;
   recentChanges: Array<{ date: string; summary: string; severity: 'info' | 'major' }>;
 }
@@ -2198,10 +2260,13 @@ export interface UpgradeProposal {
   expectedRoi: string;
   estimatedCostVnd: number;
   risksAndRollback: string;
+  testPlan?: string;
+  patchOrPrNote?: string;
   rolloutStage: 'proposal' | 'sandbox_test' | 'pilot' | 'deployed_all' | 'rolled_back';
   beforeMetric: string;
   afterMetric?: string;
   ceoApproved: boolean;
+  approvedBy?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -2212,6 +2277,8 @@ export interface UpgradeChangelogEntry {
   proposalId: string;
   title: string;
   summary: string;
+  proposedBy?: string;
+  approvedBy?: string;
   beforeMetric: string;
   afterMetric: string;
   timestamp: number;
@@ -2226,14 +2293,20 @@ export interface GitRepoEvaluationReport {
   requestedQuery: string;
   repoFullName: string;
   repoUrl: string;
+  commitSha?: string;
+  purpose?: string;
   stars: number;
   lastUpdated: string;
   license: string;
   legalLicenseOk: boolean;
+  legalReviewed?: boolean;
   securityFlags: string[];
   sandboxStatus: 'static_only_unverified' | 'sandbox_passed' | 'sandbox_failed' | 'blocked_danger';
   verificationLabel: 'ĐÃ CHẠY SANDBOX' | 'CHƯA KIỂM CHỨNG';
   stdoutExcerpt: string;
+  performanceNote?: string;
+  integrationEffort?: string;
+  recommendedAction?: 'use' | 'do_not_use' | 'watch';
   recommendation: string;
   createdAt: number;
 }
@@ -2249,10 +2322,16 @@ export interface PlaybookSkill {
   triggerIntent: string;
   version: number;
   steps: string[];
+  promptTemplate?: string;
+  checklist?: string[];
+  exampleOutput?: string;
   successCount: number;
   failureCount: number;
+  reworkCount?: number;
   avgQualityScore: number; // 0..100
   baselineQualityScore: number;
+  avgDurationMs?: number;
+  avgTokens?: number;
   allowFastTrack: boolean;
   dirtyNeedsReview: boolean;
   dirtyReason?: string;
@@ -2278,15 +2357,31 @@ export type DeviceDriverType = 'adb_usb' | 'adb_wifi' | 'emulator' | 'mock';
 export type DeviceConnectionStatus = 'unauthorized' | 'device' | 'offline' | 'controlled' | 'error';
 export type DeviceControlMode = 'view_only' | 'approved_actions' | 'policy_auto';
 
+export interface DeviceTaskCheckpoint {
+  taskId: string;
+  taskTitle: string;
+  stepIndex: number;
+  totalSteps: number;
+  stepLabel: string;
+  progressPercent: number;
+  pausedReason?: string;
+  pausedAt?: number;
+}
+
 export interface ManagedDeviceRecord {
   id: string;
   serial: string;
   modelName: string;
+  manufacturer?: string;
   androidVersion: string;
+  locale?: string;
+  storageFreeMb?: number;
+  installedPackages?: string[];
   driverType: DeviceDriverType;
   status: DeviceConnectionStatus;
   controlMode: DeviceControlMode;
   assignedAgentId?: string;
+  suggestedAgentId?: string;
   assignedDepartment?: DepartmentId;
   batteryPercent: number;
   temperatureC: number;
@@ -2297,16 +2392,22 @@ export interface ManagedDeviceRecord {
   lastScreenshotDataUrl?: string;
   lastOcrTextMasked?: string;
   blockedReason?: string;
+  lastError?: string;
+  pausedTask?: DeviceTaskCheckpoint | null;
   lastSeenAt: number;
 }
 
 export interface DevicePolicyProfile {
   allowedPackages: string[];
   blockedPackages: string[];
+  blockedAppLabels?: string[];
   maxActionsPerMinute: number;
   maxContinuousMinutes: number;
+  minActionDelayMs?: number;
   maskPasswordAndOtpRegions: boolean;
   requireCeoForInstallApk: boolean;
+  keepAwakeWhileActive?: boolean;
+  logRetentionDays?: number;
   stopBatteryBelowPercent: number;
   stopTempAboveC: number;
 }
@@ -2320,7 +2421,482 @@ export interface DeviceActionLog {
   foregroundPackage: string;
   result: 'ok' | 'blocked_policy' | 'blocked_killswitch' | 'blocked_mode' | 'ask_ceo_otp' | 'error';
   reason?: string;
+  beforeScreenshotDataUrl?: string;
+  afterScreenshotDataUrl?: string;
   timestamp: number;
+}
+
+// =====================================================================
+// BỔ SUNG Y: OFFICE LAYOUT EDITOR & PRESETS (3D + 2D)
+// =====================================================================
+
+export type OfficePropKind =
+  | 'desk'
+  | 'sofa'
+  | 'plant'
+  | 'cabinet'
+  | 'whiteboard'
+  | 'server_rack'
+  | 'meeting_table'
+  | 'coffee_station'
+  | 'safe_vault'
+  | 'studio_light'
+  | 'reception_counter'
+  | 'door';
+
+export interface OfficeRoomLayoutItem {
+  id: string;
+  departmentId?: DepartmentId;
+  name: string;
+  shortName: string;
+  floor: number; // 1, 2, 3, or custom >3
+  center: [number, number, number];
+  size: [number, number]; // width X, depth Z
+  color: string;
+  doorSide?: 'north' | 'south' | 'east' | 'west';
+}
+
+export interface OfficePropLayoutItem {
+  id: string;
+  roomId: string;
+  floor: number;
+  kind: OfficePropKind;
+  label?: string;
+  position: [number, number, number];
+  rotationY: number;
+  assignedAgentId?: string;
+}
+
+export interface OfficeLayoutPreset {
+  id: string;
+  name: string;
+  description: string;
+  floors: number[];
+  rooms: OfficeRoomLayoutItem[];
+  props: OfficePropLayoutItem[];
+  isBuiltIn?: boolean;
+  updatedAt: number;
+}
+
+export interface OfficeLayoutValidationReport {
+  valid: boolean;
+  overlapErrors: string[];
+  unseatedAgents: string[];
+  aisleWarnings: string[];
+}
+
+// =====================================================================
+// BỔ SUNG Z: COMPLETE ENTERPRISE ERP MODULES
+// =====================================================================
+
+export type ErpRecordSource = 'hubcw' | 'manual' | 'simulated';
+
+// Z.1 CRM, Contracts, Quotes, Orders, E-Invoices, AR, Payments, Refunds, Surveys
+export interface CustomerAccountRecord {
+  id: string;
+  code: string;
+  name: string;
+  taxCode?: string;
+  contactName: string;
+  contactEmail: string;
+  contactPhone: string;
+  tier: 'starter' | 'pro' | 'enterprise';
+  planName: string;
+  mrrVnd: number;
+  ltvVnd: number;
+  churnRiskScore: number; // 0..100
+  npsScore?: number; // -100..100 / 0..10
+  csatScore?: number; // 1..5
+  status: 'active' | 'trial' | 'at_risk' | 'churned';
+  renewalDate: string;
+  ownerAgentId: string;
+  source: ErpRecordSource;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SalesQuoteRecord {
+  id: string;
+  code: string; // #BG-2026-01
+  customerId?: string;
+  customerName: string;
+  productId: string;
+  planLabel: string;
+  subtotalVnd: number;
+  discountPercent: number;
+  vatRatePercent: number;
+  totalVnd: number;
+  validUntil: string;
+  status: 'draft' | 'sent' | 'accepted' | 'expired' | 'rejected';
+  ownerAgentId: string;
+  notes?: string;
+  source: ErpRecordSource;
+  createdAt: number;
+}
+
+export interface SalesOrderRecord {
+  id: string;
+  code: string; // #DH-2026-01
+  quoteId?: string;
+  customerId: string;
+  customerName: string;
+  itemsSummary: string;
+  amountVnd: number;
+  vatAmountVnd: number;
+  totalVnd: number;
+  paymentStatus: 'unpaid' | 'partial' | 'paid' | 'refunded';
+  fulfillmentStatus: 'pending' | 'provisioning' | 'active' | 'cancelled';
+  ownerAgentId: string;
+  source: ErpRecordSource;
+  createdAt: number;
+}
+
+export interface ElectronicInvoiceRecord {
+  id: string;
+  invoiceNumber: string; // 0000128
+  series: string; // 1C26TAA
+  orderId: string;
+  customerName: string;
+  buyerTaxCode?: string;
+  subtotalVnd: number;
+  vatRatePercent: number;
+  vatAmountVnd: number;
+  totalVnd: number;
+  status: 'draft' | 'issued' | 'paid' | 'overdue' | 'cancelled';
+  issuedAt: number;
+  dueDate: string;
+  reminderCount: number;
+  lastReminderAt?: number;
+  paidAmountVnd: number;
+  reconciledAt?: number;
+  source: ErpRecordSource;
+}
+
+export interface RefundRequestRecord {
+  id: string;
+  code: string;
+  orderId: string;
+  customerName: string;
+  amountVnd: number;
+  reason: string;
+  status: 'pending_ceo' | 'approved' | 'rejected' | 'refunded';
+  requestedBy: string;
+  approvedBy?: string;
+  createdAt: number;
+}
+
+export interface CustomerSurveyRecord {
+  id: string;
+  customerId: string;
+  customerName: string;
+  kind: 'nps' | 'csat';
+  score: number; // 0-10 for NPS, 1-5 for CSAT
+  comment: string;
+  sourceTicketId?: string;
+  createdAt: number;
+  source: ErpRecordSource;
+}
+
+// Z.2 Helpdesk, Knowledge Base, Onboarding
+export interface SupportTicketRecord {
+  id: string;
+  code: string; // #TK-101
+  customerId?: string;
+  customerName: string;
+  channel: 'zalo_oa' | 'email' | 'web_form' | 'live_chat';
+  subject: string;
+  description: string;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'open' | 'in_progress' | 'escalated' | 'resolved' | 'closed';
+  assigneeAgentId: string;
+  escalatedToAgentId?: string;
+  slaMinutes: number;
+  slaDueAt: number;
+  firstResponseAt?: number;
+  resolvedAt?: number;
+  csatRating?: number;
+  csatComment?: string;
+  kbArticleId?: string;
+  source: ErpRecordSource;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface KnowledgeBaseArticle {
+  id: string;
+  title: string;
+  category: string;
+  symptoms: string;
+  solutionSteps: string;
+  fromTicketId?: string;
+  viewsCount: number;
+  helpfulCount: number;
+  published: boolean;
+  updatedAt: number;
+}
+
+export interface CustomerOnboardingPlan {
+  id: string;
+  customerId: string;
+  customerName: string;
+  productName: string;
+  trainerAgentId: string;
+  kickoffDate: string;
+  steps: Array<{ id: string; title: string; done: boolean; docUrl?: string }>;
+  progressPercent: number;
+  status: 'scheduled' | 'in_progress' | 'completed';
+  updatedAt: number;
+}
+
+// Z.3 Product & Engineering Operations
+export interface EngineeringRoadmapItem {
+  id: string;
+  code: string; // #FEAT-01
+  title: string;
+  quarter: string;
+  status: 'backlog' | 'planned' | 'in_progress' | 'qa' | 'released';
+  priority: 'p0' | 'p1' | 'p2';
+  ownerAgentId: string;
+  productId: string;
+  releaseVersion?: string;
+  source: ErpRecordSource;
+  updatedAt: number;
+}
+
+export interface SoftwareReleaseRecord {
+  id: string;
+  version: string; // v2.4.0
+  environment: 'staging' | 'production';
+  changelog: string;
+  qaPassRatePercent: number;
+  uptimePercent: number;
+  releasedBy: string;
+  status: 'staging_ready' | 'deployed' | 'rolled_back';
+  releasedAt: number;
+}
+
+export interface EngineeringIncidentRecord {
+  id: string;
+  code: string; // #INC-09
+  title: string;
+  severity: 'sev1' | 'sev2' | 'sev3';
+  serviceName: string;
+  status: 'investigating' | 'mitigated' | 'resolved';
+  startedAt: number;
+  resolvedAt?: number;
+  rootCause: string;
+  postmortemActions: string;
+  ownerAgentId: string;
+}
+
+export interface SecurityAssetRecord {
+  id: string;
+  kind: 'vulnerability' | 'secret_inventory' | 'backup_job';
+  title: string;
+  environment: 'staging' | 'production' | 'worker';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  status: 'open' | 'patched' | 'verified' | 'rotated';
+  lastCheckedAt: number;
+  notes: string;
+}
+
+// Z.4 Marketing, Assets, SEO, Mentions, Events, Case Studies
+export interface MarketingAssetItem {
+  id: string;
+  title: string;
+  type: 'image' | 'video' | 'template' | 'brand_guideline' | 'case_study';
+  tags: string[];
+  urlOrNote: string;
+  consentedByCustomer?: boolean;
+  ownerAgentId: string;
+  createdAt: number;
+}
+
+export interface SeoKeywordTrack {
+  id: string;
+  keyword: string;
+  targetUrl: string;
+  monthlyVolume: number;
+  currentRank: number;
+  targetRank: number;
+  updatedAt: number;
+}
+
+export interface BrandMentionRecord {
+  id: string;
+  sourcePlatform: string;
+  authorMasked: string;
+  excerpt: string;
+  sentiment: 'positive' | 'neutral' | 'negative';
+  handled: boolean;
+  replyNote?: string;
+  detectedAt: number;
+}
+
+export interface MarketingEventRecord {
+  id: string;
+  title: string;
+  kind: 'webinar' | 'workshop' | 'partner_campaign';
+  eventDate: string;
+  registeredCount: number;
+  attendedCount: number;
+  leadsGenerated: number;
+  budgetVnd: number;
+  status: 'upcoming' | 'live' | 'completed';
+}
+
+// Z.5 Financial General Ledger
+export interface LedgerJournalEntry {
+  id: string;
+  entryCode: string; // #GL-101
+  date: string;
+  type: 'revenue' | 'expense' | 'receivable' | 'payable' | 'refund';
+  accountCode: string; // 511, 642, 131, 331
+  accountName: string;
+  description: string;
+  debitVnd: number;
+  creditVnd: number;
+  referenceCode?: string;
+  createdBy: string;
+  source: ErpRecordSource;
+  createdAt: number;
+}
+
+// Z.6 Legal Risk Register, Policies, PDPA Processing Log, DSAR, Breach
+export interface CompanyRiskRegisterItem {
+  id: string;
+  code: string;
+  title: string;
+  domain: string;
+  likelihood: 'low' | 'medium' | 'high';
+  impact: 'low' | 'medium' | 'high';
+  mitigationPlan: string;
+  ownerAgentId: string;
+  status: 'open' | 'mitigating' | 'closed';
+  updatedAt: number;
+}
+
+export interface DataProcessingActivityRecord {
+  id: string;
+  processName: string;
+  dataCategories: string;
+  legalBasis: string; // NĐ 13/2023 consent / contract
+  retentionPeriod: string;
+  securityMeasures: string;
+  updatedAt: number;
+}
+
+export interface DataSubjectRequestRecord {
+  id: string;
+  code: string; // #DSAR-01
+  requesterMasked: string;
+  requestType: 'access' | 'export' | 'delete' | 'rectify';
+  status: 'received' | 'verifying' | 'completed' | 'rejected';
+  dueDate: string;
+  handledBy: string;
+  createdAt: number;
+}
+
+// Z.7 HR Handbook, Leave, Announcements, Meetings, Approval Matrix, Vendors, Digital Assets
+export interface LeaveRequestRecord {
+  id: string;
+  agentId: string;
+  agentName: string;
+  kind: 'leave' | 'shift_swap' | 'maintenance';
+  startDate: string;
+  endDate: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
+}
+
+export interface InternalAnnouncementRecord {
+  id: string;
+  title: string;
+  content: string;
+  authorName: string;
+  pinned: boolean;
+  department: DepartmentId | 'all';
+  createdAt: number;
+}
+
+export interface RoomBookingRecord {
+  id: string;
+  roomId: string;
+  roomName: string;
+  title: string;
+  organizerAgentId: string;
+  startTime: string;
+  durationMinutes: number;
+  attendeeIds: string[];
+  createdAt: number;
+}
+
+export interface ApprovalMatrixRule {
+  id: string;
+  domain: 'expense' | 'refund' | 'contract' | 'hr_hire' | 'campaign_budget' | 'release';
+  label: string;
+  thresholdVnd: number;
+  approverRole: string;
+  requiresCeoAboveVnd: number;
+  slaHours: number;
+}
+
+export interface VendorSubscriptionRecord {
+  id: string;
+  vendorName: string;
+  category: string;
+  monthlyCostVnd: number;
+  billingCycle: 'monthly' | 'annual';
+  nextRenewalDate: string;
+  ownerAgentId: string;
+  status: 'active' | 'review_cancel' | 'cancelled';
+}
+
+export interface DigitalAssetRecord {
+  id: string;
+  kind: 'domain' | 'hosting' | 'social_channel' | 'ssl_cert';
+  identifier: string; // chuyenweb.com
+  provider: string;
+  expiresAt: string;
+  ownerAgentId: string;
+  status: 'healthy' | 'expiring_soon' | 'expired';
+}
+
+// Z.8-Z.9 BCP & Webhook Integrations
+export interface BcpPlanRecord {
+  id: string;
+  scenario: string;
+  rtoMinutes: number;
+  rpoMinutes: number;
+  ownerAgentId: string;
+  runbookSteps: string[];
+  lastDrillAt?: number;
+  drillResult?: string;
+}
+
+export interface WebhookEndpointRecord {
+  id: string;
+  name: string;
+  targetUrl: string;
+  events: string[];
+  enabled: boolean;
+  lastDeliveredAt?: number;
+  lastStatus?: number;
+}
+
+export interface WeeklyBoardReportSnapshot {
+  id: string;
+  weekLabel: string;
+  generatedAt: number;
+  revenueVnd: number;
+  expensesVnd: number;
+  netProfitVnd: number;
+  openTickets: number;
+  avgSlaCompliancePercent: number;
+  okrProgressPercent: number;
+  topRisks: string[];
+  executiveSummary: string;
 }
 
 

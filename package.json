@@ -9,7 +9,8 @@
     "start": "tsx server.ts",
     "preview": "vite preview --port=3000 --host=0.0.0.0",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "device:doctor": "tsx worker/device/deviceDoctor.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -36,6 +37,7 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -44,6 +46,6 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "vite-plugin-pwa": "^2.0.0"
   }
 }

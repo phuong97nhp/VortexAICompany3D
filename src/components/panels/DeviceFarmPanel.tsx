@@ -239,15 +239,55 @@ export function DeviceFarmPanel() {
               <MonitorSmartphone className="w-4 h-4 text-emerald-500" />
               <span>Điều khiển & Màn hình Trực tiếp · {activeDevice.modelName}</span>
             </div>
-            <button
-              type="button"
-              onClick={() => grabDeviceControlStop(activeDevice.id)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold whitespace-nowrap cursor-pointer"
-            >
-              <OctagonAlert className="w-3.5 h-3.5" />
-              <span>Giành quyền / DỪNG</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={async () => {
+                  const nextConn = activeDevice.status === 'offline';
+                  await fetch(`/api/devices/${encodeURIComponent(activeDevice.id)}/simulate-connection`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ connected: nextConn }),
+                  });
+                  await refreshDevices();
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-medium cursor-pointer"
+                title="Kiểm thử kịch bản rút cáp USB giữa chừng & cắm lại"
+              >
+                {activeDevice.status === 'offline' ? 'Cắm lại cáp USB' : 'Test rút cáp USB'}
+              </button>
+              <button
+                type="button"
+                onClick={() => grabDeviceControlStop(activeDevice.id)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold whitespace-nowrap cursor-pointer"
+              >
+                <OctagonAlert className="w-3.5 h-3.5" />
+                <span>Giành quyền / DỪNG</span>
+              </button>
+            </div>
           </div>
+
+          {activeDevice.pausedTask && (
+            <div
+              className={`p-2 rounded-lg border text-[11px] ${
+                activeDevice.status === 'offline'
+                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                  : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              }`}
+            >
+              <div className="font-semibold">
+                {activeDevice.status === 'offline'
+                  ? 'Mất kết nối USB — Đang bảo lưu tiến độ chờ cắm lại'
+                  : 'Đã kết nối lại — Tự động khôi phục tác vụ'}
+                : {activeDevice.pausedTask.taskTitle} ({activeDevice.pausedTask.progressPercent}%)
+              </div>
+              <div>
+                Bước {activeDevice.pausedTask.stepIndex}/{activeDevice.pausedTask.totalSteps}:{' '}
+                {activeDevice.pausedTask.stepLabel}
+                {activeDevice.pausedTask.pausedReason ? ` · ${activeDevice.pausedTask.pausedReason}` : ''}
+              </div>
+            </div>
+          )}
 
           {/* 3-Tier Control Mode Selector */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
@@ -387,7 +427,8 @@ export function DeviceFarmPanel() {
                       {p}
                     </option>
                   ))}
-                  <option value="com.vietcombank">com.vietcombank (Test chặn cứng)</option>
+                  <option value="com.vietcombank">com.vietcombank (Test chặn ngân hàng)</option>
+                  <option value="com.x8bit.bitwarden">com.x8bit.bitwarden (Test chặn Password Manager)</option>
                 </select>
                 <button
                   type="button"
@@ -404,16 +445,16 @@ export function DeviceFarmPanel() {
         </section>
       )}
 
-      {/* 3. Policy Allowlist/Blocklist & Audit Logs */}
+      {/* 3. Policy Allowlist/Blocklist & Before/After Audit Logs */}
       <section className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
         <div className="font-semibold flex items-center gap-1.5">
           <Lock className="w-3.5 h-3.5 text-rose-500" />
-          <span>Chính sách App & Nhật ký Thao tác</span>
+          <span>Chính sách App & Nhật ký Thao tác (Ảnh Trước / Sau)</span>
         </div>
         <div className="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-600 dark:text-rose-300 flex items-center gap-1.5">
           <ShieldAlert className="w-4 h-4 shrink-0" />
           <span>
-            Cấm cứng: Ngân hàng (VCB/TCB/MB), Ví (MoMo/ZaloPay), 2FA Authenticator, Cài đặt hệ thống, Ảnh & Danh bạ.
+            Cấm cứng: Ngân hàng (VCB/TCB/MB), Ví (MoMo/ZaloPay), Trình quản lý mật khẩu (Bitwarden/1Password), 2FA Authenticator, Cài đặt hệ thống, Ảnh & Danh bạ.
           </span>
         </div>
 
@@ -438,22 +479,48 @@ export function DeviceFarmPanel() {
           </button>
         </div>
 
-        <div className="max-h-36 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800">
+        <div className="max-h-52 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-800">
           {deviceLogs.length === 0 ? (
             <div className="py-2 text-slate-500">Chưa có nhật ký thao tác thiết bị.</div>
           ) : (
             deviceLogs.slice(0, 15).map((l) => (
-              <div key={l.id} className="py-1.5 flex items-center justify-between gap-2 text-[11px]">
-                <span className="truncate font-mono-num">
-                  [{l.agentId}] {l.action} ({l.foregroundPackage})
-                </span>
-                <span
-                  className={`font-mono-num shrink-0 ${
-                    l.result === 'ok' ? 'text-emerald-500' : 'text-rose-500'
-                  }`}
-                >
-                  {l.result}
-                </span>
+              <div key={l.id} className="py-1.5 space-y-1 text-[11px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono-num">
+                    [{l.agentId}] {l.action} ({l.foregroundPackage})
+                  </span>
+                  <span
+                    className={`font-mono-num shrink-0 ${
+                      l.result === 'ok' ? 'text-emerald-500' : 'text-rose-500'
+                    }`}
+                  >
+                    {l.result}
+                  </span>
+                </div>
+                {(l.beforeScreenshotDataUrl || l.afterScreenshotDataUrl) && (
+                  <div className="flex items-center gap-2 pl-2">
+                    {l.beforeScreenshotDataUrl && (
+                      <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <span>Trước:</span>
+                        <img
+                          src={l.beforeScreenshotDataUrl}
+                          alt="Trước"
+                          className="w-7 h-12 rounded border border-slate-300 dark:border-slate-700 object-cover"
+                        />
+                      </div>
+                    )}
+                    {l.afterScreenshotDataUrl && (
+                      <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <span>Sau:</span>
+                        <img
+                          src={l.afterScreenshotDataUrl}
+                          alt="Sau"
+                          className="w-7 h-12 rounded border border-slate-300 dark:border-slate-700 object-cover"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}

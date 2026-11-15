@@ -92,6 +92,9 @@ export function SettingsPanel() {
   const [newPwd, setNewPwd] = useState('');
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [holidayDateInput, setHolidayDateInput] = useState('');
+  const [holidayNameInput, setHolidayNameInput] = useState('');
+  const [pushNotice, setPushNotice] = useState<string | null>(null);
 
   const pendingQ = askCeoQuestions.find((q) => q.status === 'pending' || q.status === 'reminded');
 
@@ -1565,6 +1568,207 @@ export function SettingsPanel() {
             ))}
           </div>
         )}
+      </section>
+
+      {/* 8. BỔ SUNG Y: Bản địa hóa, Lịch công ty, Âm thanh & Trợ năng */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+        <div className="font-bold text-sm">8. Bản địa hóa, Lịch làm việc & Giao diện (Bổ sung Y)</div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Ngôn ngữ hiển thị</label>
+            <select
+              value={settings.locale || 'vi'}
+              onChange={(e) => updateSettings({ locale: e.target.value as 'vi' | 'en' })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+            >
+              <option value="vi">Tiếng Việt</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Đơn vị tiền tệ</label>
+            <select
+              value={settings.currencyUnit || 'VND'}
+              onChange={(e) => updateSettings({ currencyUnit: e.target.value as 'VND' | 'USD' })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+            >
+              <option value="VND">VND (₫)</option>
+              <option value="USD">USD ($)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Cỡ chữ toàn app</label>
+            <select
+              value={settings.fontSizeScale || 'md'}
+              onChange={(e) => updateSettings({ fontSizeScale: e.target.value as 'sm' | 'md' | 'lg' })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+            >
+              <option value="sm">Nhỏ (Gọn)</option>
+              <option value="md">Vừa (Mặc định)</option>
+              <option value="lg">Lớn (Dễ đọc)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Múi giờ</label>
+            <input
+              type="text"
+              value={settings.timezone || 'Asia/Ho_Chi_Minh'}
+              onChange={(e) => updateSettings({ timezone: e.target.value })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Giờ bắt đầu làm việc</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={settings.workingHourStart ?? 8}
+              onChange={(e) => updateSettings({ workingHourStart: Number(e.target.value) || 8 })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10.5px] text-slate-400 mb-0.5">Giờ kết thúc làm việc</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={settings.workingHourEnd ?? 18}
+              onChange={(e) => updateSettings({ workingHourEnd: Number(e.target.value) || 18 })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <div className="text-[10.5px] text-slate-400">Ngày làm việc trong tuần</div>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              [1, 'T2'],
+              [2, 'T3'],
+              [3, 'T4'],
+              [4, 'T5'],
+              [5, 'T6'],
+              [6, 'T7'],
+              [7, 'CN'],
+            ].map(([dayNum, label]) => {
+              const current = settings.workingDays || [1, 2, 3, 4, 5];
+              const active = current.includes(dayNum as number);
+              return (
+                <button
+                  key={dayNum}
+                  type="button"
+                  onClick={() => {
+                    const next = active
+                      ? current.filter((d) => d !== dayNum)
+                      : [...current, dayNum as number].sort();
+                    updateSettings({ workingDays: next });
+                  }}
+                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold cursor-pointer ${
+                    active
+                      ? 'bg-sky-600 text-white border-sky-500'
+                      : 'bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-800 text-slate-500'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Company Holidays */}
+        <div className="space-y-1.5 pt-1 border-t border-slate-200 dark:border-slate-800">
+          <div className="text-[10.5px] text-slate-400">Ngày nghỉ lễ công ty ({(settings.holidays || []).length})</div>
+          <div className="flex gap-1.5">
+            <input
+              type="date"
+              value={holidayDateInput}
+              onChange={(e) => setHolidayDateInput(e.target.value)}
+              className="rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+            <input
+              type="text"
+              value={holidayNameInput}
+              onChange={(e) => setHolidayNameInput(e.target.value)}
+              placeholder="Tên ngày lễ (vd: 30/4 Giải phóng)"
+              className="flex-1 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (!holidayDateInput || !holidayNameInput.trim()) return;
+                const next = [...(settings.holidays || []), { date: holidayDateInput, name: holidayNameInput.trim() }];
+                updateSettings({ holidays: next });
+                setHolidayDateInput('');
+                setHolidayNameInput('');
+              }}
+              className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-semibold cursor-pointer"
+            >
+              Thêm lễ
+            </button>
+          </div>
+          {(settings.holidays || []).length > 0 && (
+            <div className="space-y-1">
+              {(settings.holidays || []).map((h, i) => (
+                <div key={`${h.date}-${i}`} className="flex items-center justify-between text-[11px] px-2 py-1 rounded bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+                  <span>
+                    <span className="font-mono-num text-sky-500 mr-2">{h.date}</span>
+                    {h.name}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => updateSettings({ holidays: (settings.holidays || []).filter((_, idx) => idx !== i) })}
+                    className="text-rose-500 hover:underline cursor-pointer"
+                  >
+                    Xóa
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Ambient Audio + Web Push Test */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.ambientAudioEnabled)}
+              onChange={(e) => updateSettings({ ambientAudioEnabled: e.target.checked })}
+              className="w-4 h-4 accent-sky-600"
+            />
+            <span>Âm thanh nền văn phòng (Web Audio API)</span>
+          </label>
+          <button
+            type="button"
+            onClick={async () => {
+              if (typeof window === 'undefined' || !('Notification' in window)) {
+                setPushNotice('Trình duyệt hiện tại không hỗ trợ Notification API.');
+                return;
+              }
+              const perm = await Notification.requestPermission();
+              if (perm === 'granted') {
+                await updateSettings({ pwaPushEnabled: true });
+                new Notification('Chuyên Web · AI Company', {
+                  body: 'Thông báo đẩy PWA đã sẵn sàng hoạt động!',
+                });
+                setPushNotice('Đã gửi thông báo đẩy PWA thử nghiệm.');
+              } else {
+                setPushNotice('Trình duyệt từ chối quyền Thông báo.');
+              }
+            }}
+            className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold cursor-pointer"
+          >
+            Thử Push PWA
+          </button>
+        </div>
+        {pushNotice && <div className="text-[11px] text-sky-500">{pushNotice}</div>}
       </section>
     </div>
   );

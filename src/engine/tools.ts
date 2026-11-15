@@ -31,7 +31,7 @@ import { ROLE_TEMPLATES } from './roleTemplates';
 import { sanitizeExternalUntrustedContent } from './resilience';
 import { runAffiliateComplianceCheck } from '../integrations/affiliate/affiliateEngine';
 import { buildLegalReport } from './legal/legalEngine';
-import { checkOutgoingClaimsAndBankSafety } from './productBankEngine';
+import { checkOutgoingClaimsAndBankSafety, formatVerifiedBankPaymentSnippet } from './productBankEngine';
 import { checkOutputAgainstSop } from './hrSopEngine';
 
 export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
@@ -1429,6 +1429,22 @@ export async function executeAgentTool(
       const settings = store.settings;
       const msgText = String(args.message || '');
 
+      // -1. Probation LIVE gate (BỔ SUNG Q)
+      if (
+        store.settings.hrAutonomy?.requireExamPassForLive &&
+        agent.probationStatus &&
+        agent.probationStatus !== 'passed' &&
+        !dryRun
+      ) {
+        return {
+          ok: false,
+          output: {
+            blocked: true,
+            error: `Nhân sự ${agent.name} đang ở trạng thái thử việc (${agent.probationStatus}) — cần đỗ Onboarding Exam trước khi gửi tin LIVE ra ngoài.`,
+          },
+        };
+      }
+
       // 0. Product Master Claim & Bank Account Safety Check + SOP compliance (BỔ SUNG R & Q)
       const matchedProduct = store.productMasters.find((p) => p.id === lead.recommendedProductId) || store.productMasters[0];
       const claimRes = checkOutgoingClaimsAndBankSafety({
@@ -1444,6 +1460,21 @@ export async function executeAgentTool(
             error: `Chặn gửi do vi phạm Product Master / An toàn STK: ${claimRes.violations.map((v) => v.rule).join('; ')}`,
           },
         };
+      }
+      if (claimRes.hasUnknownQuestion) {
+        const qId = `PMQ-${now.toString(36).toUpperCase().slice(-4)}`;
+        await store.putAskCeoQuestion({
+          id: qId,
+          agentId,
+          department: 'product',
+          question: `[Product Master] Khách hàng (${lead.name}) hỏi điểm chưa có trong tài liệu ${matchedProduct?.shortName || 'sản phẩm'}: cần PM/CEO xác nhận để bổ sung.`,
+          options: ['1. Đã chuyển PM cập nhật Product Master', '2. Tạm hoãn câu hỏi này'],
+          urgency: 'normal',
+          context: msgText.slice(0, 240),
+          stepType: 'general',
+          status: 'pending',
+          createdAt: now,
+        });
       }
       const roleSop = store.roleSops.find((s) => s.department === agent.department);
       const sopRes = checkOutputAgainstSop(msgText, roleSop);
@@ -1619,20 +1650,58 @@ export async function executeAgentTool(
 
     case 'create_quote': {
       const lead = store.leads.find((l) => l.id === String(args.leadId));
-      const product = getProductById(String(args.productId || lead?.recommendedProductId || 'edu-center'));
-      const tierIdx = Math.min(2, Math.max(0, Number(args.tierIndex ?? 1)));
-      const tier = product.tiers[tierIdx];
-      const discount = Number(args.discountPercent || 0);
+      const requestedProdId = String(args.productId || lead?.recommendedProductId || 'edu-center');
+      const dynamicProd =
+        store.productMasters.find((p) => p.id === requestedProdId || p.code === requestedProdId) ||
+        store.productMasters[0];
+      const staticProd = getProductById(requestedProdId);
+      const prodName = dynamicProd?.name || staticProd.name;
+      const prodShort = dynamicProd?.shortName || staticProd.shortName;
+      const prodId = dynamicProd?.id || staticProd.id;
+      const tiers = dynamicProd?.tiers?.length
+        ? dynamicProd.tiers.map((t) => ({
+            name: t.name,
+            priceVnd: t.priceVnd,
+            priceLabel: t.priceLabel,
+            features: [t.limits, `Chiết khấu tối đa tự chủ: ${t.maxDiscountPercent}%`],
+            maxDiscountPercent: t.maxDiscountPercent,
+          }))
+        : staticProd.tiers.map((t) => ({ ...t, maxDiscountPercent: 10 }));
+      const tierIdx = Math.min(Math.max(0, tiers.length - 1), Math.max(0, Number(args.tierIndex ?? 0)));
+      const tier = tiers[tierIdx];
+      const discount = Math.max(0, Number(args.discountPercent || 0));
       const finalPrice = Math.round(tier.priceVnd * (1 - discount / 100));
+      const refCode = `#QT-${now.toString(36).toUpperCase().slice(-5)}`;
+      const bankPaymentSnippet = formatVerifiedBankPaymentSnippet({
+        bankAccounts: store.bankAccounts,
+        refCode,
+      });
+
+      const quoteContent = `# BÁO GIÁ DỊCH VỤ PHẦN MỀM\n**Mã tham chiếu:** ${refCode}\n**Khách hàng:** ${lead?.name || 'Khách hàng'}\n**Sản phẩm:** ${prodName}\n**Gói đề xuất:** ${tier.name}\n**Đơn giá niêm yết:** ${tier.priceLabel}\n**Chiết khấu:** ${discount}%\n**Giá sau ưu đãi:** ${finalPrice.toLocaleString('vi-VN')}đ / kỳ\n\n## Quyền lợi & Giới hạn gói (Product Master)\n${tier.features.map((f) => `- ${f}`).join('\n')}\n\n## Thông tin Thanh toán Chính thức\n${bankPaymentSnippet}`;
+
+      const claimCheck = checkOutgoingClaimsAndBankSafety({
+        text: quoteContent,
+        product: dynamicProd,
+        bankAccounts: store.bankAccounts,
+      });
+      if (!claimCheck.passed) {
+        return {
+          ok: false,
+          output: {
+            blocked: true,
+            error: `Báo giá vi phạm Product Master / Chính sách giá: ${claimCheck.violations.map((v) => v.rule).join('; ')}`,
+          },
+        };
+      }
 
       const quoteDoc = {
         id: `doc_quote_${now}`,
-        title: `Báo giá ${product.shortName} – ${lead?.name || 'Khách hàng'}`,
+        title: `Báo giá ${prodShort} (${refCode}) – ${lead?.name || 'Khách hàng'}`,
         category: 'quote' as const,
         authorId: agentId,
         department: agent.department,
-        productId: product.id,
-        content: `# BÁO GIÁ DỊCH VỤ PHẦN MỀM\n**Khách hàng:** ${lead?.name || 'Khách hàng'}\n**Sản phẩm:** ${product.name}\n**Gói đề xuất:** ${tier.name}\n**Đơn giá niêm yết:** ${tier.priceLabel}\n**Chiết khấu:** ${discount}%\n**Giá sau ưu đãi:** ${finalPrice.toLocaleString('vi-VN')}đ / tháng\n\n## Quyền lợi bao gồm\n${tier.features.map((f) => `- ${f}`).join('\n')}`,
+        productId: prodId,
+        content: quoteContent,
         createdAt: now,
         updatedAt: now,
       };
@@ -1644,7 +1713,7 @@ export async function executeAgentTool(
         await store.putApproval({
           id: `apr_quote_${now}`,
           type: 'quote',
-          title: `Duyệt báo giá ${product.shortName} cho ${lead?.name || 'Khách hàng'} (${discount > 0 ? `Giảm ${discount}%` : 'Theo bảng giá'})`,
+          title: `Duyệt báo giá ${prodShort} cho ${lead?.name || 'Khách hàng'} (${discount > 0 ? `Giảm ${discount}%` : 'Theo bảng giá'})`,
           description: `${agent.name} đã lưu báo giá vào Kho tài liệu và trình CEO duyệt trước khi gửi khách.`,
           requestedBy: agentId,
           department: agent.department,
@@ -1892,6 +1961,17 @@ export async function executeAgentTool(
           output: {
             blocked: true,
             error: `Bài đăng vi phạm quy chuẩn Product Master / An toàn STK: ${claimCheck.violations.map((v) => v.rule).join('; ')}`,
+          },
+        };
+      }
+      const postSop = store.roleSops.find((s) => s.department === agent.department);
+      const postSopCheck = checkOutputAgainstSop(`${title}\n${content}`, postSop);
+      if (!postSopCheck.compliant) {
+        return {
+          ok: false,
+          output: {
+            blocked: true,
+            error: `Bài đăng vi phạm SOP phòng ${agent.department}: ${postSopCheck.violations.join('; ')}`,
           },
         };
       }
@@ -2873,6 +2953,9 @@ export async function executeAgentTool(
         expectedRoi: String(args.expectedRoi || 'Giảm 20% token và thời gian xử lý'),
         beforeMetric: String(args.beforeMetric || 'Chưa đo'),
       });
+      if (!prop) {
+        return { ok: false, output: { error: 'Đề xuất bị chặn bởi rào chắn an toàn (cấm tự sửa mã nguồn/tự nâng quyền).' } };
+      }
       return { ok: true, output: { proposalId: prop.id, code: prop.code, stage: prop.rolloutStage } };
     }
 
@@ -2911,10 +2994,50 @@ export async function executeAgentTool(
     }
 
     case 'send_zalo_personal': {
+      const zaloMsgText = String(args.text || '');
+      if (
+        store.settings.hrAutonomy?.requireExamPassForLive &&
+        agent.probationStatus &&
+        agent.probationStatus !== 'passed' &&
+        store.settings.envMode === 'live'
+      ) {
+        return {
+          ok: false,
+          output: {
+            sent: false,
+            error: `${agent.name} chưa vượt qua Onboarding Exam — bị chặn gửi Zalo LIVE.`,
+          },
+        };
+      }
+      const zaloClaimRes = checkOutgoingClaimsAndBankSafety({
+        text: zaloMsgText,
+        product: store.productMasters[0],
+        bankAccounts: store.bankAccounts,
+      });
+      if (!zaloClaimRes.passed) {
+        return {
+          ok: false,
+          output: {
+            sent: false,
+            error: `Chặn gửi Zalo do vi phạm Product Master / An toàn STK: ${zaloClaimRes.violations.map((v) => v.rule).join('; ')}`,
+          },
+        };
+      }
+      const zaloSop = store.roleSops.find((s) => s.department === agent.department);
+      const zaloSopRes = checkOutputAgainstSop(zaloMsgText, zaloSop);
+      if (!zaloSopRes.compliant) {
+        return {
+          ok: false,
+          output: {
+            sent: false,
+            error: `Chặn gửi Zalo do vi phạm SOP: ${zaloSopRes.violations.join('; ')}`,
+          },
+        };
+      }
       const res = await store.sendZaloPersonalMessage({
         peerId: String(args.peerId || ''),
         peerName: String(args.peerName || 'Khách hàng'),
-        text: String(args.text || ''),
+        text: zaloMsgText,
         agentId,
         isReplyToInbound: Boolean(args.isReplyToInbound),
         isColdMarketing: !args.isReplyToInbound,

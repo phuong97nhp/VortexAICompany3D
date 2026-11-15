@@ -232,3 +232,55 @@ export function analyzeWorkloadForHrRecommendations(params: {
 
   return recommendations;
 }
+
+export function buildSopRuntimeContext(agent: AgentProfile, sops: RoleSopDocument[]): string {
+  const matching =
+    sops.find((s) => s.roleTemplateId && agent.templateId && s.roleTemplateId === agent.templateId) ||
+    sops.find((s) => s.department === agent.department);
+  if (!matching) return '';
+  return [
+    `\n[QUY CHUẨN SOP v${matching.version} - ${matching.roleTitle}]`,
+    `- Sứ mệnh: ${matching.mission}`,
+    `- Giới hạn/Cấm kỵ: ${matching.limits.join(' | ')}`,
+    `- Quy trình chuẩn: ${matching.steps.join(' -> ')}`,
+    `- Checklist bàn giao: ${matching.handoverChecklist.join('; ')}`,
+    `- CẤM NÓI: ${matching.bannedPhrases.join(', ') || 'Không'}`,
+    `- Leo thang: ${matching.escalationRules.join(' | ')}`,
+  ].join('\n');
+}
+
+export function evaluatePeriodicAgentReviews(params: {
+  agents: AgentProfile[];
+  tasks: TaskItem[];
+  sops: RoleSopDocument[];
+}) {
+  const { agents, tasks } = params;
+  return agents
+    .filter((a) => a.employmentStatus === 'active' && a.role !== 'CEO')
+    .slice(0, 15)
+    .map((a) => {
+      const myTasks = tasks.filter((t) => t.assignedTo === a.id);
+      const done = myTasks.filter((t) => t.status === 'done').length;
+      const delayed = myTasks.filter((t) => t.delayNotified && t.status !== 'done').length;
+      const onTimeRate = myTasks.length > 0 ? Math.round(((myTasks.length - delayed) / myTasks.length) * 100) : 100;
+      const examScore = a.lastExamScore ?? 90;
+      const score = Math.max(35, Math.min(100, Math.round(onTimeRate * 0.45 + examScore * 0.35 + Math.min(20, done * 5))));
+      const action =
+        score < 60
+          ? 'Đề xuất huấn luyện lại / thay thế (chờ CEO duyệt)'
+          : score < 78
+          ? 'Cảnh cáo nhẹ & nạp lại SOP'
+          : 'Đạt chuẩn';
+      return {
+        agentId: a.id,
+        name: a.name,
+        department: a.department,
+        doneCount: done,
+        delayedCount: delayed,
+        onTimeRate,
+        score,
+        action,
+      };
+    });
+}
+

@@ -49,6 +49,13 @@ export function HubCwConnectorPanel() {
   const switchEnvModeWithPreflight = useCompanyStore((s) => s.switchEnvModeWithPreflight);
   const instantRevertToSafeMode = useCompanyStore((s) => s.instantRevertToSafeMode);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
+  const bcpPlans = useCompanyStore((s) => s.bcpPlans);
+  const webhookEndpoints = useCompanyStore((s) => s.webhookEndpoints);
+  const runBcpDrill = useCompanyStore((s) => s.runBcpDrill);
+  const putWebhookEndpoint = useCompanyStore((s) => s.putWebhookEndpoint);
+  const testWebhookEndpoint = useCompanyStore((s) => s.testWebhookEndpoint);
+  const deleteWebhookEndpoint = useCompanyStore((s) => s.deleteWebhookEndpoint);
+  const clearSimulatedDataAction = useCompanyStore((s) => s.clearSimulatedDataAction);
 
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -62,7 +69,9 @@ export function HubCwConnectorPanel() {
   const [preflightError, setPreflightError] = useState<string | null>(null);
   const [preflightSubmitting, setPreflightSubmitting] = useState(false);
 
-  const [activeSubTab, setActiveSubTab] = useState<'modules' | 'sync' | 'undo' | 'logs'>('modules');
+  const [activeSubTab, setActiveSubTab] = useState<'modules' | 'sync' | 'undo' | 'logs' | 'webhooks_bcp'>('modules');
+  const [whName, setWhName] = useState('');
+  const [whUrl, setWhUrl] = useState('');
 
   const latestRecon = hubcwReconciliations[0];
   const linkedActiveCount = useMemo(
@@ -384,6 +393,7 @@ export function HubCwConnectorPanel() {
             { id: 'sync', label: `Đồng bộ & Đối soát (${queuedSyncCount})` },
             { id: 'undo', label: `Hoàn tác (${hubcwUndoSnapshots.length})` },
             { id: 'logs', label: `API Logs (${hubcwApiLogs.length})` },
+            { id: 'webhooks_bcp', label: `Webhooks & BCP (${webhookEndpoints.length})` },
           ] as const
         ).map((tab) => (
           <button
@@ -707,6 +717,138 @@ export function HubCwConnectorPanel() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* Sub-tab 5: Webhooks, BCP/DRP Drills & Clear Simulated Data (Z.8-Z.10) */}
+      {activeSubTab === 'webhooks_bcp' && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900/70 space-y-2">
+            <div className="font-bold text-slate-900 dark:text-white">
+              Outbound Webhook Endpoints ({webhookEndpoints.length})
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="text"
+                value={whName}
+                onChange={(e) => setWhName(e.target.value)}
+                placeholder="Tên webhook (vd: CRM Sync)"
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+              />
+              <input
+                type="url"
+                value={whUrl}
+                onChange={(e) => setWhUrl(e.target.value)}
+                placeholder="https://example.com/webhook"
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!whName.trim() || !whUrl.trim()) return;
+                await putWebhookEndpoint({
+                  id: `wh-${Date.now()}`,
+                  name: whName.trim(),
+                  targetUrl: whUrl.trim(),
+                  events: ['invoice.paid', 'ticket.escalated', 'approval.granted'],
+                  enabled: true,
+                });
+                setWhName('');
+                setWhUrl('');
+                setStatusMessage({ ok: true, text: 'Đã thêm Outbound Webhook endpoint.' });
+              }}
+              className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer"
+            >
+              + Thêm Webhook
+            </button>
+            <div className="space-y-1.5">
+              {webhookEndpoints.map((wh) => (
+                <div
+                  key={wh.id}
+                  className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px]"
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold truncate">{wh.name}</div>
+                    <div className="text-[10.5px] text-slate-400 font-mono-num truncate">
+                      {wh.targetUrl} · Events: {wh.events.join(', ')}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const res = await testWebhookEndpoint(wh.id);
+                        setStatusMessage({
+                          ok: res.ok,
+                          text: res.ok ? `Webhook ${wh.name}: HTTP ${res.status}` : `Webhook test lỗi HTTP ${res.status}`,
+                        });
+                      }}
+                      className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10.5px] font-semibold cursor-pointer"
+                    >
+                      Test Ping
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteWebhookEndpoint(wh.id)}
+                      className="px-2 py-1 rounded border border-rose-500/40 text-rose-500 text-[10.5px] cursor-pointer"
+                    >
+                      Xóa
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900/70 space-y-2">
+            <div className="font-bold text-slate-900 dark:text-white">
+              Kế hoạch Dự phòng & Diễn tập Khôi phục (BCP / DRP · {bcpPlans.length})
+            </div>
+            {bcpPlans.map((bp) => (
+              <div
+                key={bp.id}
+                className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px]"
+              >
+                <div className="min-w-0">
+                  <div className="font-semibold">{bp.scenario}</div>
+                  <div className="text-[10.5px] text-slate-400 font-mono-num">
+                    RPO: {bp.rpoMinutes}p · RTO: {bp.rtoMinutes}p · Trạng thái: {bp.drillResult || 'Chưa diễn tập'}
+                    {bp.lastDrillAt ? ` · Diễn tập: ${new Date(bp.lastDrillAt).toLocaleDateString('vi-VN')}` : ''}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await runBcpDrill(bp.id);
+                    setStatusMessage({ ok: true, text: `Đã hoàn tất diễn tập BCP: ${bp.scenario}` });
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer shrink-0"
+                >
+                  Chạy diễn tập
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-rose-500/40 p-3 bg-rose-500/5 space-y-2">
+            <div className="font-bold text-rose-600 dark:text-rose-400">
+              Dọn sạch toàn bộ Dữ liệu Mô phỏng (Simulated Clean Reset)
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              Xóa toàn bộ bản ghi gắn nhãn <span className="font-mono-num">source=&quot;simulated&quot;</span> trên ERP, CRM, Kế toán, Pháp chế & Nhân sự để chuẩn bị vận hành dữ liệu công ty thật.
+            </p>
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await clearSimulatedDataAction();
+                setStatusMessage({ ok: true, text: `Đã xóa ${res.removedCount} bản ghi dữ liệu mô phỏng.` });
+              }}
+              className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer"
+            >
+              Xóa toàn bộ dữ liệu Mô phỏng
+            </button>
+          </div>
         </div>
       )}
 

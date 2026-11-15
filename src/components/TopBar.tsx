@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   Bell,
   Bot,
   ChevronDown,
+  Command,
   Eye,
+  HelpCircle,
+  LayoutDashboard,
   Monitor,
   Moon,
   OctagonAlert,
@@ -13,12 +16,15 @@ import {
   Rocket,
   ShieldAlert,
   Sun,
+  Volume2,
+  VolumeX,
   Zap,
 } from 'lucide-react';
 import { PRODUCTS } from '../config/products';
 import { runAutopilotCycle, runCampaignDemoScenario } from '../engine/orchestrator';
 import { useCompanyStore } from '../store/useCompanyStore';
 import { AutonomyLevel } from '../types';
+import { PWAInstallButton } from './pwa/PWAInstallButton';
 
 export function TopBar({
   onToggleLeftSidebar,
@@ -37,17 +43,35 @@ export function TopBar({
   const approvals = useCompanyStore((s) => s.approvals);
   const askCeoQuestions = useCompanyStore((s) => s.askCeoQuestions);
   const expenses = useCompanyStore((s) => s.expenses);
+  const supportTickets = useCompanyStore((s) => s.supportTickets);
+  const engineeringIncidents = useCompanyStore((s) => s.engineeringIncidents);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const clearNotifications = useCompanyStore((s) => s.clearNotifications);
   const runRandomSpotCheck = useCompanyStore((s) => s.runRandomSpotCheck);
   const setMonitorWallOpen = useCompanyStore((s) => s.setMonitorWallOpen);
+  const setCommandPaletteOpen = useCompanyStore((s) => s.setCommandPaletteOpen);
+  const setHelpGuideOpen = useCompanyStore((s) => s.setHelpGuideOpen);
 
   const [demoMenuOpen, setDemoMenuOpen] = useState(false);
+  const [notifMenuOpen, setNotifMenuOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
+        setNotifMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length;
   const pendingQuestions = askCeoQuestions.filter((q) => q.status === 'pending' || q.status === 'reminded').length;
   const pendingCeoExpenses = expenses.filter((e) => e.status === 'pending_ceo').length;
-  const totalAlerts = pendingApprovals + pendingQuestions + pendingCeoExpenses;
+  const openTickets = supportTickets.filter((t) => t.status !== 'resolved' && t.status !== 'closed').length;
+  const openIncidents = engineeringIncidents.filter((i) => i.status !== 'resolved').length;
+  const totalAlerts = pendingApprovals + pendingQuestions + pendingCeoExpenses + openIncidents;
 
   const geminiReady = Boolean(serverHealth?.hasGeminiEnvKey || settings.geminiApiKey?.trim());
   const deepseekReady = Boolean(serverHealth?.hasDeepSeekEnvKey || settings.deepseekApiKey?.trim());
@@ -74,9 +98,9 @@ export function TopBar({
   };
 
   return (
-    <header className="h-13 shrink-0 z-30 flex items-center justify-between gap-3 px-3 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 text-slate-900 dark:text-slate-100">
+    <header className="h-13 shrink-0 z-30 flex items-center justify-between gap-2 px-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       {/* Left Zone */}
-      <div className="flex items-center gap-2.5 min-w-0">
+      <div className="flex items-center gap-2 min-w-0">
         <button
           type="button"
           onClick={onToggleLeftSidebar}
@@ -98,28 +122,48 @@ export function TopBar({
         <button
           type="button"
           onClick={() => setActiveTab('settings')}
-          className={`hidden xl:inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium whitespace-nowrap shrink-0 border cursor-pointer ${
+          className={`hidden 2xl:inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium whitespace-nowrap shrink-0 border cursor-pointer ${
             isLiveBrain
               ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30'
               : 'bg-amber-500/10 text-amber-500 border-amber-500/30'
           }`}
           title="Bấm để cấu hình Bộ não AI"
         >
-          {activeBrainLabel}
-          {settings.dryRun ? ' · DRY_RUN' : ' · LIVE OUTBOUND'}
+          {activeBrainLabel} · {settings.dryRun ? 'DRY_RUN' : 'LIVE'}
         </button>
       </div>
 
       {/* Center Zone */}
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <button
+          type="button"
+          onClick={() => setActiveTab('ceo_dashboard')}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-500/20 text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+          title="Mở Dashboard CEO Toàn cảnh"
+        >
+          <LayoutDashboard className="w-3.5 h-3.5" />
+          <span className="hidden lg:inline">Dashboard CEO</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setCommandPaletteOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer"
+          title="Tìm nhanh (Ctrl+K)"
+        >
+          <Command className="w-3.5 h-3.5 text-sky-500" />
+          <span className="hidden xl:inline">Tìm nhanh</span>
+          <span className="text-[10px] font-mono-num text-slate-400">Ctrl+K</span>
+        </button>
+
         <div className="relative">
           <button
             type="button"
             onClick={() => setDemoMenuOpen((v) => !v)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
           >
             <Rocket className="w-3.5 h-3.5" />
-            <span>Chạy demo 30 ngày</span>
+            <span>Demo 30 ngày</span>
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
           {demoMenuOpen && (
@@ -151,7 +195,7 @@ export function TopBar({
           type="button"
           disabled={settings.killSwitchActive}
           onClick={handleToggleAutopilot}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 border transition-colors ${
+          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 border transition-colors ${
             settings.killSwitchActive
               ? 'bg-slate-200 dark:bg-slate-900 text-slate-400 border-slate-300 dark:border-slate-800 cursor-not-allowed opacity-70'
               : settings.autopilotEnabled
@@ -171,24 +215,24 @@ export function TopBar({
         <button
           type="button"
           onClick={() => runRandomSpotCheck('ceo')}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
           title="Kiểm tra bất chợt màn hình làm việc 1 nhân sự ngẫu nhiên"
         >
           <Eye className="w-3.5 h-3.5" />
-          <span className="hidden lg:inline">Soi ngẫu nhiên</span>
+          <span className="hidden xl:inline">Soi ngẫu nhiên</span>
         </button>
 
         <button
           type="button"
           onClick={() => setMonitorWallOpen(true)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer"
           title="Mở Tường Giám sát 6-9 màn hình nhân sự"
         >
           <Monitor className="w-3.5 h-3.5 text-sky-500" />
-          <span className="hidden lg:inline">Tường GS</span>
+          <span className="hidden xl:inline">Tường GS</span>
         </button>
 
-        <div className="hidden xl:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5">
+        <div className="hidden 2xl:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5">
           {([
             [1, '1 Đề xuất'],
             [2, '2 Cân bằng'],
@@ -209,7 +253,7 @@ export function TopBar({
           ))}
         </div>
 
-        <div className="hidden md:flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5">
+        <div className="hidden md:flex items-center gap-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5">
           {([1, 2, 4] as const).map((sp) => (
             <button
               key={sp}
@@ -241,7 +285,7 @@ export function TopBar({
           <button
             type="button"
             onClick={onOpenSecurityModal}
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-semibold whitespace-nowrap cursor-pointer"
+            className="hidden sm:flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-500/15 text-amber-500 border border-amber-500/30 text-[11px] font-semibold whitespace-nowrap cursor-pointer"
             title="Đổi mật khẩu mặc định của CEO"
           >
             <ShieldAlert className="w-3.5 h-3.5" />
@@ -270,6 +314,21 @@ export function TopBar({
           </button>
         )}
 
+        <PWAInstallButton />
+
+        <button
+          type="button"
+          onClick={() => updateSettings({ ambientAudioEnabled: !settings.ambientAudioEnabled })}
+          className={`p-1.5 rounded-lg border cursor-pointer ${
+            settings.ambientAudioEnabled
+              ? 'border-sky-500/50 bg-sky-500/10 text-sky-500'
+              : 'border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500'
+          }`}
+          title={settings.ambientAudioEnabled ? 'Tắt âm thanh văn phòng' : 'Bật âm thanh văn phòng nhẹ'}
+        >
+          {settings.ambientAudioEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+        </button>
+
         <button
           type="button"
           onClick={() => updateSettings({ dayNightMode: settings.dayNightMode === 'day' ? 'night' : 'day' })}
@@ -290,6 +349,94 @@ export function TopBar({
 
         <button
           type="button"
+          onClick={() => setHelpGuideOpen(true)}
+          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          title="Hướng dẫn nhanh & Phím tắt"
+        >
+          <HelpCircle className="w-4 h-4 text-slate-500 dark:text-slate-300" />
+        </button>
+
+        {/* Grouped Notification Center */}
+        <div className="relative" ref={notifRef}>
+          <button
+            type="button"
+            onClick={() => setNotifMenuOpen((v) => !v)}
+            className="relative p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            title="Trung tâm Thông báo gộp nhóm"
+          >
+            <Bell className="w-4 h-4" />
+            {totalAlerts > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded bg-rose-600 text-white text-[10px] font-bold font-mono-num flex items-center justify-center">
+                {totalAlerts}
+              </span>
+            )}
+          </button>
+
+          {notifMenuOpen && (
+            <div className="absolute right-0 mt-1.5 w-72 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-2 z-50 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between px-2 py-1 border-b border-slate-200 dark:border-slate-800">
+                <span className="font-bold">Thông báo gộp nhóm</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearNotifications();
+                    setNotifMenuOpen(false);
+                  }}
+                  className="text-[11px] text-sky-500 hover:underline cursor-pointer"
+                >
+                  Đánh dấu đã xem
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('approvals');
+                  setNotifMenuOpen(false);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span>Phê duyệt & Hỏi CEO</span>
+                <span className="font-mono-num font-bold text-rose-500">{pendingApprovals + pendingQuestions}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('finance');
+                  setNotifMenuOpen(false);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span>Phiếu chi chờ CEO duyệt</span>
+                <span className="font-mono-num font-bold text-amber-500">{pendingCeoExpenses}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('helpdesk');
+                  setNotifMenuOpen(false);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span>Ticket CSKH đang mở</span>
+                <span className="font-mono-num font-bold text-sky-500">{openTickets}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('engineering');
+                  setNotifMenuOpen(false);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between cursor-pointer"
+              >
+                <span>Sự cố Kỹ thuật chưa xử lý</span>
+                <span className="font-mono-num font-bold text-rose-500">{openIncidents}</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('health')}
           className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-xs font-medium whitespace-nowrap cursor-pointer ${
             settings.envMode === 'live'
@@ -299,24 +446,7 @@ export function TopBar({
           title="Mở Bảng Sức khỏe 24/7, Go-Live Checklist & Sao lưu"
         >
           <Activity className="w-3.5 h-3.5" />
-          <span className="hidden xl:inline">24/7</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            clearNotifications();
-            setActiveTab('approvals');
-          }}
-          className="relative p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-          title="Phê duyệt & Câu hỏi Hỏi CEO"
-        >
-          <Bell className="w-4 h-4" />
-          {totalAlerts > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] font-bold flex items-center justify-center">
-              {totalAlerts}
-            </span>
-          )}
+          <span className="hidden 2xl:inline">24/7</span>
         </button>
 
         <button
@@ -324,7 +454,7 @@ export function TopBar({
           onClick={onToggleRightPanel}
           className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap cursor-pointer"
         >
-          Bảng điều khiển
+          Bảng ĐK
         </button>
       </div>
     </header>

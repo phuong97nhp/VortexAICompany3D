@@ -658,7 +658,136 @@ async function startServer() {
     }
   }
 
-  // === BỔ SUNG M: Server-side Gemini TTS (/api/voice/gemini-tts) ===
+  // === BỔ SUNG M & VOICE UPGRADE: Server-side Voice Key Vault & TTS/STT Providers ===
+  const voiceKeyStore = {
+    azureKey: process.env.AZURE_SPEECH_KEY || '',
+    azureRegion: process.env.AZURE_SPEECH_REGION || 'southeastasia',
+    googleTtsKey: process.env.GOOGLE_CLOUD_TTS_KEY || '',
+    fptKey: process.env.FPT_AI_API_KEY || '',
+  };
+
+  app.get('/api/voice/keys-status', (_req, res) => {
+    res.json({
+      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+      hasAzureKey: Boolean(voiceKeyStore.azureKey),
+      azureRegion: voiceKeyStore.azureRegion,
+      hasGoogleTtsKey: Boolean(voiceKeyStore.googleTtsKey),
+      hasFptKey: Boolean(voiceKeyStore.fptKey),
+      hasWorker: Boolean(getWorkerHttpUrl()),
+    });
+  });
+
+  app.post('/api/voice/keys-save', (req, res) => {
+    const body = (req.body || {}) as {
+      azureKey?: string;
+      azureRegion?: string;
+      googleTtsKey?: string;
+      fptKey?: string;
+    };
+    if (typeof body.azureKey === 'string' && body.azureKey.trim()) voiceKeyStore.azureKey = body.azureKey.trim();
+    if (typeof body.azureRegion === 'string' && body.azureRegion.trim()) voiceKeyStore.azureRegion = body.azureRegion.trim();
+    if (typeof body.googleTtsKey === 'string' && body.googleTtsKey.trim()) voiceKeyStore.googleTtsKey = body.googleTtsKey.trim();
+    if (typeof body.fptKey === 'string' && body.fptKey.trim()) voiceKeyStore.fptKey = body.fptKey.trim();
+    return res.json({
+      ok: true,
+      hasAzureKey: Boolean(voiceKeyStore.azureKey),
+      azureRegion: voiceKeyStore.azureRegion,
+      hasGoogleTtsKey: Boolean(voiceKeyStore.googleTtsKey),
+      hasFptKey: Boolean(voiceKeyStore.fptKey),
+    });
+  });
+
+  const escapeXml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  // 1) Azure Speech Neural Vietnamese TTS
+  app.post('/api/voice/azure-tts', async (req, res) => {
+    const text = String(req.body?.text || '').trim().slice(0, 600);
+    const voiceName = String(req.body?.voiceName || 'vi-VN-HoaiMyNeural');
+    const rate = Number(req.body?.rate ?? 1);
+    const pitch = Number(req.body?.pitch ?? 1);
+    const region = String(req.body?.region || voiceKeyStore.azureRegion || 'southeastasia').trim();
+    const apiKey = voiceKeyStore.azureKey;
+    if (!apiKey) return res.json({ ok: false, error: 'Chưa cấu hình AZURE_SPEECH_KEY' });
+    if (!text) return res.json({ ok: false, error: 'Thiếu nội dung đọc' });
+
+    const ratePct = `${rate >= 1 ? '+' : ''}${Math.round((Math.max(0.7, Math.min(1.4, rate)) - 1) * 100)}%`;
+    const pitchPct = `${pitch >= 1 ? '+' : ''}${Math.round((Math.max(0.8, Math.min(1.2, pitch)) - 1) * 50)}%`;
+    const ssml = `<speak version='1.0' xml:lang='vi-VN'><voice xml:lang='vi-VN' name='${escapeXml(voiceName)}'><prosody rate='${ratePct}' pitch='${pitchPct}'>${escapeXml(text)}</prosody></voice></speak>`;
+
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 10000);
+      const r = await fetch(`https://${encodeURIComponent(region)}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+        method: 'POST',
+        headers: {
+          'Ocp-Apim-Subscription-Key': apiKey,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+          'User-Agent': 'aistudio-build-aicompany',
+        },
+        body: ssml,
+        signal: controller.signal,
+      });
+      clearTimeout(t);
+      if (!r.ok) {
+        return res.json({ ok: false, error: `Azure TTS HTTP ${r.status}` });
+      }
+      const buf = Buffer.from(await r.arrayBuffer());
+      return res.json({ ok: true, audioBase64: buf.toString('base64'), mimeType: 'audio/mpeg' });
+    } catch (err) {
+      return res.json({ ok: false, error: err instanceof Error ? err.message : 'Lỗi kết nối Azure Speech TTS' });
+    }
+  });
+
+  // 2) Edge-TTS relay (/worker)
+  app.post('/api/voice/edge-tts', async (req, res) => {
+    const w = await tryWorkerFetch('/voice/edge-tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w) {
+      const data = await w.json().catch(() => null);
+      if (data) return res.json(data);
+    }
+    return res.json({
+      ok: false,
+      error: 'Edge-TTS chạy qua Local /worker (pip install edge-tts). Đang chuyển sang nguồn tiếp theo.',
+    });
+  });
+
+  // 3) Google Cloud Text-to-Speech (vi-VN Neural2 / Wavenet)
+  app.post('/api/voice/google-tts', async (req, res) => {
+    const text = String(req.body?.text || '').trim().slice(0, 600);
+    const voiceName = String(req.body?.voiceName || 'vi-VN-Neural2-A');
+    const speakingRate = Math.max(0.7, Math.min(1.4, Number(req.body?.rate ?? 1)));
+    const pitchSemi = Math.max(-6, Math.min(6, (Number(req.body?.pitch ?? 1) - 1) * 10));
+    const apiKey = voiceKeyStore.googleTtsKey;
+    if (!apiKey) return res.json({ ok: false, error: 'Chưa cấu hình Google Cloud TTS Key' });
+    if (!text) return res.json({ ok: false, error: 'Thiếu nội dung đọc' });
+
+    try {
+      const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          input: { text },
+          voice: { languageCode: 'vi-VN', name: voiceName },
+          audioConfig: { audioEncoding: 'MP3', speakingRate, pitch: pitchSemi },
+        }),
+      });
+      const data = (await r.json().catch(() => ({}))) as { audioContent?: string; error?: { message?: string } };
+      if (!r.ok || !data.audioContent) {
+        return res.json({ ok: false, error: data.error?.message || `Google TTS HTTP ${r.status}` });
+      }
+      return res.json({ ok: true, audioBase64: data.audioContent, mimeType: 'audio/mpeg' });
+    } catch (err) {
+      return res.json({ ok: false, error: err instanceof Error ? err.message : 'Lỗi Google Cloud TTS' });
+    }
+  });
+
+  // 4) Gemini TTS (gemini-3.8-flash-lite-tts unary WAV)
   app.post('/api/voice/gemini-tts', async (req, res) => {
     const apiKey = (process.env.GEMINI_API_KEY || req.body?.manualApiKey || '').trim();
     const text = String(req.body?.text || '').trim().slice(0, 600);
@@ -666,16 +795,30 @@ async function startServer() {
     if (!apiKey || !text) {
       return res.json({
         ok: false,
-        fallback: 'web_speech',
         error: !apiKey ? 'Chưa có GEMINI_API_KEY cho Gemini TTS' : 'Thiếu nội dung đọc',
       });
     }
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash-lite-tts',
-        contents: [{ role: 'user', parts: [{ text }] }],
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text,
+                speechMetadata: {
+                  style: 'Clear, natural native Vietnamese business voice, standard pronunciation',
+                },
+              } as Record<string, unknown>,
+            ],
+          },
+        ],
         config: {
           responseModalities: ['AUDIO'],
           speechConfig: {
@@ -696,14 +839,116 @@ async function startServer() {
           mimeType: part.inlineData.mimeType || 'audio/wav',
         });
       }
-      return res.json({ ok: false, fallback: 'web_speech', error: 'Gemini TTS không trả dữ liệu audio.' });
+      return res.json({ ok: false, error: 'Gemini TTS không trả dữ liệu audio.' });
     } catch (err) {
       return res.json({
         ok: false,
-        fallback: 'web_speech',
         error: err instanceof Error ? err.message : 'Lỗi gọi Gemini TTS',
       });
     }
+  });
+
+  // 5) FPT.AI Vietnamese TTS v5
+  app.post('/api/voice/fpt-tts', async (req, res) => {
+    const text = String(req.body?.text || '').trim().slice(0, 550);
+    const voice = String(req.body?.voiceName || 'banmai');
+    const speed = String(Math.max(-3, Math.min(3, Math.round((Number(req.body?.rate ?? 1) - 1) * 5))));
+    const apiKey = voiceKeyStore.fptKey;
+    if (!apiKey) return res.json({ ok: false, error: 'Chưa cấu hình FPT.AI API Key' });
+    if (!text) return res.json({ ok: false, error: 'Thiếu nội dung đọc' });
+
+    try {
+      const r = await fetch('https://api.fpt.ai/hmi/tts/v5', {
+        method: 'POST',
+        headers: {
+          'api-key': apiKey,
+          voice,
+          speed,
+          format: 'mp3',
+        },
+        body: text,
+      });
+      const data = (await r.json().catch(() => ({}))) as { async?: string; message?: string };
+      if (!r.ok || !data.async) {
+        return res.json({ ok: false, error: data.message || `FPT.AI HTTP ${r.status}` });
+      }
+      // Poll brief readiness for async mp3 URL
+      for (let i = 0; i < 6; i++) {
+        await new Promise((ok) => setTimeout(ok, 450));
+        const audioRes = await fetch(data.async);
+        if (audioRes.ok) {
+          const buf = Buffer.from(await audioRes.arrayBuffer());
+          if (buf.length > 512) {
+            return res.json({ ok: true, audioBase64: buf.toString('base64'), mimeType: 'audio/mpeg' });
+          }
+        }
+      }
+      return res.json({ ok: false, error: 'FPT.AI audio chưa sẵn sàng kịp thời gian chờ.' });
+    } catch (err) {
+      return res.json({ ok: false, error: err instanceof Error ? err.message : 'Lỗi FPT.AI TTS' });
+    }
+  });
+
+  // 6) Piper Local Offline relay (/worker)
+  app.post('/api/voice/piper-tts', async (req, res) => {
+    const w = await tryWorkerFetch('/voice/piper-tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w) {
+      const data = await w.json().catch(() => null);
+      if (data) return res.json(data);
+    }
+    return res.json({ ok: false, error: 'Piper offline chỉ chạy khi bật /worker cục bộ có model .onnx tiếng Việt.' });
+  });
+
+  // 7) Accurate Vietnamese STT via Gemini 3.5 Transcribe
+  app.post('/api/voice/gemini-stt', async (req, res) => {
+    const apiKey = (process.env.GEMINI_API_KEY || req.body?.manualApiKey || '').trim();
+    const audioBase64 = String(req.body?.audioBase64 || '').trim();
+    const mimeType = String(req.body?.mimeType || 'audio/webm');
+    if (!apiKey || !audioBase64) {
+      return res.json({
+        ok: false,
+        error: !apiKey ? 'Chưa có GEMINI_API_KEY cho Gemini Transcribe STT' : 'Thiếu dữ liệu âm thanh',
+      });
+    }
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.5-transcribe',
+        contents: {
+          parts: [
+            { inlineData: { mimeType, data: audioBase64 } },
+            {
+              text: 'Transcribe this Vietnamese speech accurately into natural Vietnamese text with proper punctuation. Preserve terms like CEO, COO, CFO, HubCW, Affiliate, KPI, OKR, Zalo, TikTok, Shopee.',
+            },
+          ],
+        },
+      });
+      const text = (response.text || '').trim();
+      return res.json({ ok: Boolean(text), text, confidence: 0.92, provider: 'gemini_stt' });
+    } catch (err) {
+      return res.json({ ok: false, error: err instanceof Error ? err.message : 'Lỗi Gemini Transcribe STT' });
+    }
+  });
+
+  // 8) Local Whisper STT relay (/worker)
+  app.post('/api/voice/whisper-stt', async (req, res) => {
+    const w = await tryWorkerFetch('/voice/whisper-stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w) {
+      const data = await w.json().catch(() => null);
+      if (data) return res.json(data);
+    }
+    return res.json({ ok: false, error: 'Whisper offline cần chạy /worker cục bộ.' });
   });
 
   // === BỔ SUNG V: On-Demand GitHub Repo Search & Docker Sandbox Runner ===
@@ -815,11 +1060,21 @@ async function startServer() {
   // === BỔ SUNG X+: Android Device Farm Routes (/api/devices/*) ===
   const DEFAULT_BLOCKED_PACKAGES = [
     'com.vietcombank',
+    'com.VCB',
     'com.mbmobile',
-    'com.techcombank',
+    'vn.com.techcombank',
+    'com.mservice.momotransfer',
     'com.momo.vn',
     'vn.zalopay',
+    'vn.com.vng.zalopay',
     'com.google.android.apps.authenticator2',
+    'com.azure.authenticator',
+    'com.authy.authy',
+    'com.x8bit.bitwarden',
+    'com.agilebits.onepassword',
+    'com.lastpass.lpandroid',
+    'keepass2android.keepass2android',
+    'com.dashlane',
     'com.android.settings',
     'com.google.android.apps.photos',
     'com.android.contacts',
@@ -863,6 +1118,16 @@ async function startServer() {
     foregroundPackage: string;
     lastScreenshotDataUrl?: string;
     lastOcrTextMasked?: string;
+    pausedTask?: {
+      taskId: string;
+      taskTitle: string;
+      stepIndex: number;
+      totalSteps: number;
+      stepLabel: string;
+      progressPercent: number;
+      pausedReason?: string;
+      pausedAt?: number;
+    } | null;
     isStreaming: boolean;
     lastSeenAt: number;
   }> = [
@@ -883,6 +1148,7 @@ async function startServer() {
       foregroundPackage: 'com.ss.android.ugc.trill',
       lastScreenshotDataUrl: renderMockPhoneSvg('com.ss.android.ugc.trill', 'Chờ lệnh kiểm tra', 1),
       lastOcrTextMasked: 'TikTok Business · Bảng tin công khai · Chế độ CHỈ XEM',
+      pausedTask: null,
       isStreaming: false,
       lastSeenAt: Date.now(),
     },
@@ -897,16 +1163,192 @@ async function startServer() {
       adbPath: null,
       platformToolsDownload: {
         url: 'https://developer.android.com/tools/releases/platform-tools',
-        hint: 'Chạy `/worker` trên máy local và cài Android Platform-Tools (ADB) để cắm điện thoại thật.',
+        hint: 'Chạy `/worker` trên máy local và bấm "Tải & Cài ADB Tự động" hoặc cài Platform-Tools để cắm điện thoại thật.',
       },
-      devices: mockDevicesState,
+      troubleshootingTips: [
+        'Trên Preview đám mây: dùng MockDeviceDriver an toàn. Chạy /worker trên máy tính cá nhân để cắm cáp USB.',
+      ],
+      devices: mockDevicesState.map((d) => ({
+        ...d,
+        manufacturer: 'Google (Sandbox)',
+        locale: 'vi-VN',
+        storageFreeMb: 48200,
+        installedPackages: ['com.zing.zalo', 'com.ss.android.ugc.trill', 'com.shopee.vn', 'com.android.chrome'],
+        suggestedAgentId: 'mkt_social',
+        adbKeyboardInstalled: true,
+      })),
     });
+  });
+
+  app.get('/api/devices/doctor', async (_req, res) => {
+    const w = await tryWorkerFetch('/devices/doctor');
+    if (w && w.ok) return res.json(await w.json());
+    return res.json({
+      nodeVersion: process.version,
+      os: process.platform,
+      arch: process.arch,
+      adbFound: false,
+      adbPath: null,
+      adbVersion: null,
+      deviceCount: mockDevicesState.length,
+      devices: mockDevicesState.map((d) => ({
+        id: d.id,
+        serial: d.serial,
+        modelName: d.modelName,
+        status: d.status,
+        batteryPercent: d.batteryPercent,
+        temperatureC: d.temperatureC,
+        adbKeyboardInstalled: true,
+      })),
+      troubleshootingTips: [
+        'Chế độ Preview đang chạy MockDeviceDriver (không cần ADB). Để dùng điện thoại thật, chạy /worker và `npm run device:doctor` trên máy tính.',
+      ],
+      platformToolsDownload: {
+        url: 'https://developer.android.com/tools/releases/platform-tools',
+        hint: 'Tải Platform-Tools hoặc bấm nút Cài ADB Tự động khi đang kết nối /worker.',
+      },
+    });
+  });
+
+  app.post('/api/devices/install-adb', async (req, res) => {
+    const w = await tryWorkerFetch('/devices/install-adb', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    return res.json({
+      ok: false,
+      message: 'Cài ADB tự động thực thi trên máy chạy /worker cục bộ (cổng 4100). Hãy khởi động /worker rồi thử lại.',
+    });
+  });
+
+  app.get('/api/devices/logs', async (req, res) => {
+    const q = req.query.deviceId ? `?deviceId=${encodeURIComponent(String(req.query.deviceId))}` : '';
+    const w = await tryWorkerFetch(`/devices/logs${q}`);
+    if (w && w.ok) return res.json(await w.json());
+    return res.json({ logs: [] });
   });
 
   app.get('/api/devices', async (_req, res) => {
     const w = await tryWorkerFetch('/devices');
     if (w && w.ok) return res.json(await w.json());
     return res.json({ devices: mockDevicesState });
+  });
+
+  app.post('/api/devices/:id/find-element', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/find-element`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    const q = String(req.body?.query || 'Gửi').trim();
+    return res.json({
+      ok: true,
+      elements: [
+        {
+          text: q,
+          contentDesc: q,
+          resourceId: 'com.sandbox:id/primary_btn',
+          className: 'android.widget.Button',
+          bounds: '[180,1040][900,1160]',
+          centerX: 540,
+          centerY: 1100,
+          clickable: true,
+        },
+      ],
+      matchedElement: {
+        text: q,
+        contentDesc: q,
+        resourceId: 'com.sandbox:id/primary_btn',
+        className: 'android.widget.Button',
+        bounds: '[180,1040][900,1160]',
+        centerX: 540,
+        centerY: 1100,
+        clickable: true,
+      },
+    });
+  });
+
+  app.post('/api/devices/:id/wait-for', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/wait-for`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    const q = String(req.body?.query || 'Sẵn sàng').trim();
+    return res.json({
+      ok: true,
+      matchedElement: {
+        text: q,
+        contentDesc: q,
+        resourceId: 'com.sandbox:id/ready_state',
+        className: 'android.widget.TextView',
+        bounds: '[120,420][960,520]',
+        centerX: 540,
+        centerY: 470,
+        clickable: false,
+      },
+    });
+  });
+
+  app.post('/api/devices/:id/playbook', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/playbook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    const steps = Array.isArray(req.body?.steps) ? (req.body.steps as Array<{ action?: string; label?: string }>) : [];
+    const dev = mockDevicesState.find((d) => d.id === req.params.id);
+    if (!dev || dev.controlMode === 'view_only') {
+      return res.json({
+        ok: false,
+        completedSteps: 0,
+        totalSteps: steps.length,
+        error: 'Thiết bị đang ở chế độ CHỈ XEM — hãy bật quyền điều khiển trước khi chạy Playbook.',
+        stepResults: [],
+      });
+    }
+    return res.json({
+      ok: true,
+      completedSteps: steps.length,
+      totalSteps: steps.length,
+      stepResults: steps.map((s, idx) => ({
+        stepIndex: idx + 1,
+        label: s.label || s.action || `Bước ${idx + 1}`,
+        ok: true,
+      })),
+    });
+  });
+
+  app.post('/api/devices/:id/file', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/file`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    const sub = String(req.body?.remoteSubpath || 'output.txt').replace(/^\/+/, '');
+    if (sub.includes('..') || (sub.startsWith('sdcard/') && !sub.startsWith('sdcard/AICompanyWork/'))) {
+      return res.json({ ok: false, error: 'Chỉ cho phép đọc/ghi tệp trong /sdcard/AICompanyWork/' });
+    }
+    return res.json({ ok: true, filePath: `/sdcard/AICompanyWork/${sub}` });
+  });
+
+  app.post('/api/devices/:id/install-apk', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/install-apk`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    if (req.body?.agentId !== 'ceo' && !req.body?.ceoConfirmed) {
+      return res.json({ ok: false, error: 'Cài đặt APK trên điện thoại bắt buộc CEO duyệt trực tiếp.' });
+    }
+    return res.json({ ok: true, filePath: String(req.body?.localPath || 'app.apk') });
   });
 
   app.post('/api/devices/pair-wifi', async (req, res) => {
@@ -942,7 +1384,15 @@ async function startServer() {
     });
     if (w && w.ok) return res.json(await w.json());
     if (mode) {
-      mockDevicesState = mockDevicesState.map((d) => (d.id === req.params.id ? { ...d, controlMode: mode } : d));
+      mockDevicesState = mockDevicesState.map((d) =>
+        d.id === req.params.id
+          ? {
+              ...d,
+              controlMode: mode,
+              status: d.status === 'offline' ? 'offline' : mode === 'view_only' ? 'device' : 'controlled',
+            }
+          : d
+      );
     }
     return res.json({ ok: true });
   });
@@ -961,11 +1411,66 @@ async function startServer() {
     return res.json({ ok: true });
   });
 
+  app.post('/api/devices/:id/task-checkpoint', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/task-checkpoint`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    const { checkpoint } = (req.body || {}) as { checkpoint?: typeof mockDevicesState[number]['pausedTask'] };
+    mockDevicesState = mockDevicesState.map((d) =>
+      d.id === req.params.id ? { ...d, pausedTask: checkpoint ?? null } : d
+    );
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/devices/:id/simulate-connection', async (req, res) => {
+    const { connected } = (req.body || {}) as { connected: boolean };
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/simulate-connection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connected }),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    mockDevicesState = mockDevicesState.map((d) => {
+      if (d.id !== req.params.id) return d;
+      if (!connected) {
+        return {
+          ...d,
+          status: 'offline',
+          isStreaming: false,
+          pausedTask: d.pausedTask || {
+            taskId: 'dev_task_1',
+            taskTitle: `Đăng bài / Kiểm tra ${d.foregroundPackage}`,
+            stepIndex: 2,
+            totalSteps: 4,
+            stepLabel: 'Đang nhập nội dung đã duyệt',
+            progressPercent: 50,
+            pausedReason: 'Mất kết nối cáp USB — đã lưu tiến độ để tiếp tục khi cắm lại.',
+            pausedAt: Date.now(),
+          },
+        };
+      }
+      return {
+        ...d,
+        status: d.controlMode === 'view_only' ? 'device' : 'controlled',
+        pausedTask: d.pausedTask
+          ? { ...d.pausedTask, pausedReason: undefined, pausedAt: undefined }
+          : null,
+        lastSeenAt: Date.now(),
+      };
+    });
+    return res.json({ ok: true, devices: mockDevicesState });
+  });
+
   app.post('/api/devices/:id/stop', async (req, res) => {
     const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/stop`, { method: 'POST' });
     if (w && w.ok) return res.json(await w.json());
     mockDevicesState = mockDevicesState.map((d) =>
-      d.id === req.params.id ? { ...d, controlMode: 'view_only', isStreaming: false } : d
+      d.id === req.params.id
+        ? { ...d, controlMode: 'view_only', status: d.status === 'offline' ? 'offline' : 'device', isStreaming: false }
+        : d
     );
     return res.json({ ok: true });
   });
@@ -981,6 +1486,15 @@ async function startServer() {
     const devIdx = mockDevicesState.findIndex((d) => d.id === req.params.id);
     if (devIdx < 0) return res.status(404).json({ ok: false, error: 'Không tìm thấy thiết bị' });
     const dev = mockDevicesState[devIdx];
+    const beforeShot = dev.lastScreenshotDataUrl;
+
+    if (dev.status === 'offline') {
+      return res.json({
+        ok: false,
+        error: 'Thiết bị đang mất kết nối (offline) — tác vụ tạm dừng và chờ cắm lại cáp USB.',
+      });
+    }
+
     const {
       agentId = 'ceo',
       action = 'screenshot',
@@ -996,10 +1510,10 @@ async function startServer() {
     };
 
     const blocked = new Set([...(policy?.blockedPackages || DEFAULT_BLOCKED_PACKAGES)]);
-    if (packageName && blocked.has(packageName)) {
+    if (packageName && (blocked.has(packageName) || Array.from(blocked).some((b) => packageName.toLowerCase().includes(b.toLowerCase())))) {
       return res.json({
         ok: false,
-        error: `Từ chối tuyệt đối: Ứng dụng "${packageName}" nằm trong danh sách cấm (Ngân hàng/Ví/2FA/Cài đặt).`,
+        error: `Từ chối tuyệt đối: Ứng dụng "${packageName}" nằm trong danh sách cấm (Ngân hàng/Ví/Quản lý MK/2FA/Cài đặt).`,
         log: {
           id: `dlog_${Date.now().toString(36)}`,
           deviceId: dev.id,
@@ -1009,6 +1523,8 @@ async function startServer() {
           foregroundPackage: dev.foregroundPackage,
           result: 'blocked_policy',
           reason: 'Blocked sensitive package',
+          beforeScreenshotDataUrl: beforeShot,
+          afterScreenshotDataUrl: beforeShot,
           timestamp: Date.now(),
         },
       });
@@ -1027,6 +1543,8 @@ async function startServer() {
           foregroundPackage: dev.foregroundPackage,
           result: 'blocked_mode',
           reason: 'View-only mode active',
+          beforeScreenshotDataUrl: beforeShot,
+          afterScreenshotDataUrl: beforeShot,
           timestamp: Date.now(),
         },
       });
@@ -1061,6 +1579,8 @@ async function startServer() {
         action,
         foregroundPackage: nextFg,
         result: 'ok',
+        beforeScreenshotDataUrl: beforeShot,
+        afterScreenshotDataUrl: nextShot,
         timestamp: Date.now(),
       },
     });

@@ -12,6 +12,14 @@ import { parseQuickHireIntent } from './hrEngine';
 import { getLiveAgentById, getLiveAgents, getLiveDepartmentById } from './liveRegistry';
 import { getTaskGroupForAgent, llmClient, LlmChatMessage } from './llm';
 import { ensureMarketingAskCeoHook, runBrandAndChannelLaunch, runMarketingAutopilotCycle } from './marketingEngine';
+import { buildSopRuntimeContext } from './hrSopEngine';
+import { buildProductMasterContext } from './productBankEngine';
+import {
+  buildPlaybookRuntimeContext,
+  findMatchingPlaybook,
+  isHighRiskInstruction,
+  matchExperienceMemories,
+} from './collaborationEngine';
 import { foldVietnamese } from './roleTemplates';
 import { executeAgentTool, getToolsForAgent } from './tools';
 
@@ -284,9 +292,19 @@ export async function runSingleAgentTurn(
     .join('\n');
   const mem = store.agentMemories[agentId];
   const companyCtx = store.companyMemories.map((m) => `- ${m.key}: ${m.content}`).join('\n');
-  const productCtx = PRODUCTS.map(
-    (p) => `[${p.code}] ${p.shortName}: ${p.tagline} (Giá từ ${p.tiers[0].priceLabel})`
-  ).join('\n');
+  const productCtx =
+    buildProductMasterContext(store.productMasters) ||
+    PRODUCTS.map((p) => `[${p.code}] ${p.shortName}: ${p.tagline} (Giá từ ${p.tiers[0].priceLabel})`).join('\n');
+  const sopCtx = buildSopRuntimeContext(agent, store.roleSops);
+  const turnStartMs = Date.now();
+  const matchedPlaybook = findMatchingPlaybook(userInstruction, agent.department, store.playbooks);
+  const matchedMemories = matchExperienceMemories(userInstruction, agent.department, store.experienceMemories);
+  const isHighRiskTask = isHighRiskInstruction(userInstruction);
+  const playbookCtx = buildPlaybookRuntimeContext({
+    playbook: matchedPlaybook,
+    memories: matchedMemories,
+    isHighRisk: isHighRiskTask,
+  });
 
   const taskGroup = getTaskGroupForAgent(agentId);
   const route = store.settings.roleRoutes?.find((r) => r.group === taskGroup);
@@ -342,9 +360,13 @@ export async function runSingleAgentTurn(
     activeRoster,
     ``,
     `## Bối cảnh công ty:\n${companyCtx}`,
-    `\n## Danh mục sản phẩm:\n${productCtx}`,
+    `\n## Danh mục sản phẩm (Product Master chuẩn — 3 trạng thái ĐÃ CÓ / ĐANG PHÁT TRIỂN / KHÔNG CÓ):\n${productCtx}`,
+    sopCtx,
+    playbookCtx,
     `\n## Bộ nhớ của bạn:\n${mem?.longTermSummary || ''}\n${(mem?.shortTerm || []).slice(-3).join('; ')}`,
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   const messages: LlmChatMessage[] = [
     { role: 'system', content: systemDirective },
@@ -574,6 +596,16 @@ export async function runSingleAgentTurn(
         },
       });
       await store.appendAgentMemory(agentId, `Hoàn tất ${doneTask.taskCode}: ${doneTask.title.slice(0, 60)}`);
+      if (matchedPlaybook) {
+        const elapsedMs = Math.max(400, Date.now() - turnStartMs);
+        const estQuality = failedTools.length === 0 ? (deliverables.length > 0 ? 92 : 88) : 78;
+        store
+          .recordPlaybookRun(matchedPlaybook.id, estQuality, {
+            durationMs: elapsedMs,
+            reworked: failedTools.length > 0,
+          })
+          .catch(() => {});
+      }
 
       store.setAgentStatus(agentId, 'done', `Xong ${doneTask.taskCode}`, undefined, 100);
       setTimeout(() => {
@@ -1359,6 +1391,7 @@ export function startBackgroundSchedulers() {
 
   let lastAutopilotRun = 0;
   let lastMarketingRun = 0;
+  let lastIdleBrainstormAt = 0;
   let lastDigestKey = '';
   let lastHeapWarnAt = 0;
 
@@ -1495,7 +1528,7 @@ export function startBackgroundSchedulers() {
     // 6. Cross-Dept Handover SLA Watchdog (BỔ SUNG S)
     for (const tk of store.handoverTickets) {
       if ((tk.status === 'pending_accept' || tk.status === 'accepted') && now > tk.dueAt && tk.escalatedCount === 0) {
-        store.respondHandoverTicket(tk.id, tk.status === 'pending_accept' ? 'accepted' : tk.status).catch(() => {});
+        store.respondHandoverTicket(tk.id, 'escalated_overdue').catch(() => {});
         store.addMessage({
           channelId: 'exec',
           senderId: 'coo',
@@ -1505,6 +1538,37 @@ export function startBackgroundSchedulers() {
           content: `Phiếu bàn giao **${tk.code}** (${tk.fromDepartment} → ${tk.toDepartment}: *${tk.title}*) đã quá hạn SLA ${tk.slaMinutes} phút.`,
           busType: 'escalation',
         });
+      }
+    }
+
+    // 7. Auto Idle-Mode Cross-Dept Money Brainstorm (BỔ SUNG T)
+    const idleIntervalMs = (10 * 60_000) / Math.max(1, store.settings.simulationSpeed || 1);
+    if (
+      store.initialized &&
+      store.settings.autopilotEnabled &&
+      now - lastIdleBrainstormAt >= idleIntervalMs
+    ) {
+      const openTasks = store.tasks.filter((t) => t.status === 'todo' || t.status === 'in_progress').length;
+      const busyAgents = Object.values(store.runtimes).filter(
+        (rt) => rt.status === 'thinking' || rt.status === 'typing'
+      ).length;
+      const waitingCeoIdeas = store.moneyIdeas.filter((m) => m.stage === 'waiting_ceo').length;
+      if (openTasks <= 2 && busyAgents === 0 && waitingCeoIdeas < 3) {
+        lastIdleBrainstormAt = now;
+        store
+          .runIdleMoneyBrainstorm()
+          .then((idea) =>
+            store.addMessage({
+              channelId: 'exec',
+              senderId: 'coo',
+              senderName: getLiveAgentById('coo')?.name || 'COO Điều hành',
+              senderTitle: 'Chế độ Rảnh · Brainstorm Kiếm tiền',
+              department: 'exec',
+              content: `Hàng đợi hiện rảnh (${openTasks} việc mở). COO & Liên phòng ban vừa lập hồ sơ đề xuất **${idea.title}** (Chờ Pháp chế + CEO duyệt trước khi thử nghiệm vi mô, ngân sách ban đầu ${idea.estimatedCostVnd.toLocaleString('vi-VN')}đ).`,
+              busType: 'report',
+            })
+          )
+          .catch(() => {});
       }
     }
   }, 20000);

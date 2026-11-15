@@ -29,6 +29,10 @@ import {
   YAxis,
 } from 'recharts';
 import {
+  computeCashflowForecast90Days,
+  computeProfitAndLoss,
+} from '../../engine/erpEngine';
+import {
   computeFinancialAnalytics,
   currentMonthKey,
   exportExpensesCsv,
@@ -38,7 +42,7 @@ import {
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { ExpenseItem, ExpenseRule, ExpenseRuleType, ExpenseStatus } from '../../types';
 
-type FinSubTab = 'queue' | 'rules' | 'budgets' | 'ledger' | 'analytics' | 'policy';
+type FinSubTab = 'queue' | 'rules' | 'budgets' | 'ledger' | 'gl' | 'pnl_cashflow' | 'tax_vat' | 'analytics' | 'policy';
 
 const STATUS_BADGE: Record<ExpenseStatus, { label: string; cls: string }> = {
   draft: { label: 'Nháp', cls: 'text-slate-500' },
@@ -61,6 +65,10 @@ export function FinanceAccountingPanel() {
   const leads = useCompanyStore((s) => s.leads);
   const adCampaigns = useCompanyStore((s) => s.adCampaigns);
   const marketingChannels = useCompanyStore((s) => s.marketingChannels);
+  const ledgerEntries = useCompanyStore((s) => s.ledgerEntries);
+  const electronicInvoices = useCompanyStore((s) => s.electronicInvoices);
+  const customerAccounts = useCompanyStore((s) => s.customerAccounts);
+  const vendorSubscriptions = useCompanyStore((s) => s.vendorSubscriptions);
   const spendingPolicy = useCompanyStore((s) => s.settings.spendingPolicy);
 
   const createExpense = useCompanyStore((s) => s.createExpense);
@@ -265,6 +273,9 @@ export function FinanceAccountingPanel() {
           {(
             [
               { id: 'queue', label: `Hàng duyệt (${tier1Queue.length + tier2Queue.length})` },
+              { id: 'gl', label: `Sổ cái GL (${ledgerEntries.length})` },
+              { id: 'pnl_cashflow', label: 'P&L & Dòng tiền 90N' },
+              { id: 'tax_vat', label: 'Hỗ trợ Thuế VAT' },
               { id: 'rules', label: `Quy tắc (${expenseRules.length})` },
               { id: 'budgets', label: 'Ngân sách' },
               { id: 'ledger', label: `Sổ chi phí (${expenses.length})` },
@@ -1150,6 +1161,113 @@ export function FinanceAccountingPanel() {
           </div>
         </div>
       )}
+
+      {/* SUBTAB Z.5a: SỔ CÁI TỔNG HỢP (GENERAL LEDGER) */}
+      {subTab === 'gl' && (
+        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+          <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+            Sổ cái Tổng hợp (TK 511 Doanh thu · TK 642 Chi phí · TK 131 Phải thu · TK 331 Phải trả)
+          </div>
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-100 dark:bg-slate-900 text-slate-500">
+                <tr>
+                  <th className="text-left p-2">Mã bút toán</th>
+                  <th className="text-left p-2">TK</th>
+                  <th className="text-left p-2">Diễn giải</th>
+                  <th className="text-right p-2">Nợ (VND)</th>
+                  <th className="text-right p-2">Có (VND)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-mono-num">
+                {ledgerEntries.map((gl) => (
+                  <tr key={gl.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
+                    <td className="p-2 text-sky-500 font-semibold">{gl.entryCode}</td>
+                    <td className="p-2">{gl.accountCode}</td>
+                    <td className="p-2 font-sans">{gl.description}</td>
+                    <td className="p-2 text-right text-rose-500">{gl.debitVnd > 0 ? formatVnd(gl.debitVnd) : '—'}</td>
+                    <td className="p-2 text-right text-emerald-500">{gl.creditVnd > 0 ? formatVnd(gl.creditVnd) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* SUBTAB Z.5b: BÁO CÁO P&L & DỰ BÁO DÒNG TIỀN 90 NGÀY */}
+      {subTab === 'pnl_cashflow' && (() => {
+        const pnl = computeProfitAndLoss(ledgerEntries, electronicInvoices, expenses);
+        const forecast = computeCashflowForecast90Days({
+          startingCashVnd: Math.max(85_000_000, pnl.collectedCashVnd - pnl.totalExpensesVnd + 120_000_000),
+          customers: customerAccounts,
+          invoices: electronicInvoices,
+          vendorSubscriptions,
+        });
+        return (
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="text-[11px] text-slate-400">Doanh thu ghi nhận (511)</div>
+                <div className="text-sm font-bold font-mono-num text-emerald-500">{formatVnd(pnl.recognizedRevenueVnd)}</div>
+              </div>
+              <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="text-[11px] text-slate-400">Chi phí hợp lệ (642)</div>
+                <div className="text-sm font-bold font-mono-num text-rose-500">{formatVnd(pnl.totalExpensesVnd)}</div>
+              </div>
+              <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="text-[11px] text-slate-400">Lợi nhuận ròng P&L</div>
+                <div className="text-sm font-bold font-mono-num text-sky-500">{formatVnd(pnl.netProfitVnd)}</div>
+              </div>
+              <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="text-[11px] text-slate-400">Phải thu AR / Phải trả AP</div>
+                <div className="text-xs font-bold font-mono-num">
+                  AR {formatVnd(pnl.arPendingVnd)} / AP {formatVnd(pnl.apPendingVnd)}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900 space-y-2">
+              <div className="text-xs font-bold">Dự báo Dòng tiền 90 ngày tới</div>
+              <div className="space-y-1.5">
+                {forecast.map((pt) => (
+                  <div key={pt.dayOffset} className="flex items-center justify-between text-xs font-mono-num py-1 border-b border-slate-100 dark:border-slate-800 last:border-0">
+                    <span className="font-sans font-semibold">{pt.label}</span>
+                    <span className="text-emerald-500">+{formatVnd(pt.inflowVnd)}</span>
+                    <span className="text-rose-500">-{formatVnd(pt.outflowVnd)}</span>
+                    <span className="font-bold text-sky-500">{formatVnd(pt.projectedCashVnd)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* SUBTAB Z.5c: HỖ TRỢ BÁO CÁO THUẾ VAT */}
+      {subTab === 'tax_vat' && (() => {
+        const pnl = computeProfitAndLoss(ledgerEntries, electronicInvoices, expenses);
+        const totalVatOutput = electronicInvoices
+          .filter((i) => i.status !== 'cancelled' && i.status !== 'draft')
+          .reduce((s, i) => s + i.vatAmountVnd, 0);
+        return (
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            <div className="p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs font-medium">
+              ⚠️ Lưu ý miễn trừ: Công cụ hỗ trợ kế toán nội bộ tổng hợp số liệu tham khảo, KHÔNG thay thế kế toán trưởng hoặc phần mềm kê khai thuế / hóa đơn điện tử chính thức (VNPT/Viettel/MISA).
+            </div>
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span>Tổng thuế GTGT đầu ra (từ Hóa đơn đã phát hành):</span>
+                <strong className="font-mono-num">{formatVnd(totalVatOutput)}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span>Thuế GTGT phải nộp tạm tính (sau khấu trừ ước tính):</span>
+                <strong className="font-mono-num text-rose-500">{formatVnd(pnl.vatPayableEstimateVnd)}</strong>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* CREATE EXPENSE MODAL */}
       {showCreateModal && (

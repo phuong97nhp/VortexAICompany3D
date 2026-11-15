@@ -1,11 +1,134 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { SafeHtml3D } from './SafeHtml3D';
 import { MEETING_SEATS } from '../../engine/waypoints';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { KpiScreen3D } from './KpiScreen3D';
 import { DEFAULT_BRAND_PALETTE, getSharedLogoTexture } from '../../brand/logoBrand';
+import { OfficePropLayoutItem } from '../../types';
+
+function createWoodFloorTexture(isNight: boolean): THREE.CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = isNight ? '#2B3749' : '#DFD2C0';
+  ctx.fillRect(0, 0, 256, 256);
+  const plankH = 32;
+  for (let row = 0; row < 8; row++) {
+    const shade = (row % 3) * (isNight ? 5 : -6);
+    ctx.fillStyle = isNight ? `rgb(${42 + shade}, ${54 + shade}, ${72 + shade})` : `rgb(${220 + shade}, ${205 + shade}, ${184 + shade})`;
+    ctx.fillRect(0, row * plankH, 256, plankH - 1);
+    ctx.fillStyle = isNight ? 'rgba(15,23,42,0.35)' : 'rgba(120,80,40,0.16)';
+    ctx.fillRect(0, (row + 1) * plankH - 1, 256, 1);
+    const seamX = ((row * 83) % 200) + 28;
+    ctx.fillRect(seamX, row * plankH, 1, plankH);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(8, 6);
+  return tex;
+}
+
+function createTileFloorTexture(isNight: boolean): THREE.CanvasTexture | null {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = isNight ? '#313E57' : '#E9EFF7';
+  ctx.fillRect(0, 0, 256, 256);
+  const cell = 64;
+  ctx.strokeStyle = isNight ? 'rgba(148,163,184,0.18)' : 'rgba(100,116,139,0.16)';
+  ctx.lineWidth = 2;
+  for (let x = 0; x <= 256; x += cell) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 256);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= 256; y += cell) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(256, y);
+    ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(10, 7);
+  return tex;
+}
+
+function CustomEditorPropMesh({ prop }: { prop: OfficePropLayoutItem }) {
+  if (prop.kind === 'plant') {
+    return <PottedPlant position={prop.position} />;
+  }
+  if (prop.kind === 'sofa') {
+    return (
+      <group position={prop.position} rotation={[0, prop.rotationY, 0]}>
+        <mesh position={[0, 0.25, 0]} castShadow>
+          <boxGeometry args={[1.8, 0.42, 0.85]} />
+          <meshStandardMaterial color="#334155" roughness={0.65} />
+        </mesh>
+        <mesh position={[0, 0.56, -0.32]} castShadow>
+          <boxGeometry args={[1.8, 0.45, 0.22]} />
+          <meshStandardMaterial color="#1E293B" roughness={0.65} />
+        </mesh>
+      </group>
+    );
+  }
+  if (prop.kind === 'whiteboard') {
+    return (
+      <group position={prop.position} rotation={[0, prop.rotationY, 0]}>
+        <mesh position={[0, 1.35, 0]} castShadow>
+          <boxGeometry args={[1.9, 1.1, 0.08]} />
+          <meshStandardMaterial color="#F8FAFC" roughness={0.25} />
+        </mesh>
+        <mesh position={[0, 0.45, 0]} castShadow>
+          <boxGeometry args={[1.6, 0.9, 0.06]} />
+          <meshStandardMaterial color="#475569" roughness={0.5} />
+        </mesh>
+      </group>
+    );
+  }
+  if (prop.kind === 'server_rack' || prop.kind === 'cabinet' || prop.kind === 'safe_vault') {
+    const col = prop.kind === 'server_rack' ? '#0F172A' : prop.kind === 'safe_vault' ? '#312E81' : '#475569';
+    return (
+      <mesh position={[prop.position[0], prop.position[1] + 0.85, prop.position[2]]} rotation={[0, prop.rotationY, 0]} castShadow>
+        <boxGeometry args={[0.85, 1.7, 0.75]} />
+        <meshStandardMaterial color={col} roughness={0.35} metalness={0.55} />
+      </mesh>
+    );
+  }
+  if (prop.kind === 'meeting_table') {
+    return (
+      <group position={prop.position} rotation={[0, prop.rotationY, 0]}>
+        <mesh position={[0, 0.72, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[1.35, 1.35, 0.1, 20]} />
+          <meshStandardMaterial color="#92400E" roughness={0.42} />
+        </mesh>
+        <mesh position={[0, 0.36, 0]} castShadow>
+          <cylinderGeometry args={[0.25, 0.35, 0.72, 12]} />
+          <meshStandardMaterial color="#1E293B" metalness={0.4} />
+        </mesh>
+      </group>
+    );
+  }
+  return (
+    <mesh position={[prop.position[0], prop.position[1] + 0.45, prop.position[2]]} rotation={[0, prop.rotationY, 0]} castShadow>
+      <boxGeometry args={[1.1, 0.9, 0.75]} />
+      <meshStandardMaterial color="#64748B" roughness={0.5} />
+    </mesh>
+  );
+}
 
 const MEETING_ROOM_RENDER = {
   id: 'room-meeting',
@@ -73,11 +196,11 @@ function SalesDealBell({ celebrationNonce }: { celebrationNonce: number }) {
         </mesh>
       </group>
       {ringing && (
-        <Html position={[-0.35, 1.9, 1.55]} center distanceFactor={16}>
+        <SafeHtml3D position={[-0.35, 1.9, 1.55]} center distanceFactor={16}>
           <div className="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 font-bold text-[11px] shadow-lg whitespace-nowrap">
             CHỐT DEAL MỚI!
           </div>
-        </Html>
+        </SafeHtml3D>
       )}
     </group>
   );
@@ -187,8 +310,22 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
   const agents = useCompanyStore((s) => s.agents);
   const departments = useCompanyStore((s) => s.departments);
   const expenses = useCompanyStore((s) => s.expenses);
+  const officeLayouts = useCompanyStore((s) => s.officeLayouts);
+  const activeOfficeLayoutId = useCompanyStore((s) => s.settings.activeOfficeLayoutId);
   const brand = useCompanyStore((s) => s.settings.brand) || DEFAULT_BRAND_PALETTE;
   const isNight = dayNightMode === 'night';
+
+  const activeLayout = useMemo(
+    () => officeLayouts.find((p) => p.id === activeOfficeLayoutId) || officeLayouts[0],
+    [officeLayouts, activeOfficeLayoutId]
+  );
+  const isOpenStudio = activeLayout?.id === 'preset_open_studio';
+
+  const woodFloorTex = useMemo(() => createWoodFloorTexture(isNight), [isNight]);
+  const tileFloorTex = useMemo(() => createTileFloorTexture(isNight), [isNight]);
+
+  useEffect(() => () => woodFloorTex?.dispose(), [woodFloorTex]);
+  useEffect(() => () => tileFloorTex?.dispose(), [tileFloorTex]);
 
   const sharedOfficeLogoTex = useMemo(
     () => getSharedLogoTexture(brand.logoDataUrl, brand.primaryColor, brand.secondaryColor),
@@ -224,7 +361,7 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
   const filteredDesks = useMemo(() => {
     const all: Array<{
       agentId?: string;
-      floor: 1 | 2 | 3;
+      floor: number;
       pos: [number, number, number];
       rotY: number;
       color: string;
@@ -236,18 +373,27 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
         rotY: a.deskRotationY || 0,
         color: deptColorMap[a.department] || a.avatarColor,
       })),
+      // Unassigned desks placed in Office Editor
+      ...(activeLayout?.props || [])
+        .filter((p) => p.kind === 'desk' && !p.assignedAgentId)
+        .map((p) => ({
+          floor: p.floor,
+          pos: p.position,
+          rotY: p.rotationY,
+          color: '#64748B',
+        })),
       // Dedicated CEO Executive Desk inside room-exec (Floor 2)
       {
-        floor: 2 as const,
+        floor: 2,
         pos: [-9.0, 3.8, -7.2] as [number, number, number],
         rotY: 0,
         color: '#F59E0B',
       },
     ];
     return all.filter((d) => (visibleFloor === 'all' ? true : d.floor === visibleFloor));
-  }, [activeAgents, deptColorMap, visibleFloor]);
+  }, [activeAgents, activeLayout, deptColorMap, visibleFloor]);
 
-  // Compute dynamic horizontal slab bounds to seamlessly support custom depts & annex desks
+  // Compute dynamic horizontal slab bounds to seamlessly support custom depts, layouts & annex desks
   const wingBounds = useMemo(() => {
     let minX = -13.2;
     let maxX = 13.2;
@@ -263,6 +409,15 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
       maxZ = Math.max(maxZ, d.roomCenter[2] + hd);
     }
 
+    for (const r of activeLayout?.rooms || []) {
+      const hw = (r.size?.[0] || 8) / 2 + 0.5;
+      const hd = (r.size?.[1] || 8) / 2 + 0.5;
+      minX = Math.min(minX, r.center[0] - hw);
+      maxX = Math.max(maxX, r.center[0] + hw);
+      minZ = Math.min(minZ, r.center[2] - hd);
+      maxZ = Math.max(maxZ, r.center[2] + hd);
+    }
+
     for (const a of activeAgents) {
       minX = Math.min(minX, a.deskPosition[0] - 1.8);
       maxX = Math.max(maxX, a.deskPosition[0] + 1.8);
@@ -275,9 +430,22 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
     const cx = (minX + maxX) / 2;
     const cz = (minZ + maxZ) / 2;
     return { minX, maxX, minZ, maxZ, width, depth, cx, cz };
-  }, [departments, activeAgents]);
+  }, [departments, activeLayout, activeAgents]);
 
   const allRooms = useMemo(() => {
+    if (activeLayout && activeLayout.rooms.length > 0) {
+      const deptIdSet = new Set(departments.filter((d) => d.isCustom).map((d) => d.roomId));
+      return activeLayout.rooms.map((r) => ({
+        id: r.id,
+        name: r.name,
+        shortName: r.shortName,
+        floor: r.floor,
+        center: r.center,
+        size: r.size,
+        color: r.color,
+        isCustom: deptIdSet.has(r.id) || r.id.startsWith('room-custom-'),
+      }));
+    }
     const deptRooms = departments.map((d) => ({
       id: d.roomId,
       name: d.name,
@@ -289,7 +457,23 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
       isCustom: Boolean(d.isCustom),
     }));
     return [...deptRooms, { ...MEETING_ROOM_RENDER, isCustom: false }];
-  }, [departments]);
+  }, [departments, activeLayout]);
+
+  const customAddedProps = useMemo(
+    () =>
+      (activeLayout?.props || []).filter(
+        (p) =>
+          p.kind !== 'desk' &&
+          !p.id.startsWith('prop_plant_') &&
+          (visibleFloor === 'all' ? true : p.floor === visibleFloor)
+      ),
+    [activeLayout, visibleFloor]
+  );
+
+  const extraFloors = useMemo(
+    () => (activeLayout?.floors || []).filter((fl) => fl > 3),
+    [activeLayout]
+  );
 
   const deskMeshRef = useRef<THREE.InstancedMesh>(null);
   const deskLegMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -487,10 +671,10 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
           <group>
             <mesh position={[wingBounds.cx, -0.08, wingBounds.cz]} receiveShadow>
               <boxGeometry args={[wingBounds.width, 0.16, wingBounds.depth]} />
-              <meshStandardMaterial color={floor1Color} roughness={0.7} metalness={0.08} />
+              <meshStandardMaterial color={floor1Color} map={tileFloorTex || undefined} roughness={0.7} metalness={0.08} />
             </mesh>
 
-            {renderFloorPartitions(0, 1)}
+            {!isOpenStudio && renderFloorPartitions(0, 1)}
             {renderStairFlight(0)}
 
             {/* Pantry / Coffee Corner */}
@@ -512,41 +696,65 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
         )}
 
         {/* FLOOR 2 STRUCTURE */}
-        {showF2 && (
+        {showF2 && (activeLayout?.floors?.includes(2) ?? true) && (
           <group>
             <mesh position={[wingBounds.cx, 3.72, wingBounds.cz]} receiveShadow>
               <boxGeometry args={[wingBounds.width, 0.16, wingBounds.depth]} />
               <meshStandardMaterial
                 color={floor2Color}
+                map={woodFloorTex || undefined}
                 roughness={0.62}
                 metalness={0.1}
                 transparent={visibleFloor === 'all'}
-                opacity={visibleFloor === 'all' ? 0.34 : 1}
+                opacity={visibleFloor === 'all' ? 0.36 : 1}
                 depthWrite={visibleFloor !== 'all'}
               />
             </mesh>
-            {renderFloorPartitions(3.8, 2)}
+            {!isOpenStudio && renderFloorPartitions(3.8, 2)}
             {renderStairFlight(3.8)}
           </group>
         )}
 
         {/* FLOOR 3 STRUCTURE (Khối Affiliate) */}
-        {showF3 && (
+        {showF3 && (activeLayout?.floors?.includes(3) ?? true) && (
           <group>
             <mesh position={[wingBounds.cx, 7.52, wingBounds.cz]} receiveShadow>
               <boxGeometry args={[wingBounds.width, 0.16, wingBounds.depth]} />
               <meshStandardMaterial
                 color={floor3Color}
+                map={tileFloorTex || undefined}
                 roughness={0.58}
                 metalness={0.12}
                 transparent={visibleFloor === 'all'}
-                opacity={visibleFloor === 'all' ? 0.32 : 1}
+                opacity={visibleFloor === 'all' ? 0.34 : 1}
                 depthWrite={visibleFloor !== 'all'}
               />
             </mesh>
-            {renderFloorPartitions(7.6, 3)}
+            {!isOpenStudio && renderFloorPartitions(7.6, 3)}
           </group>
         )}
+
+        {/* CUSTOM EXTRA FLOORS ADDED IN OFFICE EDITOR (Floor 4+) */}
+        {visibleFloor === 'all' &&
+          extraFloors.map((fl) => {
+            const baseY = (fl - 1) * 3.8;
+            return (
+              <group key={`extra-floor-${fl}`}>
+                <mesh position={[wingBounds.cx, baseY - 0.08, wingBounds.cz]} receiveShadow>
+                  <boxGeometry args={[wingBounds.width, 0.16, wingBounds.depth]} />
+                  <meshStandardMaterial
+                    color={floor2Color}
+                    map={woodFloorTex || undefined}
+                    transparent
+                    opacity={0.35}
+                    depthWrite={false}
+                    roughness={0.65}
+                  />
+                </mesh>
+                {renderStairFlight(baseY - 3.8)}
+              </group>
+            );
+          })}
       </group>
 
       {/* FLOOR 1 ROOMS & DEDICATED FURNITURE */}
@@ -876,7 +1084,7 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
                 />
               </mesh>
 
-              <Html
+              <SafeHtml3D
                 position={[0, 2.65, -halfD + 0.6]}
                 center
                 distanceFactor={22}
@@ -895,10 +1103,15 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
                 >
                   {room.name}
                 </button>
-              </Html>
+              </SafeHtml3D>
             </group>
           );
         })}
+
+      {/* CUSTOM PROPS PLACED VIA OFFICE EDITOR */}
+      {customAddedProps.map((prop) => (
+        <CustomEditorPropMesh key={prop.id} prop={prop} />
+      ))}
 
       {/* INSTANCED WORKSTATIONS */}
       <group name="shared-furniture" userData={{ roomId: 'shared-furniture' }}>

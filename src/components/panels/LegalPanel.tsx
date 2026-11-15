@@ -22,7 +22,7 @@ import { authorize } from '../../engine/rbac';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { ContractVariant, LegalDocument } from '../../types';
 
-type LegalSubTab = 'draft' | 'manage' | 'laws' | 'reports' | 'settings';
+type LegalSubTab = 'draft' | 'manage' | 'laws' | 'reports' | 'risk_pdpa' | 'settings';
 
 function HighlightMissingTokens({ text }: { text: string }) {
   const parts = text.split(/(\[CẦN BỔ SUNG\])/g);
@@ -52,6 +52,9 @@ export function LegalPanel() {
   const contractTemplates = useCompanyStore((s) => s.contractTemplates);
   const contracts = useCompanyStore((s) => s.contracts);
   const legalReports = useCompanyStore((s) => s.legalReports);
+  const legalRisks = useCompanyStore((s) => s.legalRisks);
+  const dataProcessings = useCompanyStore((s) => s.dataProcessings);
+  const dsarRequests = useCompanyStore((s) => s.dsarRequests);
 
   const updateLegalSettings = useCompanyStore((s) => s.updateLegalSettings);
   const draftNewContract = useCompanyStore((s) => s.draftNewContract);
@@ -62,6 +65,8 @@ export function LegalPanel() {
   const runLegalReportForContract = useCompanyStore((s) => s.runLegalReportForContract);
   const checkLegalUpdatesOnline = useCompanyStore((s) => s.checkLegalUpdatesOnline);
   const simulateLawStatusChange = useCompanyStore((s) => s.simulateLawStatusChange);
+  const putLegalRisk = useCompanyStore((s) => s.putLegalRisk);
+  const putDsarRequest = useCompanyStore((s) => s.putDsarRequest);
 
   const [subTab, setSubTab] = useState<LegalSubTab>('draft');
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -223,6 +228,7 @@ export function LegalPanel() {
             ['manage', `Quản lý & Duyệt (${contracts.length})`],
             ['laws', `Kho Luật VN (${legalDocuments.length})`],
             ['reports', `Báo cáo Pháp lý (${legalReports.length})`],
+            ['risk_pdpa', `Rủi ro & PDPA (${legalRisks.length})`],
             ['settings', 'Pháp nhân Bên A'],
           ] as Array<[LegalSubTab, string]>
         ).map(([id, label]) => (
@@ -798,6 +804,76 @@ export function LegalPanel() {
             >
               Lưu hồ sơ Pháp nhân
             </button>
+          </div>
+        )}
+
+        {subTab === 'risk_pdpa' && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900/70 space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white">
+                Sổ đăng ký Rủi ro Tuân thủ (Risk Register · {legalRisks.length})
+              </div>
+              {legalRisks.map((rk) => (
+                <div key={rk.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold">
+                      <span className="font-mono-num text-rose-500 mr-1.5">{rk.code}</span>
+                      {rk.title}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => putLegalRisk({ ...rk, status: rk.status === 'closed' ? 'mitigating' : 'closed' })}
+                      className="px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-500 text-[10.5px] cursor-pointer shrink-0"
+                    >
+                      {rk.status === 'closed' ? 'Đã đóng' : 'Đánh dấu Đóng'}
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Lĩnh vực: {rk.domain} · Khả năng: {rk.likelihood} · Tác động: {rk.impact} · Giảm thiểu: {rk.mitigationPlan}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900/70 space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white">
+                Nhật ký Xử lý Dữ liệu Cá nhân (NĐ 13/2023 · {dataProcessings.length})
+              </div>
+              {dataProcessings.map((dp) => (
+                <div key={dp.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-[11px] space-y-0.5">
+                  <div className="font-bold text-xs">{dp.processName}</div>
+                  <div>Dữ liệu: {dp.dataCategories}</div>
+                  <div>Căn cứ pháp lý: {dp.legalBasis} · Lưu trữ: {dp.retentionPeriod}</div>
+                  <div className="text-emerald-500">Bảo mật: {dp.securityMeasures}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 bg-white dark:bg-slate-900/70 space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white">
+                Yêu cầu Quyền Chủ thể Dữ liệu (DSAR · {dsarRequests.length})
+              </div>
+              {dsarRequests.map((d) => (
+                <div key={d.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold">
+                      <span className="font-mono-num text-violet-500 mr-1.5">{d.code}</span>
+                      {d.requesterMasked} ({d.requestType.toUpperCase()})
+                    </div>
+                    <div className="text-[11px] text-slate-400">Hạn: {d.dueDate} · Trạng thái: {d.status}</div>
+                  </div>
+                  {d.status !== 'completed' && (
+                    <button
+                      type="button"
+                      onClick={() => putDsarRequest({ ...d, status: 'completed' })}
+                      className="px-2.5 py-1 rounded bg-violet-600 text-white text-[11px] font-semibold cursor-pointer"
+                    >
+                      Hoàn tất DSAR
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

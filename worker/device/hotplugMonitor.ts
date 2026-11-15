@@ -1,3 +1,4 @@
+import { spawnAdbTrackDevices } from './adbDiscovery.js';
 import { DeviceDescriptor, DeviceDriver } from './types.js';
 
 export interface HotplugEvent {
@@ -7,16 +8,21 @@ export interface HotplugEvent {
 }
 
 /**
- * Polls connected drivers at 2s intervals (safe cross-platform hotplug fallback alongside adb track-devices)
- * and emits structured transition events without leaking duplicate notifications.
+ * Monitors USB/Wi-Fi/Emulator hotplug via real-time `adb track-devices` stream
+ * paired with a 2s polling safety fallback.
  */
 export class DeviceHotplugMonitor {
   private drivers: DeviceDriver[];
   private lastSnapshot = new Map<string, DeviceDescriptor>();
   private timer: NodeJS.Timeout | null = null;
+  private stopTrackDevices: (() => void) | null = null;
   private listeners = new Set<(evt: HotplugEvent) => void>();
 
   constructor(drivers: DeviceDriver[]) {
+    this.drivers = drivers;
+  }
+
+  updateDrivers(drivers: DeviceDriver[]) {
     this.drivers = drivers;
   }
 
@@ -57,6 +63,7 @@ export class DeviceHotplugMonitor {
             controlMode: prev.controlMode,
             assignedAgentId: prev.assignedAgentId,
             assignedDepartment: prev.assignedDepartment,
+            suggestedAgentId: dev.suggestedAgentId || prev.suggestedAgentId,
             isStreaming: prev.isStreaming,
             lastScreenshotDataUrl: dev.lastScreenshotDataUrl || prev.lastScreenshotDataUrl,
             lastOcrTextMasked: dev.lastOcrTextMasked || prev.lastOcrTextMasked,
@@ -97,7 +104,12 @@ export class DeviceHotplugMonitor {
     return Array.from(this.lastSnapshot.values());
   }
 
-  start(intervalMs = 2000) {
+  start(intervalMs = 2000, adbPath?: string | null) {
+    if (adbPath && !this.stopTrackDevices) {
+      this.stopTrackDevices = spawnAdbTrackDevices(adbPath, () => {
+        this.scanOnce().catch(() => {});
+      });
+    }
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.scanOnce().catch(() => {});
@@ -105,6 +117,10 @@ export class DeviceHotplugMonitor {
   }
 
   stop() {
+    if (this.stopTrackDevices) {
+      this.stopTrackDevices();
+      this.stopTrackDevices = null;
+    }
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;

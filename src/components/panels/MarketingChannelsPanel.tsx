@@ -28,7 +28,7 @@ import { executeAgentTool } from '../../engine/tools';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { ChannelSetupStatus, ScheduledSocialPost, SocialPlatformId } from '../../types';
 
-type MarketingSubView = 'channels' | 'calendar' | 'ads_inbox' | 'analytics';
+type MarketingSubView = 'channels' | 'calendar' | 'ads_inbox' | 'growth_seo' | 'analytics';
 
 const STATUS_DISPLAY: Record<ChannelSetupStatus, { label: string; colorClass: string }> = {
   not_created: {
@@ -58,6 +58,12 @@ export function MarketingChannelsPanel() {
   const movePostToDay = useCompanyStore((s) => s.movePostToDay);
   const adCampaigns = useCompanyStore((s) => s.adCampaigns);
   const socialComments = useCompanyStore((s) => s.socialComments);
+  const marketingAssets = useCompanyStore((s) => s.marketingAssets);
+  const seoKeywords = useCompanyStore((s) => s.seoKeywords);
+  const brandMentions = useCompanyStore((s) => s.brandMentions);
+  const marketingEvents = useCompanyStore((s) => s.marketingEvents);
+  const putSeoKeyword = useCompanyStore((s) => s.putSeoKeyword);
+  const putBrandMention = useCompanyStore((s) => s.putBrandMention);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const setActiveChannel = useCompanyStore((s) => s.setActiveChannel);
 
@@ -198,6 +204,7 @@ export function MarketingChannelsPanel() {
               ['channels', 'Checklist Kênh & Kit', Layers],
               ['calendar', 'Lịch 30 ngày & Preview', Calendar],
               ['ads_inbox', 'Ads & Bình luận', Megaphone],
+              ['growth_seo', 'SEO, Case Study & Sự kiện', Sparkles],
               ['analytics', 'Hiệu quả Kênh', BarChart2],
             ] as Array<[MarketingSubView, string, typeof Layers]>).map(([id, label, Icon]) => (
               <button
@@ -761,6 +768,83 @@ export function MarketingChannelsPanel() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            </div>
+          </div>
+        )}
+
+        {subView === 'growth_seo' && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white">
+                Kho Tài sản Brand & Case Study được khách đồng ý ({marketingAssets.length})
+              </div>
+              {marketingAssets.map((a) => (
+                <div key={a.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-semibold">{a.title}</div>
+                    <div className="text-[11px] text-slate-400">{a.urlOrNote}</div>
+                  </div>
+                  {a.consentedByCustomer && (
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-500 text-[10px] font-semibold">
+                      Đã đồng ý công khai
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white">Theo dõi Thứ hạng SEO Từ khóa ({seoKeywords.length})</div>
+              {seoKeywords.map((kw) => (
+                <div key={kw.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-semibold">{kw.keyword}</div>
+                    <div className="text-[11px] text-slate-400">{kw.targetUrl} · Vol {kw.monthlyVolume}/th</div>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono-num">
+                    <span>Top #{kw.currentRank} → #{kw.targetRank}</span>
+                    <button
+                      type="button"
+                      onClick={() => putSeoKeyword({ ...kw, currentRank: Math.max(1, kw.currentRank - 1), updatedAt: Date.now() })}
+                      className="px-2 py-0.5 rounded bg-sky-600 text-white text-[10.5px] cursor-pointer"
+                    >
+                      +1 hạng
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+              <div className="font-bold text-slate-900 dark:text-white">Lắng nghe Thương hiệu & Sự kiện/Webinar</div>
+              {brandMentions.map((bm) => (
+                <div key={bm.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-semibold">{bm.sourcePlatform} · {bm.authorMasked}</div>
+                    <div className="text-[11px] text-slate-400">&ldquo;{bm.excerpt}&rdquo;</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => putBrandMention({ ...bm, handled: true })}
+                    className="px-2 py-0.5 rounded border border-emerald-500/40 text-emerald-500 text-[10.5px] cursor-pointer"
+                  >
+                    {bm.handled ? 'Đã xử lý' : 'Đánh dấu xong'}
+                  </button>
+                </div>
+              ))}
+              {marketingEvents.map((ev) => (
+                <div key={ev.id} className="p-2 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-semibold">{ev.title}</div>
+                    <div className="text-[11px] text-slate-400 font-mono-num">
+                      Ngày: {ev.eventDate} · ĐK: {ev.registeredCount} · Lead: {ev.leadsGenerated}
+                    </div>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded border border-sky-500/40 text-sky-500 text-[10px] uppercase">
+                    {ev.status}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         )}

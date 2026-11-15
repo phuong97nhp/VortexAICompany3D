@@ -16,24 +16,37 @@ import {
   AgentMemory,
   AgentOnboardingExamAttempt,
   AgentProfile,
+  ApprovalMatrixRule,
   ApprovalRequest,
   AskCeoQuestion,
   AuditLogEntry,
   BackupSnapshotRecord,
+  BcpPlanRecord,
   BrandLaunchKit,
+  BrandMentionRecord,
   ChatMessage,
+  CompanyRiskRegisterItem,
   CompanySettings,
   CompetitorWatchTarget,
   ContractRecord,
   ContractTemplate,
   CouncilSession,
   CrossDeptHandoverTicket,
+  CustomerAccountRecord,
+  CustomerOnboardingPlan,
+  CustomerSurveyRecord,
+  DataProcessingActivityRecord,
+  DataSubjectRequestRecord,
   DepartmentConfig,
   DeviceActionLog,
   DeptInteractionRule,
+  DigitalAssetRecord,
   DocumentItem,
   DurableJob,
+  ElectronicInvoiceRecord,
   EncryptedCredentialRecord,
+  EngineeringIncidentRecord,
+  EngineeringRoadmapItem,
   ExperienceMemoryItem,
   ExpenseBudget,
   ExpenseCategoryConfig,
@@ -45,23 +58,38 @@ import {
   HubCwReconciliationReport,
   HubCwSyncItem,
   HubCwUndoSnapshot,
+  InternalAnnouncementRecord,
+  KnowledgeBaseArticle,
   LeadItem,
+  LeaveRequestRecord,
+  LedgerJournalEntry,
   LegalDocument,
   LegalReportRecord,
   ManagedDeviceRecord,
+  MarketingAssetItem,
   MarketingChannelRecord,
+  MarketingEventRecord,
   MoneyIdeaCard,
+  OfficeLayoutPreset,
   OkrObjective,
   OutreachLogEntry,
   PaymentBankAccount,
   PlaybookSkill,
   ProductMasterRecord,
   QualityReviewCycle,
+  RefundRequestRecord,
   RoleSopDocument,
+  RoomBookingRecord,
+  SalesOrderRecord,
+  SalesQuoteRecord,
   ScheduledSocialPost,
+  SecurityAssetRecord,
+  SeoKeywordTrack,
   SocialCommentInboxItem,
   SocialPostLogEntry,
+  SoftwareReleaseRecord,
   SpotCheckRecord,
+  SupportTicketRecord,
   SystemHealthLog,
   TaskItem,
   TokenUsageRecord,
@@ -69,7 +97,10 @@ import {
   UpgradeChangelogEntry,
   UpgradeProposal,
   VaultAccountStatus,
+  VendorSubscriptionRecord,
   VoiceMeetingSession,
+  WebhookEndpointRecord,
+  WeeklyBoardReportSnapshot,
   WorkflowTrace,
   ZaloPersonalMessageLog,
 } from '../types';
@@ -102,6 +133,8 @@ import {
   buildSeedPlaybooks,
   buildSeedUpgradeProposals,
 } from '../engine/collaborationEngine';
+import { buildSeedErpData, buildLedgerFromInvoiceAndExpense } from '../engine/erpEngine';
+import { buildBuiltinOfficePresets } from '../engine/officeEditorEngine';
 import {
   buildFallbackBaseSettings,
   migrateAgentsList,
@@ -276,6 +309,72 @@ export interface IDataRepository {
   putManagedDevice(d: ManagedDeviceRecord): Promise<void>;
   getDeviceActionLogs(): Promise<DeviceActionLog[]>;
   addDeviceActionLog(l: DeviceActionLog): Promise<void>;
+  // BỔ SUNG Y & Z
+  getOfficeLayouts(): Promise<OfficeLayoutPreset[]>;
+  putOfficeLayout(p: OfficeLayoutPreset): Promise<void>;
+  deleteOfficeLayout(id: string): Promise<void>;
+  getCustomerAccounts(): Promise<CustomerAccountRecord[]>;
+  putCustomerAccount(c: CustomerAccountRecord): Promise<void>;
+  getSalesQuotes(): Promise<SalesQuoteRecord[]>;
+  putSalesQuote(q: SalesQuoteRecord): Promise<void>;
+  getSalesOrders(): Promise<SalesOrderRecord[]>;
+  putSalesOrder(o: SalesOrderRecord): Promise<void>;
+  getElectronicInvoices(): Promise<ElectronicInvoiceRecord[]>;
+  putElectronicInvoice(inv: ElectronicInvoiceRecord): Promise<void>;
+  getRefundRequests(): Promise<RefundRequestRecord[]>;
+  putRefundRequest(r: RefundRequestRecord): Promise<void>;
+  getCustomerSurveys(): Promise<CustomerSurveyRecord[]>;
+  putCustomerSurvey(s: CustomerSurveyRecord): Promise<void>;
+  getSupportTickets(): Promise<SupportTicketRecord[]>;
+  putSupportTicket(t: SupportTicketRecord): Promise<void>;
+  getKbArticles(): Promise<KnowledgeBaseArticle[]>;
+  putKbArticle(k: KnowledgeBaseArticle): Promise<void>;
+  getCustomerOnboardings(): Promise<CustomerOnboardingPlan[]>;
+  putCustomerOnboarding(o: CustomerOnboardingPlan): Promise<void>;
+  getRoadmapItems(): Promise<EngineeringRoadmapItem[]>;
+  putRoadmapItem(r: EngineeringRoadmapItem): Promise<void>;
+  getSoftwareReleases(): Promise<SoftwareReleaseRecord[]>;
+  putSoftwareRelease(r: SoftwareReleaseRecord): Promise<void>;
+  getEngineeringIncidents(): Promise<EngineeringIncidentRecord[]>;
+  putEngineeringIncident(inc: EngineeringIncidentRecord): Promise<void>;
+  getSecurityAssets(): Promise<SecurityAssetRecord[]>;
+  putSecurityAsset(s: SecurityAssetRecord): Promise<void>;
+  getMarketingAssets(): Promise<MarketingAssetItem[]>;
+  putMarketingAsset(m: MarketingAssetItem): Promise<void>;
+  getSeoKeywords(): Promise<SeoKeywordTrack[]>;
+  putSeoKeyword(k: SeoKeywordTrack): Promise<void>;
+  getBrandMentions(): Promise<BrandMentionRecord[]>;
+  putBrandMention(b: BrandMentionRecord): Promise<void>;
+  getMarketingEvents(): Promise<MarketingEventRecord[]>;
+  putMarketingEvent(e: MarketingEventRecord): Promise<void>;
+  getLedgerEntries(): Promise<LedgerJournalEntry[]>;
+  putLedgerEntry(e: LedgerJournalEntry): Promise<void>;
+  getLegalRisks(): Promise<CompanyRiskRegisterItem[]>;
+  putLegalRisk(r: CompanyRiskRegisterItem): Promise<void>;
+  getDataProcessings(): Promise<DataProcessingActivityRecord[]>;
+  putDataProcessing(d: DataProcessingActivityRecord): Promise<void>;
+  getDsarRequests(): Promise<DataSubjectRequestRecord[]>;
+  putDsarRequest(r: DataSubjectRequestRecord): Promise<void>;
+  getLeaveRequests(): Promise<LeaveRequestRecord[]>;
+  putLeaveRequest(r: LeaveRequestRecord): Promise<void>;
+  getAnnouncements(): Promise<InternalAnnouncementRecord[]>;
+  putAnnouncement(a: InternalAnnouncementRecord): Promise<void>;
+  getRoomBookings(): Promise<RoomBookingRecord[]>;
+  putRoomBooking(b: RoomBookingRecord): Promise<void>;
+  getApprovalMatrix(): Promise<ApprovalMatrixRule[]>;
+  putApprovalMatrixRule(r: ApprovalMatrixRule): Promise<void>;
+  getVendorSubscriptions(): Promise<VendorSubscriptionRecord[]>;
+  putVendorSubscription(v: VendorSubscriptionRecord): Promise<void>;
+  getDigitalAssets(): Promise<DigitalAssetRecord[]>;
+  putDigitalAsset(a: DigitalAssetRecord): Promise<void>;
+  getBcpPlans(): Promise<BcpPlanRecord[]>;
+  putBcpPlan(p: BcpPlanRecord): Promise<void>;
+  getWebhookEndpoints(): Promise<WebhookEndpointRecord[]>;
+  putWebhookEndpoint(w: WebhookEndpointRecord): Promise<void>;
+  deleteWebhookEndpoint(id: string): Promise<void>;
+  getWeeklyReports(): Promise<WeeklyBoardReportSnapshot[]>;
+  putWeeklyReport(r: WeeklyBoardReportSnapshot): Promise<void>;
+  clearAllSimulatedData(): Promise<{ removedCount: number }>;
   exportAllTablesForBackup(): Promise<Record<string, unknown>>;
   resetAll(): Promise<void>;
 }
@@ -356,6 +455,38 @@ class AICompanyDexieDB extends Dexie {
   experienceMemories!: Table<ExperienceMemoryItem, string>;
   managedDevices!: Table<ManagedDeviceRecord, string>;
   deviceActionLogs!: Table<DeviceActionLog, string>;
+  // v8 tables (Y & Z)
+  officeLayouts!: Table<OfficeLayoutPreset, string>;
+  customerAccounts!: Table<CustomerAccountRecord, string>;
+  salesQuotes!: Table<SalesQuoteRecord, string>;
+  salesOrders!: Table<SalesOrderRecord, string>;
+  electronicInvoices!: Table<ElectronicInvoiceRecord, string>;
+  refundRequests!: Table<RefundRequestRecord, string>;
+  customerSurveys!: Table<CustomerSurveyRecord, string>;
+  supportTickets!: Table<SupportTicketRecord, string>;
+  kbArticles!: Table<KnowledgeBaseArticle, string>;
+  customerOnboardings!: Table<CustomerOnboardingPlan, string>;
+  roadmapItems!: Table<EngineeringRoadmapItem, string>;
+  softwareReleases!: Table<SoftwareReleaseRecord, string>;
+  engineeringIncidents!: Table<EngineeringIncidentRecord, string>;
+  securityAssets!: Table<SecurityAssetRecord, string>;
+  marketingAssets!: Table<MarketingAssetItem, string>;
+  seoKeywords!: Table<SeoKeywordTrack, string>;
+  brandMentions!: Table<BrandMentionRecord, string>;
+  marketingEvents!: Table<MarketingEventRecord, string>;
+  ledgerEntries!: Table<LedgerJournalEntry, string>;
+  legalRisks!: Table<CompanyRiskRegisterItem, string>;
+  dataProcessings!: Table<DataProcessingActivityRecord, string>;
+  dsarRequests!: Table<DataSubjectRequestRecord, string>;
+  leaveRequests!: Table<LeaveRequestRecord, string>;
+  announcements!: Table<InternalAnnouncementRecord, string>;
+  roomBookings!: Table<RoomBookingRecord, string>;
+  approvalMatrix!: Table<ApprovalMatrixRule, string>;
+  vendorSubscriptions!: Table<VendorSubscriptionRecord, string>;
+  digitalAssets!: Table<DigitalAssetRecord, string>;
+  bcpPlans!: Table<BcpPlanRecord, string>;
+  webhookEndpoints!: Table<WebhookEndpointRecord, string>;
+  weeklyReports!: Table<WeeklyBoardReportSnapshot, string>;
 
   constructor() {
     super('AICompany3D_DB_v1');
@@ -623,6 +754,114 @@ class AICompanyDexieDB extends Dexie {
       managedDevices: 'id, serial, driverType, status, assignedAgentId',
       deviceActionLogs: 'id, deviceId, agentId, action, result, timestamp',
     });
+
+    this.version(8).stores({
+      settings: 'id',
+      agents: 'id, department, employmentStatus, createdAt',
+      departments: 'id, floor, isCustom',
+      hrAudits: 'id, targetId, action, timestamp',
+      tasks: 'id, taskCode, department, assignedTo, status, createdAt',
+      leads: 'id, stage, recommendedProductId, score, province, createdAt',
+      messages: 'id, channelId, senderId, timestamp',
+      documents: 'id, category, authorId, department, createdAt',
+      approvals: 'id, status, type, requestedBy, createdAt',
+      askCeoQuestions: 'id, status, agentId, urgency, createdAt',
+      auditLogs: 'id, agentId, result, timestamp',
+      outreachLogs: 'id, agentId, leadId, channel, timestamp',
+      accounts: 'agentId, role, department, status',
+      vaultStatuses: 'id, platform, status',
+      tokenUsage: 'id, dateKey, agentId, provider, model, timestamp',
+      agentMemories: 'agentId, updatedAt',
+      companyMemories: 'id, key',
+      workflows: 'id, createdAt',
+      agentAppearances: 'agentId',
+      brandKits: 'id, createdAt',
+      marketingChannels: 'id, status, updatedAt',
+      scheduledPosts: 'id, platform, dayNumber, status, createdAt',
+      adCampaigns: 'id, platform, status, createdAt',
+      socialComments: 'id, platform, status, createdAt',
+      socialLogs: 'id, platform, agentId, timestamp',
+      expenses: 'id, expenseCode, status, department, category, requesterId, vendor, createdAt',
+      expenseRules: 'id, ruleCode, enabled, category, createdAt',
+      expenseBudgets: 'id, monthKey, department, category',
+      expenseCategories: 'id, name',
+      agentExternalAccounts: 'agentId, system, externalUserId, status',
+      credentialVault: 'id, agentId, system, updatedAt',
+      hubcwApiLogs: 'id, agentId, module, method, result, timestamp',
+      hubcwSyncQueue: 'id, direction, module, status, createdAt',
+      hubcwUndoSnapshots: 'id, agentId, module, externalRecordId, reverted, createdAt',
+      hubcwReconciliations: 'id, createdAt',
+      affiliateOffers: 'id, networkId, niche, fetchedAt',
+      affiliateProducts: 'id, networkId, niche, fetchedAt',
+      affiliateScores: 'id, productId, label, totalScore, scoredAt',
+      affiliateCampaigns: 'id, productId, networkId, status, updatedAt',
+      trackedLinks: 'id, campaignId, productId, networkId, subId, linkHealth, createdAt',
+      affiliateContent: 'id, campaignId, productId, complianceStatus, createdAt',
+      affiliatePosts: 'id, contentPieceId, campaignId, platform, status, createdAt',
+      affiliateConversions: 'id, networkId, subId, reportDate, importedAt',
+      affiliateCommissions: 'id, networkId, subId, status, reportDate, importedAt',
+      affiliateExperiments: 'id, campaignId, status, createdAt',
+      legalDocuments: 'id, docNumber, domain, effectiveStatus',
+      contractTemplates: 'id, code, category, updatedAt',
+      contracts: 'id, contractCode, templateId, status, expiresAt, createdAt',
+      legalReports: 'id, reportType, contractId, createdAt',
+      durableJobs: 'id, status, agentId, department, traceId, createdAt',
+      systemHealthLogs: 'id, level, component, traceId, timestamp',
+      backupSnapshots: 'id, createdBy, createdAt',
+      spotChecks: 'id, agentId, verdict, inspector, createdAt',
+      voiceMeetings: 'id, status, startedAt',
+      qualityCycles: 'id, department, status, updatedAt',
+      councilSessions: 'id, topic, status, createdAt',
+      zaloPersonalLogs: 'id, peerIdMasked, direction, status, timestamp',
+      okrObjectives: 'id, periodType, ownerAgentId, status, updatedAt',
+      roleSops: 'id, department, roleTitle, version',
+      onboardingExams: 'id, agentId, passed, createdAt',
+      productMasters: 'id, code, lifecycle, updatedAt',
+      bankAccounts: 'id, bankCode, isDefault, updatedAt',
+      interactionRules: 'id, fromDepartment, toDepartment',
+      handoverTickets: 'id, code, fromDepartment, toDepartment, status, dueAt, createdAt',
+      moneyIdeas: 'id, stage, department, proposedBy, updatedAt',
+      competitorWatches: 'id, name, lastCheckedAt',
+      upgradeProposals: 'id, code, rolloutStage, createdAt',
+      upgradeChangelog: 'id, version, proposalId, timestamp',
+      repoEvaluations: 'id, repoFullName, recommendation, createdAt',
+      playbooks: 'id, department, triggerIntent, dirtyNeedsReview',
+      experienceMemories: 'id, department, source, createdAt',
+      managedDevices: 'id, serial, driverType, status, assignedAgentId',
+      deviceActionLogs: 'id, deviceId, agentId, action, result, timestamp',
+      // v8 stores
+      officeLayouts: 'id, name, updatedAt',
+      customerAccounts: 'id, code, tier, status, source, updatedAt',
+      salesQuotes: 'id, code, customerId, status, source, createdAt',
+      salesOrders: 'id, code, customerId, paymentStatus, source, createdAt',
+      electronicInvoices: 'id, invoiceNumber, orderId, status, source, issuedAt',
+      refundRequests: 'id, code, orderId, status, createdAt',
+      customerSurveys: 'id, customerId, kind, source, createdAt',
+      supportTickets: 'id, code, customerId, priority, status, source, createdAt',
+      kbArticles: 'id, category, fromTicketId, published, updatedAt',
+      customerOnboardings: 'id, customerId, status, updatedAt',
+      roadmapItems: 'id, code, quarter, status, source, updatedAt',
+      softwareReleases: 'id, version, environment, status, releasedAt',
+      engineeringIncidents: 'id, code, severity, status, startedAt',
+      securityAssets: 'id, kind, severity, status, lastCheckedAt',
+      marketingAssets: 'id, type, createdAt',
+      seoKeywords: 'id, keyword, updatedAt',
+      brandMentions: 'id, sentiment, handled, detectedAt',
+      marketingEvents: 'id, kind, status, eventDate',
+      ledgerEntries: 'id, entryCode, date, type, accountCode, source, createdAt',
+      legalRisks: 'id, code, domain, status, updatedAt',
+      dataProcessings: 'id, processName, updatedAt',
+      dsarRequests: 'id, code, requestType, status, createdAt',
+      leaveRequests: 'id, agentId, kind, status, createdAt',
+      announcements: 'id, pinned, department, createdAt',
+      roomBookings: 'id, roomId, createdAt',
+      approvalMatrix: 'id, domain',
+      vendorSubscriptions: 'id, status, ownerAgentId',
+      digitalAssets: 'id, kind, status, expiresAt',
+      bcpPlans: 'id, scenario',
+      webhookEndpoints: 'id, enabled',
+      weeklyReports: 'id, generatedAt',
+    });
   }
 }
 
@@ -759,6 +998,53 @@ async function ensureV7Seeded(companyLegalName: string): Promise<void> {
   }
 }
 
+async function ensureV8Seeded(): Promise<void> {
+  const [depts, agents, existingExpenses] = await Promise.all([
+    db.departments.toArray(),
+    db.agents.toArray(),
+    db.expenses.toArray(),
+  ]);
+  if ((await db.officeLayouts.count()) === 0) {
+    await db.officeLayouts.bulkPut(buildBuiltinOfficePresets(depts, agents));
+  }
+  if ((await db.customerAccounts.count()) === 0) {
+    const erp = buildSeedErpData(agents);
+    await Promise.all([
+      db.customerAccounts.bulkPut(erp.customerAccounts),
+      db.salesQuotes.bulkPut(erp.salesQuotes),
+      db.salesOrders.bulkPut(erp.salesOrders),
+      db.electronicInvoices.bulkPut(erp.electronicInvoices),
+      db.refundRequests.bulkPut(erp.refundRequests),
+      db.customerSurveys.bulkPut(erp.customerSurveys),
+      db.supportTickets.bulkPut(erp.supportTickets),
+      db.kbArticles.bulkPut(erp.kbArticles),
+      db.customerOnboardings.bulkPut(erp.customerOnboardings),
+      db.roadmapItems.bulkPut(erp.roadmapItems),
+      db.softwareReleases.bulkPut(erp.softwareReleases),
+      db.engineeringIncidents.bulkPut(erp.engineeringIncidents),
+      db.securityAssets.bulkPut(erp.securityAssets),
+      db.marketingAssets.bulkPut(erp.marketingAssets),
+      db.seoKeywords.bulkPut(erp.seoKeywords),
+      db.brandMentions.bulkPut(erp.brandMentions),
+      db.marketingEvents.bulkPut(erp.marketingEvents),
+      db.legalRisks.bulkPut(erp.legalRisks),
+      db.dataProcessings.bulkPut(erp.dataProcessings),
+      db.dsarRequests.bulkPut(erp.dsarRequests),
+      db.leaveRequests.bulkPut(erp.leaveRequests),
+      db.announcements.bulkPut(erp.announcements),
+      db.roomBookings.bulkPut(erp.roomBookings),
+      db.approvalMatrix.bulkPut(erp.approvalMatrix),
+      db.vendorSubscriptions.bulkPut(erp.vendorSubscriptions),
+      db.digitalAssets.bulkPut(erp.digitalAssets),
+      db.bcpPlans.bulkPut(erp.bcpPlans),
+      db.webhookEndpoints.bulkPut(erp.webhookEndpoints),
+      db.ledgerEntries.bulkPut(
+        buildLedgerFromInvoiceAndExpense(erp.electronicInvoices, existingExpenses, erp.refundRequests)
+      ),
+    ]);
+  }
+}
+
 export async function seedInitialDatabase(): Promise<void> {
   try {
     const existingSettings = await db.settings.get('default');
@@ -771,6 +1057,7 @@ export async function seedInitialDatabase(): Promise<void> {
       await ensureV4Seeded();
       await ensureV6Seeded();
       await ensureV7Seeded(settings.legal?.companyLegalName || settings.companyName || 'AI COMPANY VIỆT NAM');
+      await ensureV8Seeded();
       return;
     }
   } catch (err) {
@@ -796,6 +1083,7 @@ export async function seedInitialDatabase(): Promise<void> {
   await ensureV4Seeded();
   await ensureV6Seeded();
   await ensureV7Seeded(settings.legal?.companyLegalName || settings.companyName);
+  await ensureV8Seeded();
 
   await db.agentMemories.bulkPut(
     seedAgents.map((a) => ({
@@ -1488,6 +1776,225 @@ export class DexieRepository implements IDataRepository {
   }
   async addDeviceActionLog(l: DeviceActionLog) {
     await db.deviceActionLogs.put(l);
+  }
+  // BỔ SUNG Y & Z
+  async getOfficeLayouts() {
+    return db.officeLayouts.orderBy('updatedAt').reverse().toArray();
+  }
+  async putOfficeLayout(p: OfficeLayoutPreset) {
+    await db.officeLayouts.put(p);
+  }
+  async deleteOfficeLayout(id: string) {
+    await db.officeLayouts.delete(id);
+  }
+  async getCustomerAccounts() {
+    return db.customerAccounts.orderBy('updatedAt').reverse().toArray();
+  }
+  async putCustomerAccount(c: CustomerAccountRecord) {
+    await db.customerAccounts.put(c);
+  }
+  async getSalesQuotes() {
+    return db.salesQuotes.orderBy('createdAt').reverse().toArray();
+  }
+  async putSalesQuote(q: SalesQuoteRecord) {
+    await db.salesQuotes.put(q);
+  }
+  async getSalesOrders() {
+    return db.salesOrders.orderBy('createdAt').reverse().toArray();
+  }
+  async putSalesOrder(o: SalesOrderRecord) {
+    await db.salesOrders.put(o);
+  }
+  async getElectronicInvoices() {
+    return db.electronicInvoices.orderBy('issuedAt').reverse().toArray();
+  }
+  async putElectronicInvoice(inv: ElectronicInvoiceRecord) {
+    await db.electronicInvoices.put(inv);
+  }
+  async getRefundRequests() {
+    return db.refundRequests.orderBy('createdAt').reverse().toArray();
+  }
+  async putRefundRequest(r: RefundRequestRecord) {
+    await db.refundRequests.put(r);
+  }
+  async getCustomerSurveys() {
+    return db.customerSurveys.orderBy('createdAt').reverse().toArray();
+  }
+  async putCustomerSurvey(s: CustomerSurveyRecord) {
+    await db.customerSurveys.put(s);
+  }
+  async getSupportTickets() {
+    return db.supportTickets.orderBy('createdAt').reverse().toArray();
+  }
+  async putSupportTicket(t: SupportTicketRecord) {
+    await db.supportTickets.put(t);
+  }
+  async getKbArticles() {
+    return db.kbArticles.orderBy('updatedAt').reverse().toArray();
+  }
+  async putKbArticle(k: KnowledgeBaseArticle) {
+    await db.kbArticles.put(k);
+  }
+  async getCustomerOnboardings() {
+    return db.customerOnboardings.orderBy('updatedAt').reverse().toArray();
+  }
+  async putCustomerOnboarding(o: CustomerOnboardingPlan) {
+    await db.customerOnboardings.put(o);
+  }
+  async getRoadmapItems() {
+    return db.roadmapItems.orderBy('updatedAt').reverse().toArray();
+  }
+  async putRoadmapItem(r: EngineeringRoadmapItem) {
+    await db.roadmapItems.put(r);
+  }
+  async getSoftwareReleases() {
+    return db.softwareReleases.orderBy('releasedAt').reverse().toArray();
+  }
+  async putSoftwareRelease(r: SoftwareReleaseRecord) {
+    await db.softwareReleases.put(r);
+  }
+  async getEngineeringIncidents() {
+    return db.engineeringIncidents.orderBy('startedAt').reverse().toArray();
+  }
+  async putEngineeringIncident(inc: EngineeringIncidentRecord) {
+    await db.engineeringIncidents.put(inc);
+  }
+  async getSecurityAssets() {
+    return db.securityAssets.orderBy('lastCheckedAt').reverse().toArray();
+  }
+  async putSecurityAsset(s: SecurityAssetRecord) {
+    await db.securityAssets.put(s);
+  }
+  async getMarketingAssets() {
+    return db.marketingAssets.orderBy('createdAt').reverse().toArray();
+  }
+  async putMarketingAsset(m: MarketingAssetItem) {
+    await db.marketingAssets.put(m);
+  }
+  async getSeoKeywords() {
+    return db.seoKeywords.orderBy('updatedAt').reverse().toArray();
+  }
+  async putSeoKeyword(k: SeoKeywordTrack) {
+    await db.seoKeywords.put(k);
+  }
+  async getBrandMentions() {
+    return db.brandMentions.orderBy('detectedAt').reverse().toArray();
+  }
+  async putBrandMention(b: BrandMentionRecord) {
+    await db.brandMentions.put(b);
+  }
+  async getMarketingEvents() {
+    return db.marketingEvents.toArray();
+  }
+  async putMarketingEvent(e: MarketingEventRecord) {
+    await db.marketingEvents.put(e);
+  }
+  async getLedgerEntries() {
+    return db.ledgerEntries.orderBy('createdAt').reverse().toArray();
+  }
+  async putLedgerEntry(e: LedgerJournalEntry) {
+    await db.ledgerEntries.put(e);
+  }
+  async getLegalRisks() {
+    return db.legalRisks.orderBy('updatedAt').reverse().toArray();
+  }
+  async putLegalRisk(r: CompanyRiskRegisterItem) {
+    await db.legalRisks.put(r);
+  }
+  async getDataProcessings() {
+    return db.dataProcessings.orderBy('updatedAt').reverse().toArray();
+  }
+  async putDataProcessing(d: DataProcessingActivityRecord) {
+    await db.dataProcessings.put(d);
+  }
+  async getDsarRequests() {
+    return db.dsarRequests.orderBy('createdAt').reverse().toArray();
+  }
+  async putDsarRequest(r: DataSubjectRequestRecord) {
+    await db.dsarRequests.put(r);
+  }
+  async getLeaveRequests() {
+    return db.leaveRequests.orderBy('createdAt').reverse().toArray();
+  }
+  async putLeaveRequest(r: LeaveRequestRecord) {
+    await db.leaveRequests.put(r);
+  }
+  async getAnnouncements() {
+    return db.announcements.orderBy('createdAt').reverse().toArray();
+  }
+  async putAnnouncement(a: InternalAnnouncementRecord) {
+    await db.announcements.put(a);
+  }
+  async getRoomBookings() {
+    return db.roomBookings.orderBy('createdAt').reverse().toArray();
+  }
+  async putRoomBooking(b: RoomBookingRecord) {
+    await db.roomBookings.put(b);
+  }
+  async getApprovalMatrix() {
+    return db.approvalMatrix.toArray();
+  }
+  async putApprovalMatrixRule(r: ApprovalMatrixRule) {
+    await db.approvalMatrix.put(r);
+  }
+  async getVendorSubscriptions() {
+    return db.vendorSubscriptions.toArray();
+  }
+  async putVendorSubscription(v: VendorSubscriptionRecord) {
+    await db.vendorSubscriptions.put(v);
+  }
+  async getDigitalAssets() {
+    return db.digitalAssets.toArray();
+  }
+  async putDigitalAsset(a: DigitalAssetRecord) {
+    await db.digitalAssets.put(a);
+  }
+  async getBcpPlans() {
+    return db.bcpPlans.toArray();
+  }
+  async putBcpPlan(p: BcpPlanRecord) {
+    await db.bcpPlans.put(p);
+  }
+  async getWebhookEndpoints() {
+    return db.webhookEndpoints.toArray();
+  }
+  async putWebhookEndpoint(w: WebhookEndpointRecord) {
+    await db.webhookEndpoints.put(w);
+  }
+  async deleteWebhookEndpoint(id: string) {
+    await db.webhookEndpoints.delete(id);
+  }
+  async getWeeklyReports() {
+    return db.weeklyReports.orderBy('generatedAt').reverse().limit(52).toArray();
+  }
+  async putWeeklyReport(r: WeeklyBoardReportSnapshot) {
+    await db.weeklyReports.put(r);
+  }
+  async clearAllSimulatedData() {
+    let removedCount = 0;
+    const filterAndDelete = async <T extends { id: string }>(table: Table<T, string>, pred: (row: T) => boolean) => {
+      const all = await table.toArray();
+      const ids = all.filter(pred).map((r) => r.id);
+      if (ids.length > 0) {
+        await table.bulkDelete(ids);
+        removedCount += ids.length;
+      }
+    };
+    await Promise.all([
+      filterAndDelete(db.leads, (r) => r.origin === 'simulated'),
+      filterAndDelete(db.tasks, (r) => r.origin === 'simulated'),
+      filterAndDelete(db.documents, (r) => r.origin === 'simulated'),
+      filterAndDelete(db.expenses, (r) => Boolean(r.simulated)),
+      filterAndDelete(db.customerAccounts, (r) => r.source === 'simulated'),
+      filterAndDelete(db.salesQuotes, (r) => r.source === 'simulated'),
+      filterAndDelete(db.salesOrders, (r) => r.source === 'simulated'),
+      filterAndDelete(db.electronicInvoices, (r) => r.source === 'simulated'),
+      filterAndDelete(db.customerSurveys, (r) => r.source === 'simulated'),
+      filterAndDelete(db.supportTickets, (r) => r.source === 'simulated'),
+      filterAndDelete(db.roadmapItems, (r) => r.source === 'simulated'),
+      filterAndDelete(db.ledgerEntries, (r) => r.source === 'simulated'),
+    ]);
+    return { removedCount };
   }
   async exportAllTablesForBackup() {
     const [

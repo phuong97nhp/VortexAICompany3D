@@ -1,12 +1,16 @@
 import { useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { SafeHtml3D } from './SafeHtml3D';
 import { AgentProfile } from '../../types';
 import { useCompanyStore } from '../../store/useCompanyStore';
 import { getDefaultAppearance } from '../../engine/characterAppearance';
 import { ChibiModel } from './ChibiModel';
 import { DEFAULT_BRAND_PALETTE, DEFAULT_LOGO_PUBLIC_PATH } from '../../brand/logoBrand';
+
+// Module-scope reusable vector helpers (zero GC allocations inside useFrame)
+const _sepAccum = new THREE.Vector3();
+const _deltaVec = new THREE.Vector3();
 
 const STATUS_VI: Record<string, { label: string; color: string }> = {
   idle: { label: 'Sẵn sàng', color: '#94A3B8' },
@@ -52,9 +56,16 @@ export function AgentCharacter({
     s.externalAccounts.find((e) => e.agentId === agent.id)
   );
   const isSpeaking = useCompanyStore((s) => s.voiceSpeakingAgentId === agent.id);
-  const hasAssignedDevice = useCompanyStore((s) =>
-    s.managedDevices.some((d) => d.assignedAgentId === agent.id && d.status !== 'offline')
+  const assignedDevice = useCompanyStore((s) =>
+    s.managedDevices.find((d) => d.assignedAgentId === agent.id)
   );
+  const deviceStatus = assignedDevice?.status;
+  const isDeviceControlling =
+    Boolean(assignedDevice) &&
+    deviceStatus !== 'offline' &&
+    deviceStatus !== 'unauthorized' &&
+    (assignedDevice!.controlMode !== 'view_only' || assignedDevice!.isStreaming);
+  const isDeviceDisconnected = Boolean(assignedDevice) && deviceStatus === 'offline';
 
   const isSelected = selectedAgentId === agent.id;
   const status = runtime?.status || 'idle';
@@ -72,13 +83,37 @@ export function AgentCharacter({
     if (!groupRef.current || !runtime) return;
     const target = runtime.currentPosition;
     const pos = groupRef.current.position;
+    const d = Math.min(delta, 0.06);
 
-    pos.x = THREE.MathUtils.damp(pos.x, target[0], 10, delta);
-    pos.y = THREE.MathUtils.damp(pos.y, target[1], 10, delta);
-    pos.z = THREE.MathUtils.damp(pos.z, target[2], 10, delta);
+    // Gentle social-separation steering when walking near peers on the same floor
+    _sepAccum.set(0, 0, 0);
+    if (status === 'walking') {
+      const allRuntimes = useCompanyStore.getState().runtimes;
+      for (const otherId of Object.keys(allRuntimes)) {
+        if (otherId === agent.id) continue;
+        const other = allRuntimes[otherId];
+        if (!other || other.status === 'sleeping') continue;
+        const dy = Math.abs(other.currentPosition[1] - target[1]);
+        if (dy > 1.2) continue;
+        const ox = target[0] - other.currentPosition[0];
+        const oz = target[2] - other.currentPosition[2];
+        const distSq = ox * ox + oz * oz;
+        if (distSq > 0.0001 && distSq < 1.1) {
+          const dist = Math.sqrt(distSq);
+          const push = (1.05 - dist) * 0.42;
+          _sepAccum.x += (ox / dist) * push;
+          _sepAccum.z += (oz / dist) * push;
+        }
+      }
+    }
 
-    const dx = target[0] - prevPos.current.x;
-    const dz = target[2] - prevPos.current.z;
+    pos.x = THREE.MathUtils.damp(pos.x, target[0] + _sepAccum.x, 10, d);
+    pos.y = THREE.MathUtils.damp(pos.y, target[1], 10, d);
+    pos.z = THREE.MathUtils.damp(pos.z, target[2] + _sepAccum.z, 10, d);
+
+    _deltaVec.set(target[0] - prevPos.current.x, 0, target[2] - prevPos.current.z);
+    const dx = _deltaVec.x;
+    const dz = _deltaVec.z;
     const moved = Math.hypot(dx, dz);
 
     if (status === 'walking' && moved > 0.002) {
@@ -99,12 +134,12 @@ export function AgentCharacter({
 
     prevPos.current.set(target[0], target[1], target[2]);
 
-    // Distance-based LOD check
+    // Distance-based LOD check with hysteresis
     const dist = camera.position.distanceTo(pos);
-    const nextFar = dist > 26;
-    const nextVeryFar = dist > 52;
-    if (nextFar !== isFarLod) setIsFarLod(nextFar);
-    if (nextVeryFar !== isVeryFarHud) setIsVeryFarHud(nextVeryFar);
+    if (!isFarLod && dist > 27) setIsFarLod(true);
+    else if (isFarLod && dist < 25) setIsFarLod(false);
+    if (!isVeryFarHud && dist > 53) setIsVeryFarHud(true);
+    else if (isVeryFarHud && dist < 51) setIsVeryFarHud(false);
   });
 
   const shouldRenderHud =
@@ -179,12 +214,13 @@ export function AgentCharacter({
         />
       </mesh>
 
-      {/* Cute Chibi Toy Character */}
+      {/* Humanized Stylized Character */}
       <ChibiModel
         appearance={appearance}
         status={status}
         isSpeaking={isSpeaking}
         isPostingSocial={Boolean(runtime?.isPostingSocial)}
+        isControllingDevice={isDeviceControlling}
         simplifiedLod={graphicsQuality === 'low' || isFarLod}
         showOutline={graphicsQuality !== 'low'}
         paused={paused}
@@ -194,8 +230,8 @@ export function AgentCharacter({
       />
 
       {/* Glowing Android Smartphone Indicator when device assigned to agent */}
-      {hasAssignedDevice && (
-        <mesh
+      {assignedDevice && (
+        <group
           position={[0.42, 0.84, 0.48]}
           rotation={[-0.35, 0.25, 0]}
           onClick={(e) => {
@@ -203,14 +239,28 @@ export function AgentCharacter({
             setActiveTab('devices');
           }}
         >
-          <boxGeometry args={[0.1, 0.17, 0.02]} />
-          <meshStandardMaterial color="#0EA5E9" emissive="#38BDF8" emissiveIntensity={0.85} />
-        </mesh>
+          <mesh>
+            <boxGeometry args={[0.11, 0.19, 0.022]} />
+            <meshStandardMaterial
+              color={isDeviceDisconnected ? '#475569' : '#0F172A'}
+              roughness={0.35}
+              metalness={0.45}
+            />
+          </mesh>
+          <mesh position={[0, 0, 0.012]}>
+            <planeGeometry args={[0.092, 0.165]} />
+            <meshStandardMaterial
+              color={isDeviceDisconnected ? '#F59E0B' : isDeviceControlling ? '#10B981' : '#0EA5E9'}
+              emissive={isDeviceDisconnected ? '#F59E0B' : isDeviceControlling ? '#22C55E' : '#38BDF8'}
+              emissiveIntensity={isDeviceDisconnected ? 0.5 : isDeviceControlling ? 1.35 : 0.7}
+            />
+          </mesh>
+        </group>
       )}
 
       {/* Rounded Head HUD & Speech Bubble */}
       {shouldRenderHud && (
-        <Html
+        <SafeHtml3D
           position={[0, 1.88, 0]}
           center
           distanceFactor={16}
@@ -310,7 +360,7 @@ export function AgentCharacter({
               </div>
             </div>
           </div>
-        </Html>
+        </SafeHtml3D>
       )}
     </group>
   );
