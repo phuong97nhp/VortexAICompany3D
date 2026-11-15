@@ -7,6 +7,7 @@ import { getSharedLogoTexture, getSharedStaffBadgeTexture, DEFAULT_BRAND_PALETTE
 interface ChibiModelProps {
   appearance: AgentAppearance;
   status?: AgentStatus;
+  isSpeaking?: boolean;
   isPostingSocial?: boolean;
   simplifiedLod?: boolean;
   showOutline?: boolean;
@@ -28,6 +29,7 @@ const CONFETTI_OFFSETS: Array<[number, number, number, string]> = [
 export function ChibiModel({
   appearance,
   status = 'idle',
+  isSpeaking = false,
   isPostingSocial = false,
   simplifiedLod = false,
   showOutline = true,
@@ -76,11 +78,14 @@ export function ChibiModel({
       rightEyeRef.current.scale.y = THREE.MathUtils.damp(rightEyeRef.current.scale.y, blinkScaleY, 28, d);
     }
 
-    // 2. Mouth Reaction
+    // 2. Mouth Reaction & Voice Lip-Sync
     if (mouthRef.current) {
       let targetScaleY = 0.7;
       let targetScaleX = 1;
-      if (status === 'talking' || status === 'in_meeting') {
+      if (isSpeaking) {
+        targetScaleY = 0.75 + Math.abs(Math.sin(t * 22)) * 1.75;
+        targetScaleX = 0.95 + Math.cos(t * 17) * 0.35;
+      } else if (status === 'talking' || status === 'in_meeting') {
         targetScaleY = 0.7 + Math.abs(Math.sin(t * 14)) * 1.4;
         targetScaleX = 0.9 + Math.cos(t * 14) * 0.25;
       } else if (status === 'thinking') {
@@ -96,8 +101,8 @@ export function ChibiModel({
         targetScaleY = 0.55;
         targetScaleX = 0.75;
       }
-      mouthRef.current.scale.y = THREE.MathUtils.damp(mouthRef.current.scale.y, targetScaleY, 18, d);
-      mouthRef.current.scale.x = THREE.MathUtils.damp(mouthRef.current.scale.x, targetScaleX, 18, d);
+      mouthRef.current.scale.y = THREE.MathUtils.damp(mouthRef.current.scale.y, targetScaleY, 22, d);
+      mouthRef.current.scale.x = THREE.MathUtils.damp(mouthRef.current.scale.x, targetScaleX, 22, d);
     }
 
     // 3. Body bounce & posture
@@ -775,6 +780,14 @@ export function ChibiModel({
             <meshStandardMaterial color="#DC2626" emissive="#EF4444" emissiveIntensity={0.9} />
           </mesh>
         </group>
+      )}
+
+      {/* VOICE SPEAKING INDICATOR RING */}
+      {isSpeaking && (
+        <mesh position={[0, 1.48, 0]} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.26, 0.015, 6, 20]} />
+          <meshStandardMaterial color="#38BDF8" emissive="#0EA5E9" emissiveIntensity={1.0} />
+        </mesh>
       )}
 
       {/* SOCIAL BROADCAST / POSTING AURA EFFECT */}

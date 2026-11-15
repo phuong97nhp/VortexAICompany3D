@@ -193,6 +193,40 @@ export function buildFallbackBaseSettings(partial?: Partial<CompanySettings>): C
     workingHourStart: 8,
     workingHourEnd: 22,
     timezone: 'Asia/Ho_Chi_Minh',
+    spotCheck: {
+      autoEnabled: true,
+      runsPerDay: 4,
+      startHour: 8,
+      endHour: 20,
+      retentionDays: 14,
+      streamFps: 1,
+      alertOnAbnormal: true,
+    },
+    voice: {
+      provider: 'web_speech',
+      autoReadResponses: false,
+      handsFreeListening: false,
+      quickMeetingDefaultMinutes: 5,
+      maxTurnsPerAgentInMeeting: 4,
+      defaultRecordTranscript: false,
+    },
+    zaloPersonal: {
+      enabled: false,
+      riskConfirmedByCeo: false,
+      dedicatedCompanyAccountConfirmed: false,
+      priorityMode: 'zalo_oa_primary',
+      dailyColdOutboundCap: 20,
+      minDelaySecondsBetweenMsgs: 15,
+      allowColdMarketingApprovedByLegal: false,
+      dncList: [],
+      autoPauseOnAnomaly: true,
+    },
+    hrAutonomy: {
+      maxActiveAgents: 45,
+      dailyTokenCap: 500000,
+      autoScaleMode: 'l1_propose',
+      requireExamPassForLive: true,
+    },
     ...(partial || {}),
   };
 }
@@ -261,6 +295,14 @@ export function migrateSettingsRecord(raw: unknown): {
     affiliate: mergedAff,
     legal: { ...defaults.legal, ...(stored.legal || {}) },
     onboarding: { ...defaults.onboarding, ...(stored.onboarding || {}) },
+    spotCheck: { ...defaults.spotCheck!, ...(stored.spotCheck || {}) },
+    voice: { ...defaults.voice!, ...(stored.voice || {}) },
+    zaloPersonal: {
+      ...defaults.zaloPersonal!,
+      ...(stored.zaloPersonal || {}),
+      dailyColdOutboundCap: Math.min(20, Math.max(1, Number(stored.zaloPersonal?.dailyColdOutboundCap ?? 20))),
+    },
+    hrAutonomy: { ...defaults.hrAutonomy!, ...(stored.hrAutonomy || {}) },
     roleRoutes:
       Array.isArray(stored.roleRoutes) && stored.roleRoutes.length > 0
         ? stored.roleRoutes

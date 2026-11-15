@@ -9,5 +9,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "playbooks/**/*.ts"]
+  "include": ["src/**/*.ts", "playbooks/**/*.ts", "device/**/*.ts"]
 }

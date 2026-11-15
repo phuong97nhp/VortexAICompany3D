@@ -1,4 +1,4 @@
-import { MessageSquare, Shield, X } from 'lucide-react';
+import { Eye, MessageSquare, Shield, Video, Volume2, X } from 'lucide-react';
 import { useCompanyStore } from '../store/useCompanyStore';
 
 export function AgentProfileModal() {
@@ -12,6 +12,9 @@ export function AgentProfileModal() {
   const auditLogs = useCompanyStore((s) => s.auditLogs);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const setActiveChannel = useCompanyStore((s) => s.setActiveChannel);
+  const openSpotCheck = useCompanyStore((s) => s.openSpotCheck);
+  const startVoiceMeeting = useCompanyStore((s) => s.startVoiceMeeting);
+  const speakAsAgent = useCompanyStore((s) => s.speakAsAgent);
 
   if (!selectedAgentId) return null;
   const agent = agents.find((a) => a.id === selectedAgentId);
@@ -22,6 +25,7 @@ export function AgentProfileModal() {
   const memory = agentMemories[agent.id];
   const dept = departments.find((d) => d.id === agent.department);
   const agentLogs = auditLogs.filter((l) => l.agentId === agent.id).slice(0, 6);
+  const probation = agent.probationStatus || 'passed';
 
   return (
     <div className="fixed bottom-4 left-72 z-30 w-96 max-w-[calc(100vw-2rem)] rounded-2xl bg-white/95 dark:bg-slate-950/95 border border-slate-200 dark:border-slate-700 shadow-2xl p-4 text-slate-900 dark:text-slate-100">
@@ -34,10 +38,28 @@ export function AgentProfileModal() {
             {agent.name.split(' ').slice(-1)[0]?.[0] || 'A'}
           </div>
           <div className="min-w-0">
-            <h3 className="font-bold text-sm truncate">
-              {agent.name}
-              {agent.nickname ? ` (${agent.nickname})` : ''}
-            </h3>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h3 className="font-bold text-sm truncate">
+                {agent.name}
+                {agent.nickname ? ` (${agent.nickname})` : ''}
+              </h3>
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                  probation === 'passed'
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                    : probation === 'probation'
+                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    : 'bg-rose-500/15 text-rose-500'
+                }`}
+              >
+                {probation === 'passed'
+                  ? 'Đạt chuẩn'
+                  : probation === 'probation'
+                  ? 'Thử việc'
+                  : 'Chưa đạt'}
+                {typeof agent.lastExamScore === 'number' ? ` · ${agent.lastExamScore}/100` : ''}
+              </span>
+            </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
               {agent.title} · {dept?.shortName || agent.department} (Tầng {agent.floor})
             </p>
@@ -73,11 +95,30 @@ export function AgentProfileModal() {
         </div>
       </div>
 
+      {agent.voiceProfile && (
+        <div className="mt-2 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px]">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Volume2 className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+            <span className="truncate">
+              Giọng: <strong>{agent.voiceProfile.timbre}</strong> ({agent.voiceProfile.gender === 'female' ? 'Nữ' : 'Nam'}) ·
+              pitch {agent.voiceProfile.pitch.toFixed(2)} · tốc độ {agent.voiceProfile.rate.toFixed(2)}x
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => speakAsAgent(agent.id, `Chào Chủ tịch, em là ${agent.name}, ${agent.title}, sẵn sàng nhận việc.`)}
+            className="px-1.5 py-0.5 rounded border border-slate-300 dark:border-slate-700 hover:border-sky-500 text-[10px] whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            Nghe thử
+          </button>
+        </div>
+      )}
+
       <div className="mt-3">
         <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">
           Quyền hạn ({account?.permissions.length || 0}) & Tool được phép ({agent.allowedTools.length})
         </div>
-        <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto text-[10px]">
+        <div className="flex flex-wrap gap-1 max-h-14 overflow-y-auto text-[10px]">
           {(account?.permissions || []).map((p) => (
             <span key={p} className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono-num">
               {p}
@@ -86,9 +127,9 @@ export function AgentProfileModal() {
         </div>
       </div>
 
-      <div className="mt-3">
+      <div className="mt-2.5">
         <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Bộ nhớ gần nhất</div>
-        <div className="text-[11px] p-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-h-20 overflow-y-auto space-y-0.5">
+        <div className="text-[11px] p-2 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 max-h-18 overflow-y-auto space-y-0.5">
           {(memory?.shortTerm || []).slice(-3).map((m, idx) => (
             <div key={idx} className="truncate">• {m}</div>
           ))}
@@ -101,9 +142,9 @@ export function AgentProfileModal() {
       </div>
 
       {agentLogs.length > 0 && (
-        <div className="mt-2.5">
+        <div className="mt-2">
           <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Nhật ký gần đây</div>
-          <div className="space-y-1 max-h-16 overflow-y-auto text-[10px]">
+          <div className="space-y-1 max-h-14 overflow-y-auto text-[10px]">
             {agentLogs.map((l) => (
               <div key={l.id} className="flex items-center justify-between text-slate-500 dark:text-slate-400">
                 <span className="truncate">{l.action}</span>
@@ -116,14 +157,39 @@ export function AgentProfileModal() {
         </div>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          onClick={() => openSpotCheck(agent.id)}
+          className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-xs font-semibold whitespace-nowrap cursor-pointer"
+        >
+          <Eye className="w-3.5 h-3.5" />
+          <span>Xem màn hình</span>
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            startVoiceMeeting({
+              title: `Trao đổi 1-1: ${agent.name}`,
+              participantIds: [agent.id],
+              isQuickFiveMin: true,
+            })
+          }
+          className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 text-xs font-semibold whitespace-nowrap cursor-pointer"
+        >
+          <Video className="w-3.5 h-3.5" />
+          <span>Gặp mặt</span>
+        </button>
+      </div>
+
+      <div className="mt-1.5 flex items-center gap-1.5">
         <button
           type="button"
           onClick={() => {
             setActiveChannel(`dm:${agent.id}`);
             setActiveTab('chat');
           }}
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer"
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
         >
           <MessageSquare className="w-3.5 h-3.5" />
           <span>Chat riêng</span>
@@ -131,14 +197,14 @@ export function AgentProfileModal() {
         <button
           type="button"
           onClick={() => setActiveTab('customizer')}
-          className="py-2 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium cursor-pointer"
+          className="py-2 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap cursor-pointer"
         >
           3D
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('rbac')}
-          className="py-2 px-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium cursor-pointer"
+          className="py-2 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap cursor-pointer"
         >
           Hồ sơ HR
         </button>
@@ -146,4 +212,3 @@ export function AgentProfileModal() {
     </div>
   );
 }
-

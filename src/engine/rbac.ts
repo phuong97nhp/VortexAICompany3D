@@ -40,6 +40,19 @@ export const ALL_PERMISSIONS: Array<{ key: Permission; label: string; group: str
   { key: 'legal:publish_template', label: 'Xuất bản mẫu hợp đồng chuẩn', group: 'Phòng Pháp chế' },
   { key: 'hubcw:read', label: 'Đọc dữ liệu Hub.ChuyenWeb', group: 'Kết nối phần mềm thật' },
   { key: 'hubcw:write', label: 'Ghi dữ liệu vào Hub.ChuyenWeb (qua Cổng kiểm soát)', group: 'Kết nối phần mềm thật' },
+  { key: 'monitor:view', label: 'Kiểm tra màn hình làm việc bất chợt (CEO/COO)', group: 'Giám sát & Hội họp' },
+  { key: 'voice:host', label: 'Điều phối phòng họp giọng nói & trực tiếp', group: 'Giám sát & Hội họp' },
+  { key: 'zalo_personal:send', label: 'Nhắn tin qua Zalo Cá nhân có rào chắn', group: 'Giám sát & Hội họp' },
+  { key: 'okr:manage', label: 'Quản trị mục tiêu OKR & phễu doanh thu', group: 'Chiến lược & Sản phẩm' },
+  { key: 'sop:manage', label: 'Quản trị quy chuẩn SOP & Onboarding nhân sự', group: 'Nhân sự & Quản trị' },
+  { key: 'product:approve', label: 'Phê duyệt thông số Sản phẩm & Tuyên bố', group: 'Chiến lược & Sản phẩm' },
+  { key: 'bank:manage', label: 'Quản trị tài khoản ngân hàng công ty (2FA CEO)', group: 'Tài chính & Kế toán' },
+  { key: 'handover:manage', label: 'Bàn giao liên phòng ban & SLA', group: 'Vận hành' },
+  { key: 'strategy:propose', label: 'Đề xuất kế hoạch kiếm tiền & theo dõi đối thủ', group: 'Chiến lược & Sản phẩm' },
+  { key: 'upgrade:approve', label: 'Phê duyệt & triển khai nâng cấp công ty', group: 'Nhân sự & Quản trị' },
+  { key: 'repo:scout', label: 'Tìm & thử nghiệm repo Git trong Sandbox', group: 'Vận hành' },
+  { key: 'playbook:manage', label: 'Quản trị Playbook tự học & bộ nhớ kinh nghiệm', group: 'Vận hành' },
+  { key: 'device:control', label: 'Điều khiển thiết bị Android cắm qua ADB', group: 'Thiết bị & Tự động' },
 ];
 
 export const TOOL_PERMISSION_MAP: Partial<Record<ToolName, Permission>> = {
@@ -85,6 +98,15 @@ export const TOOL_PERMISSION_MAP: Partial<Record<ToolName, Permission>> = {
   legal_research: 'legal:research',
   draft_contract: 'contract:draft',
   review_contract: 'contract:review',
+  quality_review: 'doc:write',
+  council_vote: 'strategy:propose',
+  create_handover: 'handover:manage',
+  propose_money_plan: 'strategy:propose',
+  watch_competitor: 'strategy:propose',
+  propose_upgrade: 'strategy:propose',
+  scout_git_repo: 'repo:scout',
+  run_device_action: 'device:control',
+  send_zalo_personal: 'zalo_personal:send',
 };
 
 export const ROLE_LABELS: Record<RoleType, string> = {
@@ -110,6 +132,11 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
     'hubcw:read',
     'hubcw:write',
     'affiliate:read',
+    'monitor:view',
+    'voice:host',
+    'okr:manage',
+    'handover:manage',
+    'strategy:propose',
   ],
   'Dept Head': [
     'lead:read',
@@ -124,6 +151,9 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleType, Permission[]> = {
     'memory:write',
     'hubcw:read',
     'hubcw:write',
+    'handover:manage',
+    'strategy:propose',
+    'playbook:manage',
   ],
   Specialist: [
     'lead:read',

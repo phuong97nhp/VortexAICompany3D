@@ -3,8 +3,10 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import {
   AlertTriangle,
+  BookOpen,
   Building2,
   Check,
+  ClipboardCheck,
   Copy,
   Database,
   Download,
@@ -20,6 +22,7 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  Sliders,
   Sparkles,
   Trash2,
   Unlock,
@@ -27,6 +30,7 @@ import {
   UserMinus,
   UserPlus,
   Users,
+  Volume2,
   X,
 } from 'lucide-react';
 import {
@@ -52,6 +56,7 @@ import {
   suggestToolsForDescription,
 } from '../../engine/roleTemplates';
 import { executeAgentTool } from '../../engine/tools';
+import { proposeUniqueVoiceForAgent } from '../../engine/voiceEngine';
 import { yFromFloor } from '../../engine/waypoints';
 import { HUBCW_MODULES } from '../../integrations/hubcw/hubcw.config';
 import { useCompanyStore } from '../../store/useCompanyStore';
@@ -62,15 +67,17 @@ import {
   AgentProfile,
   EmploymentStatus,
   HairStyleId,
+  HrAutonomySettings,
   OutfitStyleId,
   Permission,
   ProviderId,
+  RoleSopDocument,
   RoleType,
   ToolName,
 } from '../../types';
 import { ChibiModel } from '../office3d/ChibiModel';
 
-type HrSubTab = 'roster' | 'depts' | 'rbac' | 'audit';
+type HrSubTab = 'roster' | 'depts' | 'rbac' | 'sop' | 'scaling' | 'audit';
 
 const ALL_TOOLS: Array<{ name: ToolName; label: string }> = [
   { name: 'write_document', label: 'Viết tài liệu' },
@@ -161,12 +168,22 @@ export function HrManagementPanel() {
   const lockExternalAccount = useCompanyStore((s) => s.lockExternalAccount);
   const rotateExternalToken = useCompanyStore((s) => s.rotateExternalToken);
   const updateAgentHubCwPermissions = useCompanyStore((s) => s.updateAgentHubCwPermissions);
+  const roleSops = useCompanyStore((s) => s.roleSops);
+  const onboardingExams = useCompanyStore((s) => s.onboardingExams);
+  const hrRecommendations = useCompanyStore((s) => s.hrRecommendations);
+  const upsertRoleSop = useCompanyStore((s) => s.upsertRoleSop);
+  const runAgentOnboardingExam = useCompanyStore((s) => s.runAgentOnboardingExam);
+  const runHrWorkloadCheck = useCompanyStore((s) => s.runHrWorkloadCheck);
+  const resolveHrRecommendation = useCompanyStore((s) => s.resolveHrRecommendation);
+  const updateSettings = useCompanyStore((s) => s.updateSettings);
 
   const [subTab, setSubTab] = useState<HrSubTab>('roster');
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | EmploymentStatus>('active');
   const [notice, setNotice] = useState<string | null>(null);
+  const [examAgentId, setExamAgentId] = useState<string>(agents[0]?.id || 'sdr_1');
+  const [editingSop, setEditingSop] = useState<RoleSopDocument | null>(null);
 
   // Hire Wizard state
   const [showHireModal, setShowHireModal] = useState(false);
@@ -598,12 +615,14 @@ export function HrManagementPanel() {
     <div className="flex flex-col h-full p-3 gap-2.5 overflow-hidden">
       {/* Top Sub-navigation + Headcount Telemetry */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex-wrap">
           {(
             [
               { id: 'roster', label: `Nhân sự (${activeAgents.length}/60)` },
               { id: 'depts', label: `Phòng ban (${departments.length})` },
               { id: 'rbac', label: 'Phân quyền & Token' },
+              { id: 'sop', label: `SOP & Thi thử việc (${roleSops.length})` },
+              { id: 'scaling', label: `Co giãn HR (${hrRecommendations.filter((r) => r.status === 'pending_ceo').length})` },
               { id: 'audit', label: `Lịch sử HR (${hrAudits.length})` },
             ] as const
           ).map((t) => (
@@ -1334,7 +1353,307 @@ export function HrManagementPanel() {
         </div>
       )}
 
-      {/* SUBTAB 4: HR AUDIT LOG */}
+      {/* SUBTAB 4: SOP LIBRARY & ONBOARDING EXAMS (BỔ SUNG Q) */}
+      {subTab === 'sop' && (
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <ClipboardCheck className="w-4 h-4 text-emerald-500" />
+                <span>Thi thử việc Tình huống & Cổng Go-Live (Onboarding Exam)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={examAgentId}
+                  onChange={(e) => setExamAgentId(e.target.value)}
+                  className="px-2 py-1 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs"
+                >
+                  {activeAgents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.probationStatus || 'passed'})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const attempt = await runAgentOnboardingExam(examAgentId);
+                    if (attempt) {
+                      setNotice(
+                        `Kết quả thi ${attempt.agentName}: ${attempt.score}/100 (${attempt.passed ? 'ĐẠT - Đủ chuẩn LIVE' : 'CHƯA ĐẠT - Tiếp tục thử việc'}).`
+                      );
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  Chạy thi thử việc
+                </button>
+              </div>
+            </div>
+
+            {onboardingExams.length > 0 && (
+              <div className="space-y-1.5 pt-1 border-t border-slate-200 dark:border-slate-800">
+                {onboardingExams.slice(0, 5).map((ex) => (
+                  <div
+                    key={ex.id}
+                    className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-semibold">{ex.agentName}</span>{' '}
+                      <span className="text-[11px] text-slate-400">
+                        · {ex.questions.length} tình huống ({ex.questions.filter((q) => q.passed).length}/{ex.questions.length} đạt)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 font-mono-num">
+                      <span className={ex.passed ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>
+                        {ex.score}/100 · {ex.passed ? 'ĐẠT' : 'TRƯỢT'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold">
+              <BookOpen className="w-4 h-4 text-sky-500" />
+              <span>Thư viện Quy chuẩn SOP có phiên bản ({roleSops.length} bộ quy trình)</span>
+            </div>
+
+            {editingSop && (
+              <div className="rounded-lg border border-sky-500/40 bg-white dark:bg-slate-900 p-3 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold">
+                    Chỉnh sửa SOP: {editingSop.roleTitle} (v{editingSop.version} → v{editingSop.version + 1})
+                  </span>
+                  <button type="button" onClick={() => setEditingSop(null)} className="cursor-pointer">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <textarea
+                  rows={2}
+                  value={editingSop.mission}
+                  onChange={(e) => setEditingSop({ ...editingSop, mission: e.target.value })}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  placeholder="Sứ mệnh vai trò..."
+                />
+                <input
+                  type="text"
+                  value={editingSop.bannedPhrases.join(', ')}
+                  onChange={(e) =>
+                    setEditingSop({
+                      ...editingSop,
+                      bannedPhrases: e.target.value
+                        .split(',')
+                        .map((x) => x.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800"
+                  placeholder="Cụm từ cấm (cách nhau dấu phẩy)..."
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await upsertRoleSop({
+                        ...editingSop,
+                        version: editingSop.version + 1,
+                        updatedAt: Date.now(),
+                      });
+                      setNotice(`Đã nâng cấp SOP ${editingSop.roleTitle} lên v${editingSop.version + 1}.`);
+                      setEditingSop(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-sky-600 text-white font-semibold cursor-pointer"
+                  >
+                    Lưu phiên bản mới
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {roleSops.map((sop) => (
+              <div
+                key={sop.id}
+                className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 space-y-1.5 text-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-semibold">
+                    {sop.roleTitle}{' '}
+                    <span className="font-mono-num text-[11px] text-sky-500">v{sop.version}</span>{' '}
+                    <span className="text-[11px] text-slate-400">· Hiệu lực: {sop.effectiveFrom}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingSop(sop)}
+                    className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 hover:border-sky-500 text-[11px] cursor-pointer"
+                  >
+                    Sửa SOP
+                  </button>
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">{sop.mission}</div>
+                <div className="text-[10.5px] text-rose-500">
+                  Cấm nói: {sop.bannedPhrases.join(' · ') || 'Không có'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SUBTAB 5: DYNAMIC HR SCALING & AUTONOMY (BỔ SUNG Q) */}
+      {subTab === 'scaling' && (
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 space-y-2.5 text-xs">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 font-bold">
+                <Sliders className="w-4 h-4 text-sky-500" />
+                <span>Chính sách Co giãn Nhân sự & Định mức</span>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const recs = await runHrWorkloadCheck();
+                  setNotice(`Đã quét tải công việc toàn công ty: phát hiện ${recs.length} đề xuất mới.`);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
+              >
+                Quét tải công việc ngay
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="block text-[10.5px] text-slate-400 mb-0.5">Trần nhân sự tối đa (≤60)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={settings.hrAutonomy?.maxActiveAgents ?? 48}
+                  onChange={(e) => {
+                    const current: HrAutonomySettings = settings.hrAutonomy || {
+                      maxActiveAgents: 48,
+                      dailyTokenCap: 500000,
+                      autoScaleMode: 'l1_propose',
+                      requireExamPassForLive: true,
+                    };
+                    updateSettings({
+                      hrAutonomy: {
+                        ...current,
+                        maxActiveAgents: Math.min(60, Math.max(1, Number(e.target.value) || 48)),
+                      },
+                    });
+                  }}
+                  className="w-full rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+                />
+              </div>
+              <div>
+                <label className="block text-[10.5px] text-slate-400 mb-0.5">Chế độ tự chủ HR</label>
+                <select
+                  value={settings.hrAutonomy?.autoScaleMode || 'l1_propose'}
+                  onChange={(e) => {
+                    const current: HrAutonomySettings = settings.hrAutonomy || {
+                      maxActiveAgents: 48,
+                      dailyTokenCap: 500000,
+                      autoScaleMode: 'l1_propose',
+                      requireExamPassForLive: true,
+                    };
+                    updateSettings({
+                      hrAutonomy: {
+                        ...current,
+                        autoScaleMode: e.target.value as HrAutonomySettings['autoScaleMode'],
+                      },
+                    });
+                  }}
+                  className="w-full rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+                >
+                  <option value="l1_propose">L1: Chỉ đề xuất chờ CEO</option>
+                  <option value="l2_template_within_cap">L2: Nhân bản mẫu trong trần</option>
+                  <option value="l3_full_within_cap">L3: Co giãn tự động trong trần</option>
+                </select>
+              </div>
+              <label className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 cursor-pointer">
+                <span>Bắt buộc đỗ Exam trước LIVE</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.hrAutonomy?.requireExamPassForLive ?? true)}
+                  onChange={(e) => {
+                    const current: HrAutonomySettings = settings.hrAutonomy || {
+                      maxActiveAgents: 48,
+                      dailyTokenCap: 500000,
+                      autoScaleMode: 'l1_propose',
+                      requireExamPassForLive: true,
+                    };
+                    updateSettings({
+                      hrAutonomy: { ...current, requireExamPassForLive: e.target.checked },
+                    });
+                  }}
+                  className="w-4 h-4 accent-emerald-600"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {hrRecommendations.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-4 text-center text-xs text-slate-400">
+                Chưa có đề xuất co giãn nhân sự nào. Bấm "Quét tải công việc ngay" để HR Agent kiểm tra hàng đợi & tỷ lệ trễ ETA.
+              </div>
+            ) : (
+              hrRecommendations.map((rec) => (
+                <div
+                  key={rec.id}
+                  className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2.5 space-y-1.5 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">
+                      [{rec.type.toUpperCase()}] Phòng {rec.targetDepartment}
+                    </span>
+                    <span
+                      className={`text-[10.5px] font-semibold ${
+                        rec.status === 'approved' || rec.status === 'auto_applied'
+                          ? 'text-emerald-500'
+                          : rec.status === 'rejected'
+                          ? 'text-rose-500'
+                          : 'text-amber-500'
+                      }`}
+                    >
+                      {rec.status}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300">{rec.reason}</div>
+                  <div className="flex items-center justify-between text-[10.5px] font-mono-num text-slate-400">
+                    <span>
+                      Queue: {rec.queueDepth} · Trễ: {rec.delayRatePercent}% · +{rec.estimatedExtraDailyTokens.toLocaleString('vi-VN')} tok/ngày (~{formatVnd(rec.estimatedCostVndMonth)}/th)
+                    </span>
+                    {rec.status === 'pending_ceo' && (
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => resolveHrRecommendation(rec.id, 'approved')}
+                          className="px-2 py-0.5 rounded bg-emerald-600 text-white font-semibold cursor-pointer"
+                        >
+                          Duyệt
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resolveHrRecommendation(rec.id, 'rejected')}
+                          className="px-2 py-0.5 rounded border border-rose-500/40 text-rose-500 font-semibold cursor-pointer"
+                        >
+                          Từ chối
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SUBTAB 6: HR AUDIT LOG */}
       {subTab === 'audit' && (
         <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
           {hrAudits.length === 0 ? (
@@ -1517,6 +1836,27 @@ export function HrManagementPanel() {
                           ))}
                         </div>
                       </div>
+
+                      {(() => {
+                        const voicePreview = proposeUniqueVoiceForAgent(
+                          {
+                            id: editingAgentId || 'preview_new_agent',
+                            name: wName || 'Nhân sự mới',
+                            gender: wGender,
+                            role: wRole,
+                          },
+                          agents
+                        );
+                        return (
+                          <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center gap-2 text-[11px]">
+                            <Volume2 className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                            <span className="truncate">
+                              Giọng nói cấp tự động (chống trùng): <strong>{voicePreview.timbre}</strong> · pitch{' '}
+                              {voicePreview.pitch.toFixed(2)} · rate {voicePreview.rate.toFixed(2)}x ({voicePreview.geminiVoiceName})
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </>
                 )}

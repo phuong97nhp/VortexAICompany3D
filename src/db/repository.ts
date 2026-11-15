@@ -14,6 +14,7 @@ import {
   AgentAppearance,
   AgentExternalAccount,
   AgentMemory,
+  AgentOnboardingExamAttempt,
   AgentProfile,
   ApprovalRequest,
   AskCeoQuestion,
@@ -22,16 +23,23 @@ import {
   BrandLaunchKit,
   ChatMessage,
   CompanySettings,
+  CompetitorWatchTarget,
   ContractRecord,
   ContractTemplate,
+  CouncilSession,
+  CrossDeptHandoverTicket,
   DepartmentConfig,
+  DeviceActionLog,
+  DeptInteractionRule,
   DocumentItem,
   DurableJob,
   EncryptedCredentialRecord,
+  ExperienceMemoryItem,
   ExpenseBudget,
   ExpenseCategoryConfig,
   ExpenseItem,
   ExpenseRule,
+  GitRepoEvaluationReport,
   HrAuditEntry,
   HubCwApiLog,
   HubCwReconciliationReport,
@@ -40,17 +48,30 @@ import {
   LeadItem,
   LegalDocument,
   LegalReportRecord,
+  ManagedDeviceRecord,
   MarketingChannelRecord,
+  MoneyIdeaCard,
+  OkrObjective,
   OutreachLogEntry,
+  PaymentBankAccount,
+  PlaybookSkill,
+  ProductMasterRecord,
+  QualityReviewCycle,
+  RoleSopDocument,
   ScheduledSocialPost,
   SocialCommentInboxItem,
   SocialPostLogEntry,
+  SpotCheckRecord,
   SystemHealthLog,
   TaskItem,
   TokenUsageRecord,
   TrackedLink,
+  UpgradeChangelogEntry,
+  UpgradeProposal,
   VaultAccountStatus,
+  VoiceMeetingSession,
   WorkflowTrace,
+  ZaloPersonalMessageLog,
 } from '../types';
 import { buildDefaultHubCwPermissions } from '../integrations/hubcw/hubcw.config';
 import { generateHashedAgentToken, generateSalt, hashPasswordPBKDF2 } from '../engine/auth';
@@ -71,6 +92,16 @@ import {
   buildInitialSocialLogs,
 } from '../engine/marketingSeeds';
 import { buildSeedContractTemplates, buildSeedLegalDocuments } from '../engine/legal/legalSeeds';
+import { buildSeedOkrObjectives } from '../engine/okrEngine';
+import { buildSeedRoleSops } from '../engine/hrSopEngine';
+import { buildSeedBankAccounts, buildSeedProductMasters } from '../engine/productBankEngine';
+import {
+  buildSeedCompetitorWatches,
+  buildSeedExperienceMemories,
+  buildSeedInteractionRules,
+  buildSeedPlaybooks,
+  buildSeedUpgradeProposals,
+} from '../engine/collaborationEngine';
 import {
   buildFallbackBaseSettings,
   migrateAgentsList,
@@ -201,6 +232,50 @@ export interface IDataRepository {
   addSystemHealthLog(l: SystemHealthLog): Promise<void>;
   getBackupSnapshots(): Promise<BackupSnapshotRecord[]>;
   putBackupSnapshot(b: BackupSnapshotRecord): Promise<void>;
+  // BỔ SUNG L–X+: SpotCheck, Voice, Quality/Council, Zalo Personal, OKR, HR SOP, Product/Bank, Collab, Devices
+  getSpotChecks(): Promise<SpotCheckRecord[]>;
+  putSpotCheck(s: SpotCheckRecord): Promise<void>;
+  getVoiceMeetings(): Promise<VoiceMeetingSession[]>;
+  putVoiceMeeting(m: VoiceMeetingSession): Promise<void>;
+  getQualityCycles(): Promise<QualityReviewCycle[]>;
+  putQualityCycle(q: QualityReviewCycle): Promise<void>;
+  getCouncilSessions(): Promise<CouncilSession[]>;
+  putCouncilSession(c: CouncilSession): Promise<void>;
+  getZaloPersonalLogs(): Promise<ZaloPersonalMessageLog[]>;
+  addZaloPersonalLog(l: ZaloPersonalMessageLog): Promise<void>;
+  getOkrObjectives(): Promise<OkrObjective[]>;
+  putOkrObjective(o: OkrObjective): Promise<void>;
+  getRoleSops(): Promise<RoleSopDocument[]>;
+  putRoleSop(s: RoleSopDocument): Promise<void>;
+  getOnboardingExams(): Promise<AgentOnboardingExamAttempt[]>;
+  putOnboardingExam(e: AgentOnboardingExamAttempt): Promise<void>;
+  getProductMasters(): Promise<ProductMasterRecord[]>;
+  putProductMaster(p: ProductMasterRecord): Promise<void>;
+  getBankAccounts(): Promise<PaymentBankAccount[]>;
+  putBankAccount(b: PaymentBankAccount): Promise<void>;
+  deleteBankAccount(id: string): Promise<void>;
+  getInteractionRules(): Promise<DeptInteractionRule[]>;
+  putInteractionRule(r: DeptInteractionRule): Promise<void>;
+  getHandoverTickets(): Promise<CrossDeptHandoverTicket[]>;
+  putHandoverTicket(t: CrossDeptHandoverTicket): Promise<void>;
+  getMoneyIdeas(): Promise<MoneyIdeaCard[]>;
+  putMoneyIdea(m: MoneyIdeaCard): Promise<void>;
+  getCompetitorWatches(): Promise<CompetitorWatchTarget[]>;
+  putCompetitorWatch(c: CompetitorWatchTarget): Promise<void>;
+  getUpgradeProposals(): Promise<UpgradeProposal[]>;
+  putUpgradeProposal(u: UpgradeProposal): Promise<void>;
+  getUpgradeChangelog(): Promise<UpgradeChangelogEntry[]>;
+  putUpgradeChangelog(c: UpgradeChangelogEntry): Promise<void>;
+  getRepoEvaluations(): Promise<GitRepoEvaluationReport[]>;
+  putRepoEvaluation(r: GitRepoEvaluationReport): Promise<void>;
+  getPlaybooks(): Promise<PlaybookSkill[]>;
+  putPlaybook(p: PlaybookSkill): Promise<void>;
+  getExperienceMemories(): Promise<ExperienceMemoryItem[]>;
+  putExperienceMemory(e: ExperienceMemoryItem): Promise<void>;
+  getManagedDevices(): Promise<ManagedDeviceRecord[]>;
+  putManagedDevice(d: ManagedDeviceRecord): Promise<void>;
+  getDeviceActionLogs(): Promise<DeviceActionLog[]>;
+  addDeviceActionLog(l: DeviceActionLog): Promise<void>;
   exportAllTablesForBackup(): Promise<Record<string, unknown>>;
   resetAll(): Promise<void>;
 }
@@ -259,6 +334,28 @@ class AICompanyDexieDB extends Dexie {
   durableJobs!: Table<DurableJob, string>;
   systemHealthLogs!: Table<SystemHealthLog, string>;
   backupSnapshots!: Table<BackupSnapshotRecord, string>;
+  // v7 tables (L - X+)
+  spotChecks!: Table<SpotCheckRecord, string>;
+  voiceMeetings!: Table<VoiceMeetingSession, string>;
+  qualityCycles!: Table<QualityReviewCycle, string>;
+  councilSessions!: Table<CouncilSession, string>;
+  zaloPersonalLogs!: Table<ZaloPersonalMessageLog, string>;
+  okrObjectives!: Table<OkrObjective, string>;
+  roleSops!: Table<RoleSopDocument, string>;
+  onboardingExams!: Table<AgentOnboardingExamAttempt, string>;
+  productMasters!: Table<ProductMasterRecord, string>;
+  bankAccounts!: Table<PaymentBankAccount, string>;
+  interactionRules!: Table<DeptInteractionRule, string>;
+  handoverTickets!: Table<CrossDeptHandoverTicket, string>;
+  moneyIdeas!: Table<MoneyIdeaCard, string>;
+  competitorWatches!: Table<CompetitorWatchTarget, string>;
+  upgradeProposals!: Table<UpgradeProposal, string>;
+  upgradeChangelog!: Table<UpgradeChangelogEntry, string>;
+  repoEvaluations!: Table<GitRepoEvaluationReport, string>;
+  playbooks!: Table<PlaybookSkill, string>;
+  experienceMemories!: Table<ExperienceMemoryItem, string>;
+  managedDevices!: Table<ManagedDeviceRecord, string>;
+  deviceActionLogs!: Table<DeviceActionLog, string>;
 
   constructor() {
     super('AICompany3D_DB_v1');
@@ -449,6 +546,83 @@ class AICompanyDexieDB extends Dexie {
       systemHealthLogs: 'id, level, component, traceId, timestamp',
       backupSnapshots: 'id, createdBy, createdAt',
     });
+
+    this.version(7).stores({
+      settings: 'id',
+      agents: 'id, department, employmentStatus, createdAt',
+      departments: 'id, floor, isCustom',
+      hrAudits: 'id, targetId, action, timestamp',
+      tasks: 'id, taskCode, department, assignedTo, status, createdAt',
+      leads: 'id, stage, recommendedProductId, score, province, createdAt',
+      messages: 'id, channelId, senderId, timestamp',
+      documents: 'id, category, authorId, department, createdAt',
+      approvals: 'id, status, type, requestedBy, createdAt',
+      askCeoQuestions: 'id, status, agentId, urgency, createdAt',
+      auditLogs: 'id, agentId, result, timestamp',
+      outreachLogs: 'id, agentId, leadId, channel, timestamp',
+      accounts: 'agentId, role, department, status',
+      vaultStatuses: 'id, platform, status',
+      tokenUsage: 'id, dateKey, agentId, provider, model, timestamp',
+      agentMemories: 'agentId, updatedAt',
+      companyMemories: 'id, key',
+      workflows: 'id, createdAt',
+      agentAppearances: 'agentId',
+      brandKits: 'id, createdAt',
+      marketingChannels: 'id, status, updatedAt',
+      scheduledPosts: 'id, platform, dayNumber, status, createdAt',
+      adCampaigns: 'id, platform, status, createdAt',
+      socialComments: 'id, platform, status, createdAt',
+      socialLogs: 'id, platform, agentId, timestamp',
+      expenses: 'id, expenseCode, status, department, category, requesterId, vendor, createdAt',
+      expenseRules: 'id, ruleCode, enabled, category, createdAt',
+      expenseBudgets: 'id, monthKey, department, category',
+      expenseCategories: 'id, name',
+      agentExternalAccounts: 'agentId, system, externalUserId, status',
+      credentialVault: 'id, agentId, system, updatedAt',
+      hubcwApiLogs: 'id, agentId, module, method, result, timestamp',
+      hubcwSyncQueue: 'id, direction, module, status, createdAt',
+      hubcwUndoSnapshots: 'id, agentId, module, externalRecordId, reverted, createdAt',
+      hubcwReconciliations: 'id, createdAt',
+      affiliateOffers: 'id, networkId, niche, fetchedAt',
+      affiliateProducts: 'id, networkId, niche, fetchedAt',
+      affiliateScores: 'id, productId, label, totalScore, scoredAt',
+      affiliateCampaigns: 'id, productId, networkId, status, updatedAt',
+      trackedLinks: 'id, campaignId, productId, networkId, subId, linkHealth, createdAt',
+      affiliateContent: 'id, campaignId, productId, complianceStatus, createdAt',
+      affiliatePosts: 'id, contentPieceId, campaignId, platform, status, createdAt',
+      affiliateConversions: 'id, networkId, subId, reportDate, importedAt',
+      affiliateCommissions: 'id, networkId, subId, status, reportDate, importedAt',
+      affiliateExperiments: 'id, campaignId, status, createdAt',
+      legalDocuments: 'id, docNumber, domain, effectiveStatus',
+      contractTemplates: 'id, code, category, updatedAt',
+      contracts: 'id, contractCode, templateId, status, expiresAt, createdAt',
+      legalReports: 'id, reportType, contractId, createdAt',
+      durableJobs: 'id, status, agentId, department, traceId, createdAt',
+      systemHealthLogs: 'id, level, component, traceId, timestamp',
+      backupSnapshots: 'id, createdBy, createdAt',
+      // v7 stores
+      spotChecks: 'id, agentId, verdict, inspector, createdAt',
+      voiceMeetings: 'id, status, startedAt',
+      qualityCycles: 'id, department, status, updatedAt',
+      councilSessions: 'id, topic, status, createdAt',
+      zaloPersonalLogs: 'id, peerIdMasked, direction, status, timestamp',
+      okrObjectives: 'id, periodType, ownerAgentId, status, updatedAt',
+      roleSops: 'id, department, roleTitle, version',
+      onboardingExams: 'id, agentId, passed, createdAt',
+      productMasters: 'id, code, lifecycle, updatedAt',
+      bankAccounts: 'id, bankCode, isDefault, updatedAt',
+      interactionRules: 'id, fromDepartment, toDepartment',
+      handoverTickets: 'id, code, fromDepartment, toDepartment, status, dueAt, createdAt',
+      moneyIdeas: 'id, stage, department, proposedBy, updatedAt',
+      competitorWatches: 'id, name, lastCheckedAt',
+      upgradeProposals: 'id, code, rolloutStage, createdAt',
+      upgradeChangelog: 'id, version, proposalId, timestamp',
+      repoEvaluations: 'id, repoFullName, recommendation, createdAt',
+      playbooks: 'id, department, triggerIntent, dirtyNeedsReview',
+      experienceMemories: 'id, department, source, createdAt',
+      managedDevices: 'id, serial, driverType, status, assignedAgentId',
+      deviceActionLogs: 'id, deviceId, agentId, action, result, timestamp',
+    });
   }
 }
 
@@ -555,6 +729,36 @@ async function ensureV6Seeded(): Promise<void> {
   }
 }
 
+async function ensureV7Seeded(companyLegalName: string): Promise<void> {
+  if ((await db.okrObjectives.count()) === 0) {
+    await db.okrObjectives.bulkPut(buildSeedOkrObjectives());
+  }
+  if ((await db.roleSops.count()) === 0) {
+    await db.roleSops.bulkPut(buildSeedRoleSops());
+  }
+  if ((await db.productMasters.count()) === 0) {
+    await db.productMasters.bulkPut(buildSeedProductMasters());
+  }
+  if ((await db.bankAccounts.count()) === 0) {
+    await db.bankAccounts.bulkPut(buildSeedBankAccounts(companyLegalName));
+  }
+  if ((await db.interactionRules.count()) === 0) {
+    await db.interactionRules.bulkPut(buildSeedInteractionRules());
+  }
+  if ((await db.competitorWatches.count()) === 0) {
+    await db.competitorWatches.bulkPut(buildSeedCompetitorWatches());
+  }
+  if ((await db.playbooks.count()) === 0) {
+    await db.playbooks.bulkPut(buildSeedPlaybooks());
+  }
+  if ((await db.upgradeProposals.count()) === 0) {
+    await db.upgradeProposals.bulkPut(buildSeedUpgradeProposals());
+  }
+  if ((await db.experienceMemories.count()) === 0) {
+    await db.experienceMemories.bulkPut(buildSeedExperienceMemories());
+  }
+}
+
 export async function seedInitialDatabase(): Promise<void> {
   try {
     const existingSettings = await db.settings.get('default');
@@ -566,6 +770,7 @@ export async function seedInitialDatabase(): Promise<void> {
       await ensureMarketingSeeded(settings.companyName || 'AI COMPANY VIỆT NAM');
       await ensureV4Seeded();
       await ensureV6Seeded();
+      await ensureV7Seeded(settings.legal?.companyLegalName || settings.companyName || 'AI COMPANY VIỆT NAM');
       return;
     }
   } catch (err) {
@@ -590,6 +795,7 @@ export async function seedInitialDatabase(): Promise<void> {
   await ensureMarketingSeeded(settings.companyName);
   await ensureV4Seeded();
   await ensureV6Seeded();
+  await ensureV7Seeded(settings.legal?.companyLegalName || settings.companyName);
 
   await db.agentMemories.bulkPut(
     seedAgents.map((a) => ({
@@ -1153,6 +1359,136 @@ export class DexieRepository implements IDataRepository {
   async putBackupSnapshot(b: BackupSnapshotRecord) {
     await db.backupSnapshots.put(b);
   }
+  // BỔ SUNG L–X+ implementations
+  async getSpotChecks() {
+    return db.spotChecks.orderBy('createdAt').reverse().limit(300).toArray();
+  }
+  async putSpotCheck(s: SpotCheckRecord) {
+    await db.spotChecks.put(s);
+  }
+  async getVoiceMeetings() {
+    return db.voiceMeetings.orderBy('startedAt').reverse().limit(50).toArray();
+  }
+  async putVoiceMeeting(m: VoiceMeetingSession) {
+    await db.voiceMeetings.put(m);
+  }
+  async getQualityCycles() {
+    return db.qualityCycles.orderBy('updatedAt').reverse().limit(100).toArray();
+  }
+  async putQualityCycle(q: QualityReviewCycle) {
+    await db.qualityCycles.put(q);
+  }
+  async getCouncilSessions() {
+    return db.councilSessions.orderBy('createdAt').reverse().limit(50).toArray();
+  }
+  async putCouncilSession(c: CouncilSession) {
+    await db.councilSessions.put(c);
+  }
+  async getZaloPersonalLogs() {
+    return db.zaloPersonalLogs.orderBy('timestamp').reverse().limit(250).toArray();
+  }
+  async addZaloPersonalLog(l: ZaloPersonalMessageLog) {
+    await db.zaloPersonalLogs.put(l);
+  }
+  async getOkrObjectives() {
+    return db.okrObjectives.orderBy('updatedAt').reverse().toArray();
+  }
+  async putOkrObjective(o: OkrObjective) {
+    await db.okrObjectives.put(o);
+  }
+  async getRoleSops() {
+    return db.roleSops.toArray();
+  }
+  async putRoleSop(s: RoleSopDocument) {
+    await db.roleSops.put(s);
+  }
+  async getOnboardingExams() {
+    return db.onboardingExams.orderBy('createdAt').reverse().limit(120).toArray();
+  }
+  async putOnboardingExam(e: AgentOnboardingExamAttempt) {
+    await db.onboardingExams.put(e);
+  }
+  async getProductMasters() {
+    return db.productMasters.toArray();
+  }
+  async putProductMaster(p: ProductMasterRecord) {
+    await db.productMasters.put(p);
+  }
+  async getBankAccounts() {
+    return db.bankAccounts.toArray();
+  }
+  async putBankAccount(b: PaymentBankAccount) {
+    await db.bankAccounts.put(b);
+  }
+  async deleteBankAccount(id: string) {
+    await db.bankAccounts.delete(id);
+  }
+  async getInteractionRules() {
+    return db.interactionRules.toArray();
+  }
+  async putInteractionRule(r: DeptInteractionRule) {
+    await db.interactionRules.put(r);
+  }
+  async getHandoverTickets() {
+    return db.handoverTickets.orderBy('createdAt').reverse().limit(200).toArray();
+  }
+  async putHandoverTicket(t: CrossDeptHandoverTicket) {
+    await db.handoverTickets.put(t);
+  }
+  async getMoneyIdeas() {
+    return db.moneyIdeas.orderBy('updatedAt').reverse().toArray();
+  }
+  async putMoneyIdea(m: MoneyIdeaCard) {
+    await db.moneyIdeas.put(m);
+  }
+  async getCompetitorWatches() {
+    return db.competitorWatches.toArray();
+  }
+  async putCompetitorWatch(c: CompetitorWatchTarget) {
+    await db.competitorWatches.put(c);
+  }
+  async getUpgradeProposals() {
+    return db.upgradeProposals.orderBy('createdAt').reverse().toArray();
+  }
+  async putUpgradeProposal(u: UpgradeProposal) {
+    await db.upgradeProposals.put(u);
+  }
+  async getUpgradeChangelog() {
+    return db.upgradeChangelog.orderBy('timestamp').reverse().toArray();
+  }
+  async putUpgradeChangelog(c: UpgradeChangelogEntry) {
+    await db.upgradeChangelog.put(c);
+  }
+  async getRepoEvaluations() {
+    return db.repoEvaluations.orderBy('createdAt').reverse().limit(60).toArray();
+  }
+  async putRepoEvaluation(r: GitRepoEvaluationReport) {
+    await db.repoEvaluations.put(r);
+  }
+  async getPlaybooks() {
+    return db.playbooks.toArray();
+  }
+  async putPlaybook(p: PlaybookSkill) {
+    await db.playbooks.put(p);
+  }
+  async getExperienceMemories() {
+    return db.experienceMemories.orderBy('createdAt').reverse().limit(200).toArray();
+  }
+  async putExperienceMemory(e: ExperienceMemoryItem) {
+    await db.experienceMemories.put(e);
+  }
+  async getManagedDevices() {
+    return db.managedDevices.toArray();
+  }
+  async putManagedDevice(d: ManagedDeviceRecord) {
+    await db.managedDevices.put(d);
+  }
+  async getDeviceActionLogs() {
+    return db.deviceActionLogs.orderBy('timestamp').reverse().limit(300).toArray();
+  }
+  async addDeviceActionLog(l: DeviceActionLog) {
+    await db.deviceActionLogs.put(l);
+  }
   async exportAllTablesForBackup() {
     const [
       settings,
@@ -1176,6 +1512,14 @@ export class DexieRepository implements IDataRepository {
       contractTemplates,
       contracts,
       legalReports,
+      okrObjectives,
+      roleSops,
+      productMasters,
+      bankAccounts,
+      interactionRules,
+      handoverTickets,
+      playbooks,
+      experienceMemories,
     ] = await Promise.all([
       db.settings.get('default'),
       db.agents.toArray(),
@@ -1198,6 +1542,14 @@ export class DexieRepository implements IDataRepository {
       db.contractTemplates.toArray(),
       db.contracts.toArray(),
       db.legalReports.toArray(),
+      db.okrObjectives.toArray(),
+      db.roleSops.toArray(),
+      db.productMasters.toArray(),
+      db.bankAccounts.toArray(),
+      db.interactionRules.toArray(),
+      db.handoverTickets.toArray(),
+      db.playbooks.toArray(),
+      db.experienceMemories.toArray(),
     ]);
     return {
       settings,
@@ -1221,6 +1573,14 @@ export class DexieRepository implements IDataRepository {
       contractTemplates,
       contracts,
       legalReports,
+      okrObjectives,
+      roleSops,
+      productMasters,
+      bankAccounts,
+      interactionRules,
+      handoverTickets,
+      playbooks,
+      experienceMemories,
     };
   }
   async resetAll() {

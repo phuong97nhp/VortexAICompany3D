@@ -149,3 +149,33 @@ Gói `/worker` dùng chung cấu hình AI đa nhà cung cấp (`LLM_PROVIDER`, `
 - **Vận hành 24/7, Go-Live & Sẵn sàng thực tế (`RUNBOOK.md`)**:
   - Cổng khởi động `bootStatus` (`AppErrorBoundary` + khôi phục dữ liệu hỏng vào `localStorage` + nút **Đặt lại dữ liệu cục bộ**).
   - Hàng đợi **Durable Jobs** (tự khôi phục job `leased` sau reload), **Circuit Breaker** theo provider/tích hợp, cảnh báo token 70%/90%/100%, **Wizard 9 bước** + Xóa dữ liệu demo 1 chạm, **Go-Live Checklist 10 mục** chặn chuyển `LIVE`, và Sao lưu/Khôi phục JSON.
+
+---
+
+## 10. Nâng cấp BỔ SUNG L → X+ (Giám sát, Giọng nói, Chất lượng, OKR, Thiết bị Android)
+
+1. **L — Kiểm tra màn hình làm việc bất chợt (Spot-Check & Tường Giám sát)**:
+   - Bấm màn hình máy tính trên bàn từng nhân sự trong 3D, nút **Xem màn hình** trên hồ sơ, nút **Soi ngẫu nhiên**, hoặc **Tường GS** (6–9 màn hình cùng lúc).
+   - Tự động che OTP, mật khẩu, API key, token Vault và số tài khoản ngân hàng; đánh giá trung thực (`đúng việc | lệch việc | kẹt | lặp | nhàn rỗi`); giữ thanh trượt timeline 10 phút và lịch tự động của COO.
+2. **M — Giọng nói & Phòng Họp Trực tiếp**:
+   - Giao diện `VoiceProvider` (`Web Speech` mặc định miễn phí, `Gemini TTS` qua `/api/voice/gemini-tts`, hoặc `text_only` chỉ phụ đề), tách giọng riêng chống trùng theo giới tính/cao độ/tốc độ, nhấp nháy miệng 3D khi phát âm, nút **Dừng đọc ngay (barge-in)**, hộp lệnh giọng nói CEO, họp nhanh 5 phút có đồng hồ đếm ngược, giơ tay xin phát biểu và lưu biên bản tùy chọn vào Kho tài liệu.
+3. **N — Vòng lặp Chất lượng & Hội đồng Liên phòng ban**:
+   - Chu trình `Maker → Critic (≥2 điểm yếu, chống đồng thuận giả) → Verifier → Trưởng phòng`; và **Hội đồng** bỏ phiếu có trọng số chuyên môn (hòa phiếu báo CEO).
+4. **O — Zalo Cá nhân Có Rào chắn (`zca-js`, Kênh phụ)**:
+   - **Zalo OA vẫn là kênh chính thống #1**. Kênh Zalo cá nhân đòi hỏi CEO xác nhận rủi ro & SIM/tài khoản riêng công ty, trần **≤ 20 tin nhắn mới/ngày** (tin trả lời khách chủ động được miễn trần), chặn tuyệt đối DNC và Cold Marketing chưa có Pháp chế duyệt, dừng khẩn cấp khi bật **KILL SWITCH**.
+5. **P — OKR & Kế hoạch Doanh thu Phễu Ngược**:
+   - Tính phễu ngược Low / Mid / High từ dữ liệu thực; mọi tỷ lệ thiếu mẫu thực gắn nhãn **`"giả định, cần kiểm chứng"`** và tự cảnh báo nếu chậm tiến độ.
+6. **Q, R, S, T, U, V, W — HR Co giãn, SOP & Exam, Product Master & Ngân hàng 2FA, Bàn giao `#BG-xxx`, Git Repo Scout & Playbook**:
+   - Tab **Nhân sự & Quyền** có thêm **SOP & Thi thử việc** và **Co giãn HR** (cổng bắt buộc đỗ Exam trước khi lên LIVE).
+   - Tab **SP & Ngân hàng**: 3 trạng thái tính năng (`ĐÃ CÓ`, `ĐANG PHÁT TRIỂN (+ ETA)`, `KHÔNG CÓ`), kiểm tra cam kết sai/chiết khấu >10%/STK lạ; **Tài khoản Ngân hàng công ty** chỉ CEO được thêm/sửa kèm **Mật khẩu + OTP 2FA**.
+   - Tab **Chất lượng & Kho**: phiếu bàn giao `#BG-xxx` kèm SLA & cung đường dây 3D giữa các tầng; tìm & đánh giá repo Git (`CHƯA KIỂM CHỨNG` cho tới khi chạy Docker Sandbox `--network=none` ở `/worker`); Playbook tăng tốc an toàn (tự rollback nếu tụt >10 điểm, không bỏ qua Verifier/tác vụ rủi ro cao).
+7. **X+ — Tích hợp Thiết bị Android Cắm là Chạy (Device Farm)**:
+   - Tab **Thiết bị Android** và điện thoại hiển thị trên bàn nhân sự 3D; hỗ trợ cắm USB (`adb_usb`), Wireless ADB (`adb_wifi`), 3 mức quyền (`view_only | approved_actions | policy_auto`), tự che vùng mật khẩu/OTP trên OCR & screenshot, giới hạn tốc độ & pin/nhiệt độ, và lệnh chẩn đoán `cd worker && npm run device:doctor` (xem thêm `worker/DEVICE_SETUP.md`).
+
+### Lệnh kiểm thử tự động
+```bash
+npx tsx src/integrations/hubcw/writeGate.test.ts
+npx tsx src/tests/fullSystem.test.ts
+npx tsx src/tests/addonsLtoW.test.ts
+npx tsx worker/device/device.test.ts
+```

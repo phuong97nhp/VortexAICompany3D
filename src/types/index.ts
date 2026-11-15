@@ -58,6 +58,19 @@ export type Permission =
   | 'affiliate:write'
   | 'affiliate:publish'
   | 'affiliate:compliance'
+  | 'monitor:view'
+  | 'voice:host'
+  | 'zalo_personal:send'
+  | 'okr:manage'
+  | 'sop:manage'
+  | 'product:approve'
+  | 'bank:manage'
+  | 'handover:manage'
+  | 'strategy:propose'
+  | 'upgrade:approve'
+  | 'repo:scout'
+  | 'playbook:manage'
+  | 'device:control'
   | 'system:admin';
 
 export type AgentStatus =
@@ -119,7 +132,16 @@ export type ToolName =
   | 'request_collab'
   | 'legal_research'
   | 'draft_contract'
-  | 'review_contract';
+  | 'review_contract'
+  | 'quality_review'
+  | 'council_vote'
+  | 'create_handover'
+  | 'propose_money_plan'
+  | 'watch_competitor'
+  | 'propose_upgrade'
+  | 'scout_git_repo'
+  | 'run_device_action'
+  | 'send_zalo_personal';
 
 export type EmploymentStatus = 'active' | 'suspended' | 'archived';
 
@@ -152,6 +174,13 @@ export interface AgentProfile {
   employmentStatus?: EmploymentStatus;
   archivedAt?: number;
   archivedReason?: string;
+  voiceProfile?: AgentVoiceProfile;
+  probationPassed?: boolean;
+  probationScore?: number;
+  probationStatus?: 'probation' | 'passed' | 'failed';
+  lastExamScore?: number;
+  sopVersion?: number;
+  performanceScore?: number;
   createdAt?: number;
   updatedAt?: number;
 }
@@ -400,6 +429,7 @@ export type DocumentCategory =
   | 'seo'
   | 'quote'
   | 'contract'
+  | 'meeting'
   | 'meeting_minutes'
   | 'faq'
   | 'report'
@@ -803,6 +833,14 @@ export interface CompanySettings {
   workingHourEnd?: number;
   timezone?: string;
   lastAutoBackupAt?: number;
+  // BỔ SUNG L: Spot-Check Config
+  spotCheck?: SpotCheckScheduleConfig;
+  // BỔ SUNG M: Voice & Meeting Config
+  voice?: VoiceSettings;
+  // BỔ SUNG O: Zalo Cá nhân (zca-js) Config
+  zaloPersonal?: ZaloPersonalConfig;
+  // BỔ SUNG Q: HR Dynamic Autonomy & Caps
+  hrAutonomy?: HrAutonomySettings;
 }
 
 export type SocialPlatformId =
@@ -1605,5 +1643,685 @@ export interface LegalSettings {
   defaultStampSignatureNote: string;
   lastLawCheckAt?: string;
 }
+
+// =====================================================================
+// BỔ SUNG L: KIỂM TRA MÀN HÌNH LÀM VIỆC BẤT CHỢT (SPOT-CHECK)
+// =====================================================================
+
+export type SpotCheckVerdict = 'đúng việc' | 'lệch việc' | 'kẹt' | 'lặp' | 'nhàn rỗi';
+
+export interface SpotCheckScheduleConfig {
+  autoEnabled: boolean;
+  runsPerDay: number;
+  startHour: number;
+  endHour: number;
+  retentionDays: number; // 7..30
+  streamFps: 1 | 2;
+  alertOnAbnormal: boolean;
+}
+
+export interface AgentTimelineEvent {
+  id: string;
+  agentId: string;
+  stepLabel: string;
+  detailMasked: string;
+  toolName?: string;
+  verdictHint?: SpotCheckVerdict;
+  timestamp: number;
+}
+
+export interface AgentScreenSnapshot {
+  agentId: string;
+  agentName: string;
+  department: DepartmentId;
+  capturedAt: number;
+  envMode: SystemEnvMode;
+  simulated: boolean;
+  taskInfo: {
+    taskId?: string;
+    taskCode?: string;
+    title: string;
+    progressPercent: number;
+    etaLabel: string;
+    status: string;
+  };
+  browserSession: {
+    active: boolean;
+    url?: string;
+    screenshotDataUrl?: string;
+    note: string;
+  };
+  activeDraft: {
+    docId?: string;
+    title?: string;
+    category?: string;
+    excerptMasked: string;
+  } | null;
+  recentToolLogs: Array<{
+    id: string;
+    source: 'rbac' | 'hubcw' | 'zalo' | 'device';
+    summaryMasked: string;
+    result: string;
+    timestamp: number;
+  }>;
+  liveDialogue: Array<{
+    id: string;
+    senderName: string;
+    excerptMasked: string;
+    timestamp: number;
+  }>;
+  planSummary: Array<{ step: string; status: 'done' | 'running' | 'pending' }>;
+  tokenStatsToday: {
+    totalTokens: number;
+    costUsd: number;
+  };
+  verdict: SpotCheckVerdict;
+  score: number; // 0..100
+  verdictReason: string;
+}
+
+export interface SpotCheckRecord {
+  id: string;
+  agentId: string;
+  agentName: string;
+  inspector: 'ceo' | 'coo';
+  verdict: SpotCheckVerdict;
+  score: number;
+  verdictReason: string;
+  ceoScore?: number;
+  ceoNote?: string;
+  ceoActionTaken?: 'remind' | 'explain' | 'reassign' | 'pause' | 'note';
+  snapshot: AgentScreenSnapshot;
+  createdAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG M: GIỌNG NÓI + HỌP TRỰC TIẾP
+// =====================================================================
+
+export type VoiceProviderId = 'web_speech' | 'gemini_tts' | 'worker_piper' | 'text_only';
+
+export type VoiceTimbreStyle = 'warm' | 'crisp' | 'energetic' | 'calm' | 'authoritative';
+
+export interface AgentVoiceProfile {
+  voiceId: string;
+  voiceName: string;
+  lang: string;
+  gender: 'female' | 'male';
+  pitch: number; // 0.75..1.35
+  rate: number; // 0.8..1.3
+  timbre: VoiceTimbreStyle;
+  geminiVoiceName?: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
+}
+
+export interface VoiceSettings {
+  provider: VoiceProviderId;
+  autoReadResponses: boolean;
+  handsFreeListening: boolean;
+  quickMeetingDefaultMinutes: number;
+  maxTurnsPerAgentInMeeting: number;
+  defaultRecordTranscript: boolean;
+}
+
+export interface VoiceMeetingTurn {
+  id: string;
+  speakerId: string;
+  speakerName: string;
+  speakerTitle: string;
+  text: string;
+  raisedHand?: boolean;
+  timestamp: number;
+}
+
+export interface VoiceMeetingSession {
+  id: string;
+  title: string;
+  roomId: string;
+  moderatorId: string;
+  participantIds: string[];
+  status: 'active' | 'paused' | 'ended';
+  isQuickFiveMin: boolean;
+  startedAt: number;
+  endsAt?: number;
+  endedAt?: number;
+  maxTurnsPerAgent: number;
+  recordTranscriptOptIn: boolean;
+  currentSpeakerId?: string | null;
+  handRaisedAgentIds: string[];
+  turns: VoiceMeetingTurn[];
+  savedDocId?: string;
+}
+
+export interface MeetingRequestTicket {
+  id: string;
+  agentId: string;
+  agentName: string;
+  topic: string;
+  urgency: 'normal' | 'urgent';
+  status: 'pending' | 'accepted' | 'snoozed' | 'declined';
+  createdAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG N: AGENT TỰ BÀN BẠC (QUALITY LOOP & HỘI ĐỒNG)
+// =====================================================================
+
+export interface QualityRoundRecord {
+  round: number;
+  makerId: string;
+  makerName: string;
+  draftExcerpt: string;
+  criticId: string;
+  criticName: string;
+  criticWeaknesses: string[];
+  antiFalseConsensusPassed: boolean;
+  verifierId: string;
+  verifierChecks: Array<{ claim: string; verified: boolean; toolRef: string; note: string }>;
+  verifierPassed: boolean;
+  deptHeadId: string;
+  deptHeadApproved: boolean;
+  decisionNote: string;
+  timestamp: number;
+}
+
+export interface QualityReviewCycle {
+  id: string;
+  taskId?: string;
+  title: string;
+  department: DepartmentId;
+  definitionOfDone: string;
+  maxRounds: number;
+  currentRound: number;
+  status: 'running' | 'approved' | 'escalated_failed';
+  failureReason?: string;
+  rounds: QualityRoundRecord[];
+  finalSummary: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CouncilVote {
+  agentId: string;
+  agentName: string;
+  department: DepartmentId;
+  weight: number;
+  proposalTitle: string;
+  proposalSummary: string;
+  critiqueOfOthers: string[];
+  chosenOption: string;
+  score: number;
+}
+
+export interface CouncilSession {
+  id: string;
+  topic: string;
+  participantIds: string[];
+  optionsConsidered: Array<{ id: string; title: string; rejectedReason?: string }>;
+  votes: CouncilVote[];
+  winningOption?: string;
+  status: 'deliberating' | 'consensus' | 'escalated_ceo';
+  ceoExecutiveSummary: string;
+  fullThreadLog: string[];
+  createdAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG O: ZALO CÁ NHÂN (zca-js) - CÓ RÀO CHẮN
+// =====================================================================
+
+export interface ZaloPersonalConfig {
+  enabled: boolean;
+  riskConfirmedByCeo: boolean;
+  riskConfirmedAt?: number;
+  dedicatedCompanyAccountConfirmed: boolean;
+  priorityMode: 'zalo_oa_primary' | 'personal_secondary' | 'personal_disabled';
+  dailyColdOutboundCap: number; // <= 20
+  minDelaySecondsBetweenMsgs: number; // >= 12s
+  allowColdMarketingApprovedByLegal: boolean;
+  dncList: string[]; // phone / userIds
+  autoPauseOnAnomaly: boolean;
+  anomalyPausedReason?: string;
+}
+
+export interface ZaloPersonalSession {
+  status: 'disconnected' | 'qr_pending' | 'connected' | 'expired' | 'blocked_anomaly';
+  qrDataUrl?: string;
+  qrExpiresAt?: number;
+  accountName?: string;
+  userIdMasked?: string;
+  mode: 'worker_zca_js' | 'sandbox_sim';
+  lastHeartbeatAt?: number;
+  lastError?: string;
+}
+
+export interface ZaloPersonalMessageLog {
+  id: string;
+  direction: 'inbound' | 'outbound';
+  peerIdMasked: string;
+  peerName: string;
+  isReplyToInbound: boolean;
+  preview: string;
+  status: 'sent' | 'received' | 'blocked_cap' | 'blocked_dnc' | 'blocked_marketing' | 'blocked_killswitch' | 'blocked_unconfirmed';
+  agentId: string;
+  reason?: string;
+  timestamp: number;
+}
+
+// =====================================================================
+// BỔ SUNG P: OKR & KẾ HOẠCH DOANH THU RÕ RÀNG
+// =====================================================================
+
+export interface KeyResult {
+  id: string;
+  title: string;
+  metricUnit: string;
+  baselineValue: number;
+  targetValue: number;
+  currentValue: number;
+  dataSource: 'hubcw' | 'crm' | 'affiliate' | 'manual';
+  verified: boolean;
+}
+
+export interface OkrObjective {
+  id: string;
+  periodType: 'year' | 'quarter' | 'month' | 'week';
+  periodLabel: string;
+  title: string;
+  targetRevenueVnd: number;
+  productId?: string;
+  channel?: string;
+  ownerAgentId: string;
+  deadline: string;
+  assumptions: string[];
+  keyResults: KeyResult[];
+  status: 'on_track' | 'at_risk' | 'behind' | 'completed';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RevenueFunnelLine {
+  stageLabel: string;
+  value: number;
+  conversionRatePercent: number | null;
+  isRealMetric: boolean;
+  statusTag: 'Thực tế' | 'Dự báo' | 'Mục tiêu' | 'giả định, cần kiểm chứng';
+  lowScenario?: number;
+  midScenario?: number;
+  highScenario?: number;
+}
+
+export interface RevenueFunnelPlan {
+  objectiveId: string;
+  targetRevenueVnd: number;
+  avgOrderValueVnd: number;
+  aovIsReal: boolean;
+  recognizedRevenueVnd: number;
+  collectedCashVnd: number;
+  accountsReceivableVnd: number;
+  runRateMonthlyVnd: number;
+  projectedPeriodEndVnd: number;
+  scheduleGapPercent: number; // negative means behind
+  behindAlertTriggered: boolean;
+  steps: RevenueFunnelLine[];
+  recoverySuggestions: string[];
+  computedAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG Q: HR TỰ ĐIỀU PHỐI NHÂN SỰ & QUY CHUẨN SOP
+// =====================================================================
+
+export interface HrAutonomySettings {
+  maxActiveAgents: number;
+  dailyTokenCap: number;
+  autoScaleMode: 'l1_propose' | 'l2_template_within_cap' | 'l3_full_within_cap';
+  requireExamPassForLive: boolean;
+}
+
+export interface RoleSopDocument {
+  id: string;
+  roleTemplateId: string;
+  roleTitle: string;
+  department: DepartmentId;
+  version: number;
+  effectiveFrom: string;
+  mission: string;
+  limits: string[];
+  steps: string[];
+  handoverChecklist: string[];
+  toneGuide: string;
+  bannedPhrases: string[];
+  requiredPhrases: string[];
+  escalationRules: string[];
+  ceoApproved: boolean;
+  ceoApprovedAt?: number;
+  diffNote?: string;
+  updatedAt: number;
+}
+
+export interface AgentOnboardingExamAttempt {
+  id: string;
+  agentId: string;
+  agentName: string;
+  score: number;
+  passed: boolean;
+  questions: Array<{
+    prompt: string;
+    expectedKeywords: string[];
+    agentAnswer: string;
+    passed: boolean;
+  }>;
+  deptHeadApprovedBy?: string;
+  createdAt: number;
+}
+
+export interface HrScaleRecommendation {
+  id: string;
+  type: 'clone' | 'hire' | 'schedule_shift' | 'sleep_idle' | 'retrain' | 'replace';
+  targetDepartment: DepartmentId;
+  targetAgentId?: string;
+  roleTemplateId?: string;
+  reason: string;
+  queueDepth: number;
+  delayRatePercent: number;
+  estimatedExtraDailyTokens: number;
+  estimatedCostVndMonth: number;
+  status: 'pending_ceo' | 'auto_applied' | 'approved' | 'rejected';
+  createdAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG R: QUẢN LÝ SẢN PHẨM & TÀI KHOẢN NGÂN HÀNG CÔNG TY
+// =====================================================================
+
+export type ProductFeatureStatus = 'available' | 'in_dev' | 'not_available';
+
+export interface ProductMasterFeature {
+  id: string;
+  label: string;
+  status: ProductFeatureStatus;
+  eta?: string; // required when in_dev
+  limitNote?: string;
+}
+
+export interface ProductMasterRecord {
+  id: string;
+  code: string;
+  name: string;
+  shortName: string;
+  version: number;
+  lifecycle: 'active' | 'in_dev' | 'archived';
+  tagline: string;
+  targetCustomers: string[];
+  features: ProductMasterFeature[];
+  tiers: Array<{
+    name: string;
+    priceVnd: number;
+    priceLabel: string;
+    limits: string;
+    maxDiscountPercent: number;
+  }>;
+  policies: {
+    trialDays: number;
+    refundPolicy: string;
+    warrantyPolicy: string;
+    slaPercent: number;
+  };
+  allowedClaims: string[];
+  forbiddenClaims: string[];
+  competitorComparisons: Array<{ competitor: string; comparison: string; sourceUrl: string }>;
+  faqs: Array<{ question: string; answer: string }>;
+  pmSignedOff: boolean;
+  legalSignedOff: boolean;
+  updatedAt: number;
+}
+
+export interface PaymentBankAccount {
+  id: string;
+  bankCode: string;
+  bankName: string;
+  accountNumberMasked: string; // e.g. ****1234
+  accountNumberLast4: string;
+  accountNumberEncrypted: string; // protected payload
+  accountHolderName: string; // must match companyLegalName
+  branchName: string;
+  purpose: string;
+  isDefault: boolean;
+  verifiedWithCompanyLegalName: boolean;
+  twoFactorConfirmedAt: number;
+  createdBy: 'ceo';
+  updatedAt: number;
+}
+
+export interface ClaimCheckResult {
+  passed: boolean;
+  violations: Array<{
+    severity: 'block' | 'warn';
+    rule: string;
+    matchedText: string;
+    suggestion: string;
+  }>;
+  hasUnknownQuestion?: boolean;
+  bankSafetyBlocked?: boolean;
+}
+
+// =====================================================================
+// BỔ SUNG S: PHỐI HỢP LIÊN PHÒNG BAN
+// =====================================================================
+
+export interface DeptInteractionRule {
+  id: string;
+  flowName: string;
+  fromDepartment: DepartmentId;
+  toDepartment: DepartmentId;
+  triggerCondition: string;
+  requiredInput: string;
+  expectedOutput: string;
+  slaMinutes: number;
+  raci: { responsible: string; accountable: string; consulted: string; informed: string };
+}
+
+export interface CrossDeptHandoverTicket {
+  id: string;
+  code: string; // #BG-101
+  fromDepartment: DepartmentId;
+  toDepartment: DepartmentId;
+  fromAgentId: string;
+  toAgentId: string;
+  title: string;
+  payloadSummary: string;
+  deliverableRef?: string;
+  slaMinutes: number;
+  dueAt: number;
+  status: 'pending_accept' | 'accepted' | 'rejected' | 'completed' | 'escalated_overdue';
+  rejectReason?: string;
+  escalatedCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG T: Ý TƯỞNG KIẾM TIỀN KHI RẢNH & THEO DÕI ĐỐI THỦ
+// =====================================================================
+
+export type MoneyIdeaStage = 'new' | 'researching' | 'waiting_ceo' | 'experimenting' | 'scaling' | 'stopped';
+
+export interface MoneyIdeaCard {
+  id: string;
+  title: string;
+  proposedBy: string;
+  department: DepartmentId;
+  stage: MoneyIdeaStage;
+  problemAndEvidence: string;
+  sources: string[];
+  tamSamAssumptions: string;
+  icpAndChannels: string;
+  competitorDiff: string;
+  revenueModel: string;
+  scenarios: {
+    lowVndMonth: number;
+    midVndMonth: number;
+    highVndMonth: number;
+  };
+  estimatedCostVnd: number;
+  stopLossRule: string;
+  microExperimentPlan: string;
+  councilScore: number;
+  legalSignoff: 'pending' | 'approved' | 'rejected';
+  ceoApproved: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CompetitorWatchTarget {
+  id: string;
+  name: string;
+  publicUrl: string;
+  niche: string;
+  lastPriceNote: string;
+  lastFeaturesNote: string;
+  lastCheckedAt: number;
+  recentChanges: Array<{ date: string; summary: string; severity: 'info' | 'major' }>;
+}
+
+// =====================================================================
+// BỔ SUNG U: PHÒNG ĐỀ XUẤT NÂNG CẤP CÔNG TY
+// =====================================================================
+
+export interface UpgradeProposal {
+  id: string;
+  code: string; // #NC-01
+  title: string;
+  proposedBy: string;
+  bottleneckEvidence: string;
+  solutionSummary: string;
+  expectedRoi: string;
+  estimatedCostVnd: number;
+  risksAndRollback: string;
+  rolloutStage: 'proposal' | 'sandbox_test' | 'pilot' | 'deployed_all' | 'rolled_back';
+  beforeMetric: string;
+  afterMetric?: string;
+  ceoApproved: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface UpgradeChangelogEntry {
+  id: string;
+  version: string;
+  proposalId: string;
+  title: string;
+  summary: string;
+  beforeMetric: string;
+  afterMetric: string;
+  timestamp: number;
+}
+
+// =====================================================================
+// BỔ SUNG V: PHÒNG KỸ THUẬT TÌM & THỬ NGHIỆM REPO GIT (THEO YÊU CẦU CEO)
+// =====================================================================
+
+export interface GitRepoEvaluationReport {
+  id: string;
+  requestedQuery: string;
+  repoFullName: string;
+  repoUrl: string;
+  stars: number;
+  lastUpdated: string;
+  license: string;
+  legalLicenseOk: boolean;
+  securityFlags: string[];
+  sandboxStatus: 'static_only_unverified' | 'sandbox_passed' | 'sandbox_failed' | 'blocked_danger';
+  verificationLabel: 'ĐÃ CHẠY SANDBOX' | 'CHƯA KIỂM CHỨNG';
+  stdoutExcerpt: string;
+  recommendation: string;
+  createdAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG W: TỰ HỌC PLAYBOOK, KINH NGHIỆM & TĂNG TỐC CHÍNH XÁC
+// =====================================================================
+
+export interface PlaybookSkill {
+  id: string;
+  name: string;
+  department: DepartmentId;
+  triggerIntent: string;
+  version: number;
+  steps: string[];
+  successCount: number;
+  failureCount: number;
+  avgQualityScore: number; // 0..100
+  baselineQualityScore: number;
+  allowFastTrack: boolean;
+  dirtyNeedsReview: boolean;
+  dirtyReason?: string;
+  rolledBackFromVersion?: number;
+  updatedAt: number;
+}
+
+export interface ExperienceMemoryItem {
+  id: string;
+  department: DepartmentId;
+  agentId?: string;
+  tags: string[];
+  lesson: string;
+  source: 'critic_feedback' | 'ceo_feedback' | 'accepted_deliverable' | 'regression';
+  createdAt: number;
+}
+
+// =====================================================================
+// BỔ SUNG X+: TÍCH HỢP THIẾT BỊ ANDROID CẮM LÀ CHẠY
+// =====================================================================
+
+export type DeviceDriverType = 'adb_usb' | 'adb_wifi' | 'emulator' | 'mock';
+export type DeviceConnectionStatus = 'unauthorized' | 'device' | 'offline' | 'controlled' | 'error';
+export type DeviceControlMode = 'view_only' | 'approved_actions' | 'policy_auto';
+
+export interface ManagedDeviceRecord {
+  id: string;
+  serial: string;
+  modelName: string;
+  androidVersion: string;
+  driverType: DeviceDriverType;
+  status: DeviceConnectionStatus;
+  controlMode: DeviceControlMode;
+  assignedAgentId?: string;
+  assignedDepartment?: DepartmentId;
+  batteryPercent: number;
+  temperatureC: number;
+  screenWidth: number;
+  screenHeight: number;
+  foregroundPackage: string;
+  isStreaming: boolean;
+  lastScreenshotDataUrl?: string;
+  lastOcrTextMasked?: string;
+  blockedReason?: string;
+  lastSeenAt: number;
+}
+
+export interface DevicePolicyProfile {
+  allowedPackages: string[];
+  blockedPackages: string[];
+  maxActionsPerMinute: number;
+  maxContinuousMinutes: number;
+  maskPasswordAndOtpRegions: boolean;
+  requireCeoForInstallApk: boolean;
+  stopBatteryBelowPercent: number;
+  stopTempAboveC: number;
+}
+
+export interface DeviceActionLog {
+  id: string;
+  deviceId: string;
+  serial: string;
+  agentId: string;
+  action: string;
+  foregroundPackage: string;
+  result: 'ok' | 'blocked_policy' | 'blocked_killswitch' | 'blocked_mode' | 'ask_ceo_otp' | 'error';
+  reason?: string;
+  timestamp: number;
+}
+
 
 

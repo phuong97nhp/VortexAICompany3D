@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { AlertCircle, AlertTriangle, RotateCcw, Trash2, WifiOff, X } from 'lucide-react';
 import { AgentProfileModal } from './components/AgentProfileModal';
 import { CeoSecurityModal } from './components/CeoSecurityModal';
+import { DigitalMeetingModal } from './components/DigitalMeetingModal';
 import { LeftOrgSidebar } from './components/LeftOrgSidebar';
+import { MonitorWallModal } from './components/MonitorWallModal';
 import { OnboardingWizardModal } from './components/OnboardingWizardModal';
 import { OfficeScene3D } from './components/office3d/OfficeScene3D';
 import { RightWorkspacePanel } from './components/RightWorkspacePanel';
+import { SpotCheckModal } from './components/SpotCheckModal';
 import { TopBar } from './components/TopBar';
+import { VoiceMeetingBar } from './components/VoiceMeetingBar';
 import { startBackgroundSchedulers } from './engine/orchestrator';
 import { RightPanelTab, useCompanyStore } from './store/useCompanyStore';
 
@@ -243,6 +247,7 @@ export default function App() {
         <div className="flex-1 relative h-full overflow-hidden">
           <OfficeScene3D />
           <AgentProfileModal />
+          <VoiceMeetingBar />
         </div>
 
         {showRight && <RightWorkspacePanel />}
@@ -250,6 +255,9 @@ export default function App() {
 
       <CeoSecurityModal open={securityModalOpen} onClose={() => setSecurityModalOpen(false)} />
       <OnboardingWizardModal />
+      <SpotCheckModal />
+      <MonitorWallModal />
+      <DigitalMeetingModal />
     </div>
   );
 }

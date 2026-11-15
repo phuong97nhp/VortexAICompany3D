@@ -6,7 +6,9 @@ import {
   CheckSquare,
   ChevronDown,
   FileText,
+  GitBranch,
   Key,
+  Landmark,
   ListChecks,
   Megaphone,
   MessageSquare,
@@ -17,6 +19,8 @@ import {
   ScrollText,
   Settings,
   Shield,
+  Smartphone,
+  Target,
   TrendingUp,
 } from 'lucide-react';
 import { RightPanelTab, useCompanyStore } from '../store/useCompanyStore';
@@ -37,6 +41,10 @@ import { VaultPanel } from './panels/VaultPanel';
 import { TokenKpiPanel } from './panels/TokenKpiPanel';
 import { CharacterCustomizerPanel } from './panels/CharacterCustomizerPanel';
 import { SettingsPanel } from './panels/SettingsPanel';
+import { OkrStrategyPanel } from './panels/OkrStrategyPanel';
+import { ProductBankPanel } from './panels/ProductBankPanel';
+import { CollabOpsPanel } from './panels/CollabOpsPanel';
+import { DeviceFarmPanel } from './panels/DeviceFarmPanel';
 
 interface TabDef {
   id: RightPanelTab;
@@ -59,6 +67,10 @@ const PRIMARY_TABS: TabDef[] = [
 ];
 
 const OVERFLOW_TABS: TabDef[] = [
+  { id: 'strategy', label: 'OKR & Chiến lược', shortLabel: 'OKR & Đổi mới', icon: Target },
+  { id: 'products_bank', label: 'Sản phẩm & Ngân hàng', shortLabel: 'SP & Ngân hàng', icon: Landmark },
+  { id: 'collab', label: 'Chất lượng, Bàn giao & Kho', shortLabel: 'Chất lượng & Kho', icon: GitBranch },
+  { id: 'devices', label: 'Thiết bị Android (Farm)', shortLabel: 'Thiết bị Android', icon: Smartphone },
   { id: 'health', label: 'Sức khỏe 24/7 & Go-Live', shortLabel: 'Hệ thống', icon: Activity },
   { id: 'rbac', label: 'Nhân sự & Quyền', shortLabel: 'Nhân sự', icon: Shield },
   { id: 'docs', label: 'Kho tài liệu', shortLabel: 'Tài liệu', icon: FileText },
@@ -244,6 +256,10 @@ export function RightWorkspacePanel() {
         {activeTab === 'approvals' && <ApprovalsPanel />}
         {activeTab === 'finance' && <FinanceAccountingPanel />}
         {activeTab === 'hubcw' && <HubCwConnectorPanel />}
+        {activeTab === 'strategy' && <OkrStrategyPanel />}
+        {activeTab === 'products_bank' && <ProductBankPanel />}
+        {activeTab === 'collab' && <CollabOpsPanel />}
+        {activeTab === 'devices' && <DeviceFarmPanel />}
         {activeTab === 'health' && <SystemHealthPanel />}
         {activeTab === 'rbac' && <HrManagementPanel />}
         {activeTab === 'vault' && <VaultPanel />}

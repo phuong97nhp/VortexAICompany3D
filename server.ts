@@ -632,9 +632,437 @@ async function startServer() {
 
   app.get('/api/worker/status', (_req, res) => {
     res.json({
-      ok: Boolean(process.env.WORKER_WS_URL),
-      workerUrl: process.env.WORKER_WS_URL || null,
+      ok: Boolean(process.env.WORKER_WS_URL || process.env.WORKER_HTTP_URL),
+      workerUrl: process.env.WORKER_HTTP_URL || process.env.WORKER_WS_URL || null,
       dryRun: process.env.DRY_RUN !== 'false',
+    });
+  });
+
+  const getWorkerHttpUrl = (): string | null => {
+    const raw = process.env.WORKER_HTTP_URL || process.env.WORKER_URL || process.env.WORKER_WS_URL || '';
+    if (!raw.trim()) return null;
+    return raw.trim().replace(/^ws(s?):\/\//i, 'http$1://').replace(/\/+$/, '');
+  };
+
+  async function tryWorkerFetch(subpath: string, init?: RequestInit): Promise<Response | null> {
+    const base = getWorkerHttpUrl();
+    if (!base) return null;
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 3500);
+      const r = await fetch(`${base}${subpath}`, { ...init, signal: controller.signal });
+      clearTimeout(t);
+      return r;
+    } catch {
+      return null;
+    }
+  }
+
+  // === BỔ SUNG M: Server-side Gemini TTS (/api/voice/gemini-tts) ===
+  app.post('/api/voice/gemini-tts', async (req, res) => {
+    const apiKey = (process.env.GEMINI_API_KEY || req.body?.manualApiKey || '').trim();
+    const text = String(req.body?.text || '').trim().slice(0, 600);
+    const voiceName = String(req.body?.voiceName || 'Kore');
+    if (!apiKey || !text) {
+      return res.json({
+        ok: false,
+        fallback: 'web_speech',
+        error: !apiKey ? 'Chưa có GEMINI_API_KEY cho Gemini TTS' : 'Thiếu nội dung đọc',
+      });
+    }
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash-lite-tts',
+        contents: [{ role: 'user', parts: [{ text }] }],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName },
+            },
+          },
+        } as Record<string, unknown>,
+      });
+
+      const part = response.candidates?.[0]?.content?.parts?.[0] as
+        | { inlineData?: { data?: string; mimeType?: string } }
+        | undefined;
+      if (part?.inlineData?.data) {
+        return res.json({
+          ok: true,
+          audioBase64: part.inlineData.data,
+          mimeType: part.inlineData.mimeType || 'audio/wav',
+        });
+      }
+      return res.json({ ok: false, fallback: 'web_speech', error: 'Gemini TTS không trả dữ liệu audio.' });
+    } catch (err) {
+      return res.json({
+        ok: false,
+        fallback: 'web_speech',
+        error: err instanceof Error ? err.message : 'Lỗi gọi Gemini TTS',
+      });
+    }
+  });
+
+  // === BỔ SUNG V: On-Demand GitHub Repo Search & Docker Sandbox Runner ===
+  app.get('/api/repos/search', async (req, res) => {
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.status(400).json({ ok: false, error: 'Thiếu từ khóa tìm repo', items: [] });
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 7000);
+      const r = await fetch(
+        `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=5`,
+        {
+          signal: controller.signal,
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'AI-Company-RepoScout/1.0',
+          },
+        }
+      );
+      clearTimeout(t);
+      if (!r.ok) {
+        return res.json({ ok: false, items: [], status: r.status });
+      }
+      const data = (await r.json()) as { items?: unknown[] };
+      return res.json({ ok: true, items: data.items || [] });
+    } catch (err) {
+      return res.json({
+        ok: false,
+        items: [],
+        error: err instanceof Error ? err.message : 'Không truy cập được GitHub API',
+      });
+    }
+  });
+
+  app.post('/api/repos/sandbox-test', async (req, res) => {
+    const { repoUrl, repoFullName } = (req.body || {}) as { repoUrl?: string; repoFullName?: string };
+    const workerRes = await tryWorkerFetch('/repos/sandbox-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoUrl, fullName: repoFullName }),
+    });
+    if (workerRes && workerRes.ok) {
+      const data = await workerRes.json().catch(() => null);
+      if (data) return res.json(data);
+    }
+    return res.json({
+      executed: false,
+      passed: false,
+      stdoutExcerpt: `Docker Sandbox (--network=none) cần chạy trên máy local qua /worker. Repo "${repoFullName || ''}" giữ nguyên nhãn CHƯA KIỂM CHỨNG.`,
+    });
+  });
+
+  // === BỔ SUNG O: Zalo Cá nhân (zca-js bridge + Sandbox fallback) ===
+  let zaloSimState: {
+    status: 'disconnected' | 'qr_pending' | 'connected' | 'expired' | 'blocked_anomaly';
+    mode: 'worker_zca_js' | 'sandbox_sim';
+    accountName?: string;
+    userIdMasked?: string;
+    qrExpiresAt?: number;
+    lastHeartbeatAt?: number;
+  } = { status: 'disconnected', mode: 'sandbox_sim' };
+
+  app.post('/api/zalo-personal/qr-start', async (_req, res) => {
+    const w = await tryWorkerFetch('/zalo-personal/qr-start', { method: 'POST' });
+    if (w && w.ok) return res.json(await w.json());
+    zaloSimState = { status: 'qr_pending', mode: 'sandbox_sim', qrExpiresAt: Date.now() + 120_000 };
+    return res.json(zaloSimState);
+  });
+
+  app.post('/api/zalo-personal/qr-confirm-sim', async (req, res) => {
+    const accountName = String(req.body?.accountName || 'Zalo Công Ty Phụ (Sandbox)');
+    const w = await tryWorkerFetch('/zalo-personal/qr-confirm-sim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountName }),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    zaloSimState = {
+      status: 'connected',
+      mode: 'sandbox_sim',
+      accountName,
+      userIdMasked: '****8821',
+      lastHeartbeatAt: Date.now(),
+    };
+    return res.json(zaloSimState);
+  });
+
+  app.post('/api/zalo-personal/disconnect', async (_req, res) => {
+    const w = await tryWorkerFetch('/zalo-personal/disconnect', { method: 'POST' });
+    if (w && w.ok) return res.json(await w.json());
+    zaloSimState = { status: 'disconnected', mode: 'sandbox_sim' };
+    return res.json(zaloSimState);
+  });
+
+  app.post('/api/zalo-personal/send', async (req, res) => {
+    const { peerId, text, envMode } = (req.body || {}) as { peerId?: string; text?: string; envMode?: string };
+    const w = await tryWorkerFetch('/zalo-personal/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peerId, text }),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    if (zaloSimState.status !== 'connected' && envMode !== 'sandbox') {
+      return res.json({ ok: false, error: 'Phiên Zalo Cá nhân chưa quét QR kết nối.' });
+    }
+    return res.json({ ok: true });
+  });
+
+  // === BỔ SUNG X+: Android Device Farm Routes (/api/devices/*) ===
+  const DEFAULT_BLOCKED_PACKAGES = [
+    'com.vietcombank',
+    'com.mbmobile',
+    'com.techcombank',
+    'com.momo.vn',
+    'vn.zalopay',
+    'com.google.android.apps.authenticator2',
+    'com.android.settings',
+    'com.google.android.apps.photos',
+    'com.android.contacts',
+  ];
+
+  const renderMockPhoneSvg = (fg: string, note: string, step: number) => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="720" viewBox="0 0 360 720">
+      <rect width="360" height="720" rx="28" fill="#0F172A"/>
+      <rect x="14" y="18" width="332" height="684" rx="20" fill="#1E293B" stroke="#334155" stroke-width="2"/>
+      <rect x="28" y="34" width="304" height="36" rx="10" fill="#0EA5E9" fill-opacity="0.18"/>
+      <text x="42" y="57" fill="#38BDF8" font-family="sans-serif" font-size="13" font-weight="bold">SANDBOX ANDROID VIEW · ${fg}</text>
+      <rect x="28" y="90" width="304" height="110" rx="14" fill="#0F172A" stroke="#475569"/>
+      <text x="44" y="122" fill="#F8FAFC" font-family="sans-serif" font-size="14" font-weight="bold">AI Company Mobile Workspace</text>
+      <text x="44" y="148" fill="#94A3B8" font-family="sans-serif" font-size="12">Lệnh gần nhất: ${note.replace(/[<>&"]/g, '')}</text>
+      <text x="44" y="172" fill="#22C55E" font-family="monospace" font-size="11">Frame #${step} · Chế độ Mô phỏng An toàn</text>
+      <rect x="28" y="220" width="304" height="380" rx="14" fill="#020617" stroke="#1E293B"/>
+      <text x="44" y="256" fill="#E2E8F0" font-family="sans-serif" font-size="13">[App] ${fg}</text>
+      <text x="44" y="286" fill="#94A3B8" font-family="sans-serif" font-size="12">• Đã che dữ liệu nhạy cảm &amp; OTP</text>
+      <text x="44" y="312" fill="#94A3B8" font-family="sans-serif" font-size="12">• Chạm / Vuốt / Nhập chữ qua hàng đợi FIFO</text>
+      <rect x="44" y="530" width="272" height="44" rx="10" fill="#0EA5E9"/>
+      <text x="115" y="557" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="bold">Sẵn sàng nhận lệnh</text>
+    </svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  };
+
+  let mockFrameCounter = 1;
+  let mockDevicesState: Array<{
+    id: string;
+    serial: string;
+    modelName: string;
+    androidVersion: string;
+    driverType: 'adb_usb' | 'adb_wifi' | 'emulator' | 'mock';
+    status: 'unauthorized' | 'device' | 'offline' | 'controlled' | 'error';
+    batteryPercent: number;
+    temperatureC: number;
+    screenWidth: number;
+    screenHeight: number;
+    controlMode: 'view_only' | 'approved_actions' | 'policy_auto';
+    assignedAgentId?: string;
+    assignedDepartment?: string;
+    foregroundPackage: string;
+    lastScreenshotDataUrl?: string;
+    lastOcrTextMasked?: string;
+    isStreaming: boolean;
+    lastSeenAt: number;
+  }> = [
+    {
+      id: 'dev_mock_pixel7',
+      serial: 'MOCK-PIXEL7-01',
+      modelName: 'Pixel 7 Pro (Mô phỏng Sandbox)',
+      androidVersion: 'Android 14 (Sandbox)',
+      driverType: 'mock',
+      status: 'device',
+      batteryPercent: 88,
+      temperatureC: 31.5,
+      screenWidth: 1080,
+      screenHeight: 2400,
+      controlMode: 'view_only',
+      assignedAgentId: 'mkt_social',
+      assignedDepartment: 'marketing',
+      foregroundPackage: 'com.ss.android.ugc.trill',
+      lastScreenshotDataUrl: renderMockPhoneSvg('com.ss.android.ugc.trill', 'Chờ lệnh kiểm tra', 1),
+      lastOcrTextMasked: 'TikTok Business · Bảng tin công khai · Chế độ CHỈ XEM',
+      isStreaming: false,
+      lastSeenAt: Date.now(),
+    },
+  ];
+
+  app.get('/api/devices/status', async (_req, res) => {
+    const w = await tryWorkerFetch('/devices/status');
+    if (w && w.ok) return res.json(await w.json());
+    return res.json({
+      adbFound: false,
+      adbVersion: null,
+      adbPath: null,
+      platformToolsDownload: {
+        url: 'https://developer.android.com/tools/releases/platform-tools',
+        hint: 'Chạy `/worker` trên máy local và cài Android Platform-Tools (ADB) để cắm điện thoại thật.',
+      },
+      devices: mockDevicesState,
+    });
+  });
+
+  app.get('/api/devices', async (_req, res) => {
+    const w = await tryWorkerFetch('/devices');
+    if (w && w.ok) return res.json(await w.json());
+    return res.json({ devices: mockDevicesState });
+  });
+
+  app.post('/api/devices/pair-wifi', async (req, res) => {
+    const w = await tryWorkerFetch('/devices/pair-wifi', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    return res.json({
+      ok: false,
+      message:
+        'Ghép đôi Wi-Fi (adb pair) yêu cầu máy chủ local /worker có cài ADB. Trong Preview trình duyệt, vui lòng dùng MockDevice hoặc tải dự án về chạy /worker + npm run device:doctor.',
+    });
+  });
+
+  app.post('/api/devices/killswitch', async (_req, res) => {
+    await tryWorkerFetch('/devices/killswitch', { method: 'POST' });
+    mockDevicesState = mockDevicesState.map((d) => ({
+      ...d,
+      controlMode: 'view_only',
+      isStreaming: false,
+    }));
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/devices/:id/mode', async (req, res) => {
+    const { mode } = (req.body || {}) as { mode?: 'view_only' | 'approved_actions' | 'policy_auto' };
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    if (mode) {
+      mockDevicesState = mockDevicesState.map((d) => (d.id === req.params.id ? { ...d, controlMode: mode } : d));
+    }
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/devices/:id/assign', async (req, res) => {
+    const { agentId, department } = (req.body || {}) as { agentId?: string; department?: string };
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/assign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId, department }),
+    });
+    if (w && w.ok) return res.json(await w.json());
+    mockDevicesState = mockDevicesState.map((d) =>
+      d.id === req.params.id ? { ...d, assignedAgentId: agentId, assignedDepartment: department } : d
+    );
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/devices/:id/stop', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/stop`, { method: 'POST' });
+    if (w && w.ok) return res.json(await w.json());
+    mockDevicesState = mockDevicesState.map((d) =>
+      d.id === req.params.id ? { ...d, controlMode: 'view_only', isStreaming: false } : d
+    );
+    return res.json({ ok: true });
+  });
+
+  app.post('/api/devices/:id/command', async (req, res) => {
+    const w = await tryWorkerFetch(`/devices/${encodeURIComponent(req.params.id)}/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    if (w && w.ok) return res.json(await w.json());
+
+    const devIdx = mockDevicesState.findIndex((d) => d.id === req.params.id);
+    if (devIdx < 0) return res.status(404).json({ ok: false, error: 'Không tìm thấy thiết bị' });
+    const dev = mockDevicesState[devIdx];
+    const {
+      agentId = 'ceo',
+      action = 'screenshot',
+      text,
+      packageName,
+      policy,
+    } = (req.body || {}) as {
+      agentId?: string;
+      action?: string;
+      text?: string;
+      packageName?: string;
+      policy?: { blockedPackages?: string[]; allowedPackages?: string[] };
+    };
+
+    const blocked = new Set([...(policy?.blockedPackages || DEFAULT_BLOCKED_PACKAGES)]);
+    if (packageName && blocked.has(packageName)) {
+      return res.json({
+        ok: false,
+        error: `Từ chối tuyệt đối: Ứng dụng "${packageName}" nằm trong danh sách cấm (Ngân hàng/Ví/2FA/Cài đặt).`,
+        log: {
+          id: `dlog_${Date.now().toString(36)}`,
+          deviceId: dev.id,
+          serial: dev.serial,
+          agentId,
+          action: `${action}:${packageName}`,
+          foregroundPackage: dev.foregroundPackage,
+          result: 'blocked_policy',
+          reason: 'Blocked sensitive package',
+          timestamp: Date.now(),
+        },
+      });
+    }
+
+    if (action !== 'screenshot' && action !== 'ocr_read' && dev.controlMode === 'view_only') {
+      return res.json({
+        ok: false,
+        error: 'Thiết bị đang ở chế độ CHỈ XEM — chặn mọi thao tác chạm/nhập.',
+        log: {
+          id: `dlog_${Date.now().toString(36)}`,
+          deviceId: dev.id,
+          serial: dev.serial,
+          agentId,
+          action,
+          foregroundPackage: dev.foregroundPackage,
+          result: 'blocked_mode',
+          reason: 'View-only mode active',
+          timestamp: Date.now(),
+        },
+      });
+    }
+
+    mockFrameCounter++;
+    const nextFg = action === 'open_app' && packageName ? packageName : dev.foregroundPackage;
+    const rawOcr = text
+      ? `Vừa nhập: ${text.replace(/\b\d{4,8}\b/g, '***')} · App: ${nextFg}`
+      : `Màn hình ${nextFg} · Tác vụ: ${action} (#${mockFrameCounter})`;
+    const nextShot = renderMockPhoneSvg(nextFg, `${action}${text ? ` "${text.slice(0, 14)}"` : ''}`, mockFrameCounter);
+
+    const updated = {
+      ...dev,
+      foregroundPackage: nextFg,
+      lastScreenshotDataUrl: nextShot,
+      lastOcrTextMasked: rawOcr,
+      lastSeenAt: Date.now(),
+    };
+    mockDevicesState[devIdx] = updated;
+
+    return res.json({
+      ok: true,
+      screenshotDataUrl: nextShot,
+      ocrText: rawOcr,
+      device: updated,
+      log: {
+        id: `dlog_${Date.now().toString(36)}`,
+        deviceId: dev.id,
+        serial: dev.serial,
+        agentId,
+        action,
+        foregroundPackage: nextFg,
+        result: 'ok',
+        timestamp: Date.now(),
+      },
     });
   });
 

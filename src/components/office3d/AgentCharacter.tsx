@@ -51,6 +51,10 @@ export function AgentCharacter({
   const externalAccount = useCompanyStore((s) =>
     s.externalAccounts.find((e) => e.agentId === agent.id)
   );
+  const isSpeaking = useCompanyStore((s) => s.voiceSpeakingAgentId === agent.id);
+  const hasAssignedDevice = useCompanyStore((s) =>
+    s.managedDevices.some((d) => d.assignedAgentId === agent.id && d.status !== 'offline')
+  );
 
   const isSelected = selectedAgentId === agent.id;
   const status = runtime?.status || 'idle';
@@ -179,6 +183,7 @@ export function AgentCharacter({
       <ChibiModel
         appearance={appearance}
         status={status}
+        isSpeaking={isSpeaking}
         isPostingSocial={Boolean(runtime?.isPostingSocial)}
         simplifiedLod={graphicsQuality === 'low' || isFarLod}
         showOutline={graphicsQuality !== 'low'}
@@ -187,6 +192,21 @@ export function AgentCharacter({
         brandPrimary={brand.primaryColor}
         brandSecondary={brand.secondaryColor}
       />
+
+      {/* Glowing Android Smartphone Indicator when device assigned to agent */}
+      {hasAssignedDevice && (
+        <mesh
+          position={[0.42, 0.84, 0.48]}
+          rotation={[-0.35, 0.25, 0]}
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveTab('devices');
+          }}
+        >
+          <boxGeometry args={[0.1, 0.17, 0.02]} />
+          <meshStandardMaterial color="#0EA5E9" emissive="#38BDF8" emissiveIntensity={0.85} />
+        </mesh>
+      )}
 
       {/* Rounded Head HUD & Speech Bubble */}
       {shouldRenderHud && (

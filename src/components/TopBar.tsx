@@ -4,6 +4,8 @@ import {
   Bell,
   Bot,
   ChevronDown,
+  Eye,
+  Monitor,
   Moon,
   OctagonAlert,
   Pause,
@@ -37,6 +39,8 @@ export function TopBar({
   const expenses = useCompanyStore((s) => s.expenses);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
   const clearNotifications = useCompanyStore((s) => s.clearNotifications);
+  const runRandomSpotCheck = useCompanyStore((s) => s.runRandomSpotCheck);
+  const setMonitorWallOpen = useCompanyStore((s) => s.setMonitorWallOpen);
 
   const [demoMenuOpen, setDemoMenuOpen] = useState(false);
 
@@ -164,7 +168,27 @@ export function TopBar({
           <span>{settings.autopilotEnabled && !settings.killSwitchActive ? 'Autopilot: BẬT' : 'Autopilot: TẮT'}</span>
         </button>
 
-        <div className="hidden lg:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5">
+        <button
+          type="button"
+          onClick={() => runRandomSpotCheck('ceo')}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+          title="Kiểm tra bất chợt màn hình làm việc 1 nhân sự ngẫu nhiên"
+        >
+          <Eye className="w-3.5 h-3.5" />
+          <span className="hidden lg:inline">Soi ngẫu nhiên</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMonitorWallOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium whitespace-nowrap shrink-0 cursor-pointer"
+          title="Mở Tường Giám sát 6-9 màn hình nhân sự"
+        >
+          <Monitor className="w-3.5 h-3.5 text-sky-500" />
+          <span className="hidden lg:inline">Tường GS</span>
+        </button>
+
+        <div className="hidden xl:flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5">
           {([
             [1, '1 Đề xuất'],
             [2, '2 Cân bằng'],

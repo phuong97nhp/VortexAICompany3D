@@ -34,6 +34,7 @@ import {
 } from '../engine/resilience';
 import {
   buildBackupBundleJson,
+  CURRENT_SCHEMA_VERSION,
   createDurableJobRecord,
   createHealthLog,
   evaluateGoLiveChecklist,
@@ -100,7 +101,7 @@ async function runFullSystemTests() {
     };
     const migrated = migrateSettingsRecord(legacy);
     assert.equal(migrated.migrated, true);
-    assert.equal(migrated.settings.schemaVersion, 6);
+    assert.equal(migrated.settings.schemaVersion, CURRENT_SCHEMA_VERSION);
     assert.equal(migrated.settings.graphicsQuality, 'low');
     assert.equal(migrated.settings.simulationSpeed, 1);
     assert.ok(migrated.settings.affiliate.networks.some((n) => n.id === 'shopee'));
@@ -120,7 +121,7 @@ async function runFullSystemTests() {
     const validSnap = buildBackupBundleJson({ agents: [], tasks: [] }, 'Test Backup');
     const okBundle = validateBackupBundleJson(validSnap.jsonPayload);
     assert.equal(okBundle.ok, true);
-    assert.equal(okBundle.bundle?.schemaVersion, 6);
+    assert.equal(okBundle.bundle?.schemaVersion, CURRENT_SCHEMA_VERSION);
     console.log('PASS [2] Di trú schema v5->v6 + bảo lưu dữ liệu hỏng vào localStorage & validate bundle Zod');
   }
 

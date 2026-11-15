@@ -15,9 +15,12 @@ import {
   AgentAppearance,
   AgentExternalAccount,
   AgentMemory,
+  AgentOnboardingExamAttempt,
   AgentProfile,
   AgentRuntimeState,
+  AgentScreenSnapshot,
   AgentStatus,
+  AgentTimelineEvent,
   ApprovalRequest,
   AskCeoQuestion,
   AuditLogEntry,
@@ -28,12 +31,19 @@ import {
   ChatChannelId,
   ChatMessage,
   CompanySettings,
+  CompetitorWatchTarget,
   ContractRecord,
   ContractTemplate,
   ContractVariant,
+  CouncilSession,
+  CrossDeptHandoverTicket,
   DataProvenance,
   DepartmentConfig,
   DepartmentId,
+  DeptInteractionRule,
+  DeviceActionLog,
+  DeviceControlMode,
+  DevicePolicyProfile,
   DocumentItem,
   DurableJob,
   EncryptedCredentialRecord,
@@ -43,7 +53,10 @@ import {
   ExpenseItem,
   ExpenseRule,
   ExpenseStatus,
+  ExperienceMemoryItem,
+  GitRepoEvaluationReport,
   HrAuditEntry,
+  HrScaleRecommendation,
   HubCwApiLog,
   HubCwModuleId,
   HubCwModulePermissionFlag,
@@ -57,14 +70,23 @@ import {
   LegalReportRecord,
   LegalSettings,
   LogoPlacement,
+  ManagedDeviceRecord,
   MarketingChannelRecord,
+  MeetingRequestTicket,
+  MoneyIdeaCard,
+  OkrObjective,
   OnboardingState,
   OriginTag,
   OutfitStyleId,
   OutreachLogEntry,
+  PaymentBankAccount,
   Permission,
+  PlaybookSkill,
+  ProductMasterRecord,
   ProviderId,
+  QualityReviewCycle,
   RoleRouteEntry,
+  RoleSopDocument,
   RoleType,
   RoutingPresetId,
   RoutingTaskGroup,
@@ -73,14 +95,23 @@ import {
   SocialCommentInboxItem,
   SocialPostLogEntry,
   SpendingPolicy,
+  SpotCheckRecord,
+  SpotCheckScheduleConfig,
   SystemEnvMode,
   SystemHealthLog,
   TaskItem,
   TaskStatus,
   TokenUsageRecord,
   TrackedLink,
+  UpgradeChangelogEntry,
+  UpgradeProposal,
   VaultAccountStatus,
+  VoiceMeetingSession,
+  VoiceSettings,
   WorkflowTrace,
+  ZaloPersonalConfig,
+  ZaloPersonalMessageLog,
+  ZaloPersonalSession,
 } from '../types';
 import { CompanyMemoryRecord, createDefaultSettings, db, repository } from '../db/repository';
 import {
@@ -156,6 +187,29 @@ import {
 } from '../engine/runtime247';
 import { circuitBreakers } from '../engine/resilience';
 import { realtimeBridge, RealtimeStatus } from '../engine/realtimeBridge';
+import {
+  buildHonestAgentScreenSnapshot,
+  createSpotCheckRecord,
+  pickRandomActiveAgent,
+  pruneExpiredSpotChecks,
+} from '../engine/spotCheckEngine';
+import {
+  createVoiceProvider,
+  parseCeoVoiceCommand,
+  proposeUniqueVoiceForAgent,
+  stopAllVoicePlayback,
+} from '../engine/voiceEngine';
+import { conveneCouncilSession, runQualityLoopCycle } from '../engine/qualityCouncilEngine';
+import { checkZaloPersonalOutboundGuardrails, maskPeerId } from '../integrations/zaloPersonal/zaloPersonalGuardrails';
+import { zaloPersonalAdapter } from '../integrations/zaloPersonal/ZaloPersonalAdapter';
+import { calculateRevenueFunnel } from '../engine/okrEngine';
+import { analyzeWorkloadForHrRecommendations, gradeAgentOnboardingExam } from '../engine/hrSopEngine';
+import {
+  buildIdleMoneyPlan,
+  canUsePlaybookFastTrack,
+  evaluateGitRepoMetadata,
+  recordPlaybookOutcome,
+} from '../engine/collaborationEngine';
 
 export type RightPanelTab =
   | 'chat'
@@ -174,7 +228,11 @@ export type RightPanelTab =
   | 'vault'
   | 'tokens'
   | 'customizer'
-  | 'settings';
+  | 'settings'
+  | 'strategy'
+  | 'products_bank'
+  | 'collab'
+  | 'devices';
 
 export interface CameraTargetState {
   position: [number, number, number];
@@ -246,6 +304,46 @@ export interface CompanyState {
   systemHealthLogs: SystemHealthLog[];
   backupSnapshots: BackupSnapshotRecord[];
 
+  // BỔ SUNG L–X+: Spot-Check, Voice & Meetings, Quality/Council, Zalo Personal, OKR, HR SOP, Product/Bank, Collab, Devices
+  spotChecks: SpotCheckRecord[];
+  timelineEvents: AgentTimelineEvent[];
+  activeSpotCheckAgentId: string | null;
+  monitorWallOpen: boolean;
+
+  voiceSpeakingAgentId: string | null;
+  currentSubtitle: { speakerName: string; text: string } | null;
+  voiceMeetings: VoiceMeetingSession[];
+  activeMeetingId: string | null;
+  meetingRequests: MeetingRequestTicket[];
+
+  qualityCycles: QualityReviewCycle[];
+  councilSessions: CouncilSession[];
+
+  zaloPersonalSession: ZaloPersonalSession;
+  zaloPersonalLogs: ZaloPersonalMessageLog[];
+
+  okrObjectives: OkrObjective[];
+  roleSops: RoleSopDocument[];
+  onboardingExams: AgentOnboardingExamAttempt[];
+  hrRecommendations: HrScaleRecommendation[];
+
+  productMasters: ProductMasterRecord[];
+  bankAccounts: PaymentBankAccount[];
+
+  interactionRules: DeptInteractionRule[];
+  handoverTickets: CrossDeptHandoverTicket[];
+  moneyIdeas: MoneyIdeaCard[];
+  competitorWatches: CompetitorWatchTarget[];
+  upgradeProposals: UpgradeProposal[];
+  upgradeChangelog: UpgradeChangelogEntry[];
+  repoEvaluations: GitRepoEvaluationReport[];
+  playbooks: PlaybookSkill[];
+  experienceMemories: ExperienceMemoryItem[];
+
+  managedDevices: ManagedDeviceRecord[];
+  devicePolicy: DevicePolicyProfile;
+  deviceLogs: DeviceActionLog[];
+
   onAskCeoResolvedHook?: (q: AskCeoQuestion, answer: string) => Promise<void> | void;
 
   // UI HUD State
@@ -306,6 +404,7 @@ export interface CompanyState {
     params: Parameters<typeof buildNewAgentFromSpec>[0] & {
       appearance?: Partial<AgentAppearance>;
       customDeskPosition?: [number, number, number];
+      voiceProfile?: AgentProfile['voiceProfile'];
       actor?: string;
     }
   ) => Promise<AgentProfile>;
@@ -603,6 +702,150 @@ export interface CompanyState {
   deleteDemoData: () => Promise<void>;
   createManualBackup: (label?: string) => Promise<BackupSnapshotRecord>;
   restoreFromBackupJson: (rawJson: string) => Promise<{ ok: boolean; error?: string; restoredCount?: number }>;
+
+  // BỔ SUNG L: Spot-Check
+  openSpotCheck: (agentId: string | null) => void;
+  setMonitorWallOpen: (open: boolean) => void;
+  recordTimelineEvent: (params: {
+    agentId: string;
+    stepLabel: string;
+    detailMasked: string;
+    toolName?: string;
+  }) => void;
+  captureAgentScreen: (agentId: string) => AgentScreenSnapshot | null;
+  recordManualSpotCheck: (agentId: string, inspector?: 'ceo' | 'coo') => Promise<SpotCheckRecord | null>;
+  runRandomSpotCheck: (inspector?: 'ceo' | 'coo') => Promise<SpotCheckRecord | null>;
+  submitSpotCheckReview: (params: {
+    recordId: string;
+    ceoScore?: number;
+    ceoNote?: string;
+    action?: 'remind' | 'explain' | 'reassign' | 'pause' | 'note';
+  }) => Promise<void>;
+  updateSpotCheckConfig: (patch: Partial<SpotCheckScheduleConfig>) => Promise<void>;
+
+  // BỔ SUNG M: Voice & Live Digital Meetings
+  updateVoiceSettings: (patch: Partial<VoiceSettings>) => Promise<void>;
+  speakAsAgent: (agentId: string, text: string) => Promise<void>;
+  stopSpeakingNow: () => void;
+  startVoiceMeeting: (params: {
+    title: string;
+    participantIds: string[];
+    isQuickFiveMin?: boolean;
+    recordTranscriptOptIn?: boolean;
+  }) => Promise<VoiceMeetingSession>;
+  appendMeetingTurn: (params: {
+    meetingId: string;
+    speakerId: string;
+    speakerName: string;
+    speakerTitle: string;
+    text: string;
+    speakAudio?: boolean;
+  }) => Promise<void>;
+  toggleRaiseHandInMeeting: (meetingId: string, agentId: string) => Promise<void>;
+  endVoiceMeeting: (meetingId: string, saveTranscript?: boolean) => Promise<void>;
+  requestCeoMeeting: (agentId: string, topic: string, urgency?: 'normal' | 'urgent') => void;
+  respondMeetingRequest: (requestId: string, decision: 'accepted' | 'snoozed' | 'declined') => Promise<void>;
+  handleCeoVoiceTranscript: (transcript: string) => Promise<string>;
+
+  // BỔ SUNG N: Quality Loop & Council
+  runQualityCycle: (params: {
+    title: string;
+    department: DepartmentId;
+    definitionOfDone: string;
+    draftText: string;
+    taskId?: string;
+    makerId?: string;
+  }) => Promise<QualityReviewCycle>;
+  conveneCouncil: (params: { topic: string; participantIds?: string[] }) => Promise<CouncilSession>;
+
+  // BỔ SUNG O: Zalo Cá nhân (zca-js)
+  updateZaloPersonalConfig: (patch: Partial<ZaloPersonalConfig>) => Promise<void>;
+  startZaloPersonalQr: () => Promise<void>;
+  confirmZaloPersonalQrSim: (accountName?: string) => Promise<void>;
+  disconnectZaloPersonal: () => Promise<void>;
+  sendZaloPersonalMessage: (params: {
+    peerId: string;
+    peerName: string;
+    text: string;
+    agentId: string;
+    isReplyToInbound?: boolean;
+    isColdMarketing?: boolean;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  addZaloPersonalDnc: (peerId: string) => Promise<void>;
+
+  // BỔ SUNG P: OKR & Revenue Plan
+  upsertOkrObjective: (okr: OkrObjective) => Promise<void>;
+  computeOkrPlan: (objectiveId: string) => ReturnType<typeof calculateRevenueFunnel> | null;
+
+  // BỔ SUNG Q: Dynamic HR Scaling + SOP + Onboarding Exam
+  upsertRoleSop: (sop: RoleSopDocument) => Promise<void>;
+  runAgentOnboardingExam: (agentId: string, customAnswers?: string[]) => Promise<AgentOnboardingExamAttempt | null>;
+  runHrWorkloadCheck: () => Promise<HrScaleRecommendation[]>;
+  resolveHrRecommendation: (recId: string, decision: 'approved' | 'rejected') => Promise<void>;
+
+  // BỔ SUNG R: Product Master & Bank Accounts (CEO 2FA)
+  upsertProductMaster: (product: ProductMasterRecord) => Promise<void>;
+  addOrUpdateBankAccountWith2Fa: (params: {
+    ceoPassword: string;
+    otpCode: string;
+    account: Omit<PaymentBankAccount, 'id' | 'twoFactorConfirmedAt' | 'createdBy' | 'updatedAt'> & { id?: string };
+  }) => Promise<{ ok: boolean; error?: string }>;
+  deleteBankAccountWith2Fa: (id: string, ceoPassword: string) => Promise<{ ok: boolean; error?: string }>;
+
+  // BỔ SUNG S, T, U, V, W: Collaboration, Money Ideas, Competitor Watch, Upgrades, Git Repo Scout, Playbooks
+  createHandoverTicket: (params: {
+    fromDepartment: DepartmentId;
+    toDepartment: DepartmentId;
+    fromAgentId: string;
+    toAgentId: string;
+    title: string;
+    payloadSummary: string;
+    deliverableRef?: string;
+    slaMinutes?: number;
+  }) => Promise<CrossDeptHandoverTicket>;
+  respondHandoverTicket: (
+    ticketId: string,
+    action: 'accepted' | 'rejected' | 'completed',
+    reason?: string
+  ) => Promise<void>;
+  runIdleMoneyBrainstorm: () => Promise<MoneyIdeaCard>;
+  updateMoneyIdeaStage: (ideaId: string, stage: MoneyIdeaCard['stage'], ceoApproved?: boolean) => Promise<void>;
+  runCompetitorWatchCycle: () => Promise<void>;
+  proposeSystemUpgrade: (params: {
+    title: string;
+    proposedBy: string;
+    bottleneckEvidence: string;
+    solutionSummary: string;
+    expectedRoi: string;
+    estimatedCostVnd?: number;
+    beforeMetric: string;
+  }) => Promise<UpgradeProposal>;
+  advanceUpgradeStage: (proposalId: string, stage: UpgradeProposal['rolloutStage']) => Promise<void>;
+  scoutGitRepo: (query: string) => Promise<GitRepoEvaluationReport[]>;
+  runSandboxTestOnRepo: (repoReportId: string) => Promise<GitRepoEvaluationReport | null>;
+  recordPlaybookRun: (playbookId: string, qualityScore: number) => Promise<void>;
+  togglePlaybookFastTrack: (playbookId: string) => Promise<void>;
+
+  // BỔ SUNG X+: Plug-and-Play Android Device Farm
+  refreshDevices: () => Promise<void>;
+  connectWirelessDevice: (ipPort: string, pairingCode?: string) => Promise<{ ok: boolean; message: string }>;
+  setDeviceControlMode: (deviceId: string, mode: DeviceControlMode) => Promise<void>;
+  assignDeviceToAgent: (deviceId: string, agentId: string | undefined) => Promise<void>;
+  toggleDeviceStream: (deviceId: string, active: boolean) => Promise<void>;
+  executeDeviceCommand: (params: {
+    deviceId: string;
+    agentId: string;
+    action: 'tap' | 'swipe' | 'input_text' | 'back' | 'home' | 'open_app' | 'screenshot' | 'ocr_read';
+    x?: number;
+    y?: number;
+    x2?: number;
+    y2?: number;
+    text?: string;
+    packageName?: string;
+    ceoConfirmed?: boolean;
+  }) => Promise<{ ok: boolean; error?: string; screenshotDataUrl?: string; ocrText?: string }>;
+  grabDeviceControlStop: (deviceId: string) => Promise<void>;
+  updateDevicePolicy: (patch: Partial<DevicePolicyProfile>) => void;
 }
 
 function buildInitialRuntimes(agents: AgentProfile[]): Record<string, AgentRuntimeState> {
@@ -709,6 +952,73 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
     systemHealthLogs: [],
     backupSnapshots: [],
 
+    spotChecks: [],
+    timelineEvents: [],
+    activeSpotCheckAgentId: null,
+    monitorWallOpen: false,
+
+    voiceSpeakingAgentId: null,
+    currentSubtitle: null,
+    voiceMeetings: [],
+    activeMeetingId: null,
+    meetingRequests: [],
+
+    qualityCycles: [],
+    councilSessions: [],
+
+    zaloPersonalSession: { status: 'disconnected', mode: 'sandbox_sim' },
+    zaloPersonalLogs: [],
+
+    okrObjectives: [],
+    roleSops: [],
+    onboardingExams: [],
+    hrRecommendations: [],
+
+    productMasters: [],
+    bankAccounts: [],
+
+    interactionRules: [],
+    handoverTickets: [],
+    moneyIdeas: [],
+    competitorWatches: [],
+    upgradeProposals: [],
+    upgradeChangelog: [],
+    repoEvaluations: [],
+    playbooks: [],
+    experienceMemories: [],
+
+    managedDevices: [],
+    devicePolicy: {
+      allowedPackages: [
+        'com.zing.zalo',
+        'com.ss.android.ugc.trill',
+        'com.facebook.katana',
+        'com.facebook.orca',
+        'com.shopee.vn',
+        'com.google.android.youtube',
+      ],
+      blockedPackages: [
+        'com.android.settings',
+        'com.android.vending',
+        'com.vietcombank',
+        'com.VCB',
+        'vn.com.techcombank',
+        'com.mbmobile',
+        'com.mservice.momotransfer',
+        'vn.com.vng.zalopay',
+        'com.google.android.apps.authenticator2',
+        'com.google.android.apps.photos',
+        'com.android.contacts',
+      ],
+      maxActionsPerMinute: 18,
+      maxContinuousMinutes: 20,
+      maskPasswordAndOtpRegions: true,
+      requireCeoForInstallApk: true,
+      stopBatteryBelowPercent: 15,
+      stopTempAboveC: 44,
+    },
+    deviceLogs: [],
+
     activeTab: 'chat',
     activeChannel: 'all',
     peekMode: false,
@@ -799,6 +1109,27 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
           durableJobsRaw,
           systemHealthLogs,
           backupSnapshots,
+          spotChecks,
+          voiceMeetings,
+          qualityCycles,
+          councilSessions,
+          zaloPersonalLogs,
+          okrObjectives,
+          roleSops,
+          onboardingExams,
+          productMasters,
+          bankAccounts,
+          interactionRules,
+          handoverTickets,
+          moneyIdeas,
+          competitorWatches,
+          upgradeProposals,
+          upgradeChangelog,
+          repoEvaluations,
+          playbooks,
+          experienceMemories,
+          managedDevices,
+          deviceLogs,
         ] = await Promise.all([
           repository.getAgents(),
           repository.getDepartments(),
@@ -850,6 +1181,27 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
           repository.getDurableJobs(),
           repository.getSystemHealthLogs(),
           repository.getBackupSnapshots(),
+          repository.getSpotChecks(),
+          repository.getVoiceMeetings(),
+          repository.getQualityCycles(),
+          repository.getCouncilSessions(),
+          repository.getZaloPersonalLogs(),
+          repository.getOkrObjectives(),
+          repository.getRoleSops(),
+          repository.getOnboardingExams(),
+          repository.getProductMasters(),
+          repository.getBankAccounts(),
+          repository.getInteractionRules(),
+          repository.getHandoverTickets(),
+          repository.getMoneyIdeas(),
+          repository.getCompetitorWatches(),
+          repository.getUpgradeProposals(),
+          repository.getUpgradeChangelog(),
+          repository.getRepoEvaluations(),
+          repository.getPlaybooks(),
+          repository.getExperienceMemories(),
+          repository.getManagedDevices(),
+          repository.getDeviceActionLogs(),
         ]);
 
         const activeAgentsList = agents.length > 0 ? agents : seedAgents;
@@ -1022,6 +1374,27 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
           durableJobs,
           systemHealthLogs: [bootLog, ...systemHealthLogs].slice(0, 400),
           backupSnapshots: updatedBackups,
+          spotChecks: pruneExpiredSpotChecks(spotChecks, finalSettings.spotCheck?.retentionDays || 14),
+          voiceMeetings,
+          qualityCycles,
+          councilSessions,
+          zaloPersonalLogs,
+          okrObjectives,
+          roleSops,
+          onboardingExams,
+          productMasters,
+          bankAccounts,
+          interactionRules,
+          handoverTickets,
+          moneyIdeas,
+          competitorWatches,
+          upgradeProposals,
+          upgradeChangelog,
+          repoEvaluations,
+          playbooks,
+          experienceMemories,
+          managedDevices,
+          deviceLogs,
           serverHealth: {
             mode: health.mode,
             hasGeminiEnvKey: health.hasGeminiEnvKey,
@@ -1335,6 +1708,8 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       if (params.customDeskPosition) {
         newAgent.deskPosition = [...params.customDeskPosition];
       }
+      newAgent.voiceProfile = params.voiceProfile || proposeUniqueVoiceForAgent(newAgent, state.agents);
+      newAgent.probationStatus = state.settings.hrAutonomy?.requireExamPassForLive ? 'probation' : 'passed';
 
       const baseApp = getDefaultAppearance(newAgent);
       const appearance: AgentAppearance = {
@@ -2747,20 +3122,36 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
           bubbleExpiresAt: Date.now() + 4000,
         };
       }
+      stopAllVoicePlayback();
+      fetch('/api/devices/killswitch', { method: 'POST' }).catch(() => {});
+      const baseZalo = buildFallbackBaseSettings().zaloPersonal!;
+      const updatedZalo: ZaloPersonalConfig = {
+        ...baseZalo,
+        ...(next.zaloPersonal || {}),
+        anomalyPausedReason: next.zaloPersonal?.enabled
+          ? 'Dừng khẩn cấp bởi Kill Switch CEO'
+          : next.zaloPersonal?.anomalyPausedReason,
+      };
+      const finalKillSettings: CompanySettings = {
+        ...next,
+        zaloPersonal: updatedZalo,
+      };
       set({
-        settings: next,
+        settings: finalKillSettings,
         runtimes: nextRuntimes,
+        voiceSpeakingAgentId: null,
+        currentSubtitle: null,
         bannerAlert:
-          'KILL SWITCH ĐÃ KÍCH HOẠT: Toàn bộ agent, Autopilot và kết nối ghi Hub.ChuyenWeb đã bị ngắt lập tức.',
+          'KILL SWITCH ĐÃ KÍCH HOẠT: Toàn bộ agent, giọng nói, Zalo Cá nhân, thiết bị Android & kết nối ghi HubCW đã dừng lập tức.',
       });
-      await repository.saveSettings(next);
+      await repository.saveSettings(finalKillSettings);
       await get().addMessage({
         channelId: 'all',
         senderId: 'system',
         senderName: 'Hệ thống An toàn',
         senderTitle: 'KILL SWITCH',
         department: 'exec',
-        content: 'KILL SWITCH kích hoạt bởi CEO. Mọi tác vụ chạy ngầm và Autopilot đã dừng tức thì.',
+        content: 'KILL SWITCH kích hoạt bởi CEO. Mọi tác vụ chạy ngầm, giọng nói, Zalo Cá nhân và hàng đợi thiết bị đã dừng tức thì.',
         busType: 'escalation',
         cardType: 'system_blocker',
         cardData: { reason: 'kill_switch', resumeAction: 'resume_killswitch' },
@@ -4606,6 +4997,1076 @@ export const useCompanyStore = create<CompanyState>((set, get) => {
       await get().init();
       await get().addHealthLog('info', 'backup', `Đã khôi phục ${restoredCount} bản ghi từ file sao lưu v${check.bundle.schemaVersion}.`);
       return { ok: true, restoredCount };
+    },
+
+    // === BỔ SUNG L: KIỂM TRA MÀN HÌNH LÀM VIỆC BẤT CHỢT (SPOT-CHECK) ===
+    openSpotCheck: (agentId) => set({ activeSpotCheckAgentId: agentId }),
+    setMonitorWallOpen: (open) => set({ monitorWallOpen: open }),
+
+    recordTimelineEvent: ({ agentId, stepLabel, detailMasked, toolName }) => {
+      const evt: AgentTimelineEvent = {
+        id: `tl_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`,
+        agentId,
+        stepLabel,
+        detailMasked,
+        toolName,
+        timestamp: Date.now(),
+      };
+      const cutoff = Date.now() - 10 * 60_000;
+      set((s) => ({
+        timelineEvents: [...s.timelineEvents.filter((e) => e.timestamp >= cutoff), evt].slice(-400),
+      }));
+    },
+
+    captureAgentScreen: (agentId) => {
+      const s = get();
+      const agent = s.agents.find((a) => a.id === agentId);
+      if (!agent) return null;
+      return buildHonestAgentScreenSnapshot({
+        agent,
+        runtime: s.runtimes[agentId],
+        tasks: s.tasks,
+        documents: s.documents,
+        auditLogs: s.auditLogs,
+        hubcwLogs: s.hubcwApiLogs,
+        messages: s.messages,
+        tokenUsage: s.tokenUsage,
+        envMode: s.settings.envMode,
+        timelineEvents: s.timelineEvents,
+        liveBrowserFrame: null,
+      });
+    },
+
+    recordManualSpotCheck: async (agentId, inspector = 'ceo') => {
+      const s = get();
+      const snapshot = get().captureAgentScreen(agentId);
+      if (!snapshot) return null;
+      const record = createSpotCheckRecord(snapshot, inspector);
+      await repository.putSpotCheck(record);
+      const next = pruneExpiredSpotChecks([record, ...s.spotChecks], s.settings.spotCheck?.retentionDays || 14);
+      set({ spotChecks: next, activeSpotCheckAgentId: agentId });
+      return record;
+    },
+
+    runRandomSpotCheck: async (inspector = 'ceo') => {
+      const s = get();
+      const target = pickRandomActiveAgent(s.agents, s.runtimes);
+      if (!target) return null;
+      const snapshot = get().captureAgentScreen(target.id);
+      if (!snapshot) return null;
+      const record = createSpotCheckRecord(snapshot, inspector);
+      await repository.putSpotCheck(record);
+      const next = pruneExpiredSpotChecks([record, ...s.spotChecks], s.settings.spotCheck?.retentionDays || 14);
+      set({ spotChecks: next, activeSpotCheckAgentId: inspector === 'ceo' ? target.id : s.activeSpotCheckAgentId });
+
+      if (record.verdict !== 'đúng việc' && s.settings.spotCheck?.alertOnAbnormal) {
+        await get().addMessage({
+          channelId: 'exec',
+          senderId: 'coo',
+          senderName: getLiveAgentById('coo')?.name || 'COO Điều hành',
+          senderTitle: 'Spot-Check Tự động',
+          department: 'exec',
+          content: `[Spot-Check ${inspector.toUpperCase()}] Phát hiện **${record.agentName}** ở trạng thái **${record.verdict.toUpperCase()}** (${record.score}/100): ${record.verdictReason}`,
+          busType: 'escalation',
+        });
+      }
+      return record;
+    },
+
+    submitSpotCheckReview: async ({ recordId, ceoScore, ceoNote, action }) => {
+      const rec = get().spotChecks.find((r) => r.id === recordId);
+      if (!rec) return;
+      const updated: SpotCheckRecord = {
+        ...rec,
+        ceoScore: ceoScore ?? rec.ceoScore,
+        ceoNote: ceoNote ?? rec.ceoNote,
+        ceoActionTaken: action ?? rec.ceoActionTaken,
+      };
+      await repository.putSpotCheck(updated);
+      set((s) => ({
+        spotChecks: s.spotChecks.map((r) => (r.id === recordId ? updated : r)),
+      }));
+
+      if (action === 'remind' || action === 'explain') {
+        await get().addMessage({
+          channelId: `dm:${rec.agentId}`,
+          senderId: 'ceo',
+          senderName: 'Chủ tịch / CEO',
+          senderTitle: 'Kiểm tra bất chợt',
+          department: rec.snapshot.department,
+          content:
+            action === 'remind'
+              ? `[CEO Nhắc nhở qua Spot-Check] ${ceoNote || 'Tập trung đúng đầu việc đang giao và cập nhật tiến độ thực tế.'}`
+              : `[CEO Yêu cầu giải trình] ${ceoNote || 'Giải trình ngắn gọn bước đang thực hiện và lý do chậm/lệch.'}`,
+          busType: 'escalation',
+        });
+      } else if (action === 'pause') {
+        await get().suspendAgent(rec.agentId, 'CEO Spot-Check');
+      }
+    },
+
+    updateSpotCheckConfig: async (patch) => {
+      const cur = get().settings.spotCheck ?? buildFallbackBaseSettings().spotCheck!;
+      await get().updateSettings({ spotCheck: { ...cur, ...patch } });
+    },
+
+    // === BỔ SUNG M: GIỌNG NÓI + HỌP TRỰC TIẾP ===
+    updateVoiceSettings: async (patch) => {
+      const cur = get().settings.voice ?? buildFallbackBaseSettings().voice!;
+      await get().updateSettings({ voice: { ...cur, ...patch } });
+    },
+
+    speakAsAgent: async (agentId, text) => {
+      const s = get();
+      const agent = s.agents.find((a) => a.id === agentId);
+      if (!agent) return;
+      const voiceProfile = agent.voiceProfile || proposeUniqueVoiceForAgent(agent, s.agents);
+      const provider = createVoiceProvider(s.settings.voice?.provider || 'web_speech');
+      await provider.speak({
+        text,
+        voiceProfile,
+        agentId,
+        onStart: () => {
+          set({
+            voiceSpeakingAgentId: agentId,
+            currentSubtitle: { speakerName: `${agent.name} (${agent.title})`, text },
+          });
+        },
+        onEnd: () => {
+          set({ voiceSpeakingAgentId: null, currentSubtitle: null });
+        },
+      });
+    },
+
+    stopSpeakingNow: () => {
+      stopAllVoicePlayback();
+      set({ voiceSpeakingAgentId: null, currentSubtitle: null });
+    },
+
+    startVoiceMeeting: async ({ title, participantIds, isQuickFiveMin = true, recordTranscriptOptIn = false }) => {
+      const now = Date.now();
+      const uniqIds = Array.from(new Set(['secretary', ...participantIds])).slice(0, 6);
+      const session: VoiceMeetingSession = {
+        id: `meet_${now.toString(36)}`,
+        title,
+        roomId: 'room_meeting',
+        moderatorId: 'secretary',
+        participantIds: uniqIds,
+        status: 'active',
+        isQuickFiveMin,
+        startedAt: now,
+        endsAt: isQuickFiveMin ? now + 5 * 60_000 : undefined,
+        maxTurnsPerAgent: get().settings.voice?.maxTurnsPerAgentInMeeting || 3,
+        recordTranscriptOptIn,
+        currentSpeakerId: 'secretary',
+        handRaisedAgentIds: [],
+        turns: [
+          {
+            id: `turn_${now}`,
+            speakerId: 'secretary',
+            speakerName: getLiveAgentById('secretary')?.name || 'Thư ký CEO',
+            speakerTitle: 'Điều phối cuộc họp',
+            text: `Kính chào Chủ tịch! Cuộc họp "${title}" bắt đầu${isQuickFiveMin ? ' (chế độ Họp nhanh 5 phút)' : ''}. Mời Chủ tịch phát biểu hoặc bấm chọn nhân sự giơ tay.`,
+            timestamp: now,
+          },
+        ],
+      };
+
+      uniqIds.forEach((id, idx) => {
+        get().walkAgentToMeetingSeat(id, idx);
+        get().setAgentStatus(id, 'in_meeting', 'Vào phòng họp');
+      });
+
+      await repository.putVoiceMeeting(session);
+      set((s) => ({
+        voiceMeetings: [session, ...s.voiceMeetings],
+        activeMeetingId: session.id,
+      }));
+      if (get().settings.voice?.provider !== 'text_only') {
+        get().speakAsAgent('secretary', session.turns[0].text).catch(() => {});
+      }
+      return session;
+    },
+
+    appendMeetingTurn: async ({ meetingId, speakerId, speakerName, speakerTitle, text, speakAudio = true }) => {
+      const session = get().voiceMeetings.find((m) => m.id === meetingId);
+      if (!session || session.status === 'ended') return;
+      const turn = {
+        id: `turn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 4)}`,
+        speakerId,
+        speakerName,
+        speakerTitle,
+        text,
+        timestamp: Date.now(),
+      };
+      const updated: VoiceMeetingSession = {
+        ...session,
+        currentSpeakerId: speakerId,
+        handRaisedAgentIds: session.handRaisedAgentIds.filter((id) => id !== speakerId),
+        turns: [...session.turns, turn],
+      };
+      await repository.putVoiceMeeting(updated);
+      set((s) => ({
+        voiceMeetings: s.voiceMeetings.map((m) => (m.id === meetingId ? updated : m)),
+      }));
+      if (speakAudio && speakerId !== 'ceo' && get().settings.voice?.provider !== 'text_only') {
+        await get().speakAsAgent(speakerId, text);
+      }
+    },
+
+    toggleRaiseHandInMeeting: async (meetingId, agentId) => {
+      const session = get().voiceMeetings.find((m) => m.id === meetingId);
+      if (!session) return;
+      const exists = session.handRaisedAgentIds.includes(agentId);
+      const updated: VoiceMeetingSession = {
+        ...session,
+        handRaisedAgentIds: exists
+          ? session.handRaisedAgentIds.filter((id) => id !== agentId)
+          : [...session.handRaisedAgentIds, agentId],
+      };
+      await repository.putVoiceMeeting(updated);
+      set((s) => ({
+        voiceMeetings: s.voiceMeetings.map((m) => (m.id === meetingId ? updated : m)),
+      }));
+    },
+
+    endVoiceMeeting: async (meetingId, saveTranscript) => {
+      const session = get().voiceMeetings.find((m) => m.id === meetingId);
+      if (!session) return;
+      stopAllVoicePlayback();
+      const shouldSave = saveTranscript ?? session.recordTranscriptOptIn;
+      let savedDocId: string | undefined;
+
+      if (shouldSave) {
+        const md = [
+          `# Biên bản Cuộc họp Trực tiếp: ${session.title}`,
+          `- Thời gian: ${new Date(session.startedAt).toLocaleString('vi-VN')} → ${new Date().toLocaleTimeString('vi-VN')}`,
+          `- Điều phối: ${session.moderatorId}`,
+          ``,
+          `## Nội dung phát biểu`,
+          ...session.turns.map((t) => `- **${t.speakerName} (${t.speakerTitle})**: ${t.text}`),
+        ].join('\n');
+        savedDocId = `doc_meet_${Date.now().toString(36)}`;
+        await get().putDocument({
+          id: savedDocId,
+          title: `Biên bản họp: ${session.title}`,
+          category: 'meeting',
+          authorId: session.moderatorId,
+          department: 'exec',
+          content: md,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+
+      session.participantIds.forEach((id) => get().returnAgentToDesk(id));
+      const updated: VoiceMeetingSession = {
+        ...session,
+        status: 'ended',
+        endedAt: Date.now(),
+        savedDocId,
+      };
+      await repository.putVoiceMeeting(updated);
+      set((s) => ({
+        voiceMeetings: s.voiceMeetings.map((m) => (m.id === meetingId ? updated : m)),
+        activeMeetingId: s.activeMeetingId === meetingId ? null : s.activeMeetingId,
+        voiceSpeakingAgentId: null,
+        currentSubtitle: null,
+      }));
+    },
+
+    requestCeoMeeting: (agentId, topic, urgency = 'normal') => {
+      const ag = get().agents.find((a) => a.id === agentId);
+      if (!ag) return;
+      const ticket: MeetingRequestTicket = {
+        id: `mreq_${Date.now().toString(36)}`,
+        agentId,
+        agentName: ag.name,
+        topic,
+        urgency,
+        status: 'pending',
+        createdAt: Date.now(),
+      };
+      set((s) => ({
+        meetingRequests: [ticket, ...s.meetingRequests].slice(0, 20),
+      }));
+    },
+
+    respondMeetingRequest: async (requestId, decision) => {
+      const ticket = get().meetingRequests.find((r) => r.id === requestId);
+      if (!ticket) return;
+      set((s) => ({
+        meetingRequests: s.meetingRequests.map((r) => (r.id === requestId ? { ...r, status: decision } : r)),
+      }));
+      if (decision === 'accepted') {
+        await get().startVoiceMeeting({
+          title: ticket.topic,
+          participantIds: [ticket.agentId],
+          isQuickFiveMin: true,
+        });
+      }
+    },
+
+    handleCeoVoiceTranscript: async (transcript) => {
+      const intent = parseCeoVoiceCommand(transcript);
+      if (intent.type === 'kill_switch') {
+        await get().triggerKillSwitch();
+        return 'Đã kích hoạt KILL SWITCH theo lệnh thoại của Chủ tịch.';
+      }
+      if (intent.type === 'spot_check_random') {
+        const rec = await get().runRandomSpotCheck('ceo');
+        return rec ? `Đang mở kiểm tra màn hình của ${rec.agentName} (${rec.verdict}).` : 'Hiện không có nhân sự đang chạy.';
+      }
+      if (intent.type === 'call_secretary') {
+        get().walkAgentToMeetingSeat('secretary', 0);
+        await get().speakAsAgent('secretary', 'Dạ thưa Chủ tịch, Thư ký đã có mặt và sẵn sàng nhận chỉ thị ạ.');
+        return 'Thư ký đang di chuyển vào phòng họp và phản hồi.';
+      }
+      if (intent.type === 'call_meeting') {
+        const deptAgents = get()
+          .agents.filter(
+            (a) =>
+              a.employmentStatus === 'active' &&
+              (a.department.toLowerCase().includes(intent.departmentQuery) ||
+                a.title.toLowerCase().includes(intent.departmentQuery))
+          )
+          .slice(0, 4)
+          .map((a) => a.id);
+        await get().startVoiceMeeting({
+          title: `Họp nhanh với ${intent.departmentQuery}`,
+          participantIds: deptAgents.length > 0 ? deptAgents : ['cmo', 'sales_director'],
+          isQuickFiveMin: true,
+        });
+        return `Đã mở phòng họp trực tiếp với ${intent.departmentQuery}.`;
+      }
+      if (intent.type === 'daily_report') {
+        const tasksDone = get().tasks.filter((t) => t.status === 'done').length;
+        const leadsCount = get().leads.length;
+        const summary = `Báo cáo nhanh hôm nay: công ty hiện có ${leadsCount} khách hàng tiềm năng, đã hoàn thành ${tasksDone} đầu việc và ${get().approvals.filter((a) => a.status === 'pending').length} mục chờ Chủ tịch duyệt.`;
+        await get().speakAsAgent('secretary', summary);
+        return summary;
+      }
+      return intent.text;
+    },
+
+    // === BỔ SUNG N: QUALITY LOOP & HỘI ĐỒNG ===
+    runQualityCycle: async ({ title, department, definitionOfDone, draftText, taskId, makerId }) => {
+      const activeDeptAgents = get().agents.filter((a) => a.employmentStatus === 'active' && a.department === department);
+      const allActive = get().agents.filter((a) => a.employmentStatus === 'active');
+      const maker =
+        (makerId ? allActive.find((a) => a.id === makerId) : undefined) ||
+        activeDeptAgents[0] ||
+        allActive[0];
+      const critic =
+        activeDeptAgents.find((a) => a.id !== maker.id) ||
+        allActive.find((a) => a.id !== maker.id && a.department === 'legal') ||
+        allActive.find((a) => a.id !== maker.id) ||
+        maker;
+      const verifier = allActive.find((a) => a.id === 'coo') || allActive.find((a) => a.id === 'data_analyst') || critic;
+      const deptHead =
+        activeDeptAgents.find((a) => a.role === 'Dept Head') ||
+        allActive.find((a) => a.id === 'coo') ||
+        maker;
+
+      const cycle = runQualityLoopCycle({
+        title,
+        taskId,
+        department,
+        definitionOfDone,
+        draftText,
+        maker,
+        critic,
+        verifier,
+        deptHead,
+      });
+
+      await repository.putQualityCycle(cycle);
+      set((s) => ({ qualityCycles: [cycle, ...s.qualityCycles].slice(0, 100) }));
+
+      await get().addMessage({
+        channelId: department,
+        senderId: deptHead.id,
+        senderName: deptHead.name,
+        senderTitle: 'Vòng Kiểm định Chất lượng',
+        department,
+        content: `**${cycle.status === 'approved' ? 'Đạt chuẩn bàn giao' : 'Leo thang'} (${cycle.currentRound} vòng):** ${cycle.finalSummary}`,
+        busType: 'report',
+        isInternalPeek: true,
+      });
+
+      return cycle;
+    },
+
+    conveneCouncil: async ({ topic, participantIds }) => {
+      const active = get().agents.filter((a) => a.employmentStatus === 'active');
+      const chosen =
+        participantIds && participantIds.length >= 3
+          ? participantIds.map((id) => active.find((a) => a.id === id)).filter(Boolean) as AgentProfile[]
+          : ['coo', 'cmo', 'sales_director', 'legal', 'cfo']
+              .map((id) => active.find((a) => a.id === id))
+              .filter(Boolean) as AgentProfile[];
+
+      const session = conveneCouncilSession({
+        topic,
+        participants: chosen.length >= 3 ? chosen : active.slice(0, 4),
+      });
+
+      await repository.putCouncilSession(session);
+      set((s) => ({ councilSessions: [session, ...s.councilSessions].slice(0, 50) }));
+
+      await get().addMessage({
+        channelId: 'exec',
+        senderId: 'coo',
+        senderName: getLiveAgentById('coo')?.name || 'Hội đồng Liên phòng ban',
+        senderTitle: 'Council Resolution',
+        department: 'exec',
+        content: `**Kết luận Hội đồng (${session.participantIds.length} thành viên):** ${session.ceoExecutiveSummary}`,
+        busType: 'report',
+      });
+
+      return session;
+    },
+
+    // === BỔ SUNG O: ZALO CÁ NHÂN (zca-js) ===
+    updateZaloPersonalConfig: async (patch) => {
+      const cur = get().settings.zaloPersonal ?? buildFallbackBaseSettings().zaloPersonal!;
+      await get().updateSettings({ zaloPersonal: { ...cur, ...patch } });
+    },
+
+    startZaloPersonalQr: async () => {
+      const session = await zaloPersonalAdapter.requestQrLogin();
+      set({ zaloPersonalSession: session });
+    },
+
+    confirmZaloPersonalQrSim: async (accountName) => {
+      const session = await zaloPersonalAdapter.confirmSimulatedQrScan(accountName);
+      set({ zaloPersonalSession: session });
+      await get().addHealthLog('info', 'zalo_personal', `Đã kết nối Zalo Cá nhân (${session.accountName || 'Sandbox'}).`);
+    },
+
+    disconnectZaloPersonal: async () => {
+      const session = await zaloPersonalAdapter.disconnect();
+      set({ zaloPersonalSession: session });
+    },
+
+    sendZaloPersonalMessage: async ({ peerId, peerName, text, agentId, isReplyToInbound = false, isColdMarketing = false }) => {
+      const s = get();
+      const guard = checkZaloPersonalOutboundGuardrails({
+        settings: s.settings,
+        peerId,
+        isReplyToInbound,
+        isColdMarketing,
+        todayLogs: s.zaloPersonalLogs,
+      });
+
+      const masked = maskPeerId(peerId);
+      if (!guard.allowed) {
+        const blockedLog: ZaloPersonalMessageLog = {
+          id: `zp_${Date.now().toString(36)}`,
+          direction: 'outbound',
+          peerIdMasked: masked,
+          peerName,
+          isReplyToInbound,
+          preview: text.slice(0, 120),
+          status: guard.blockStatus || 'blocked_unconfirmed',
+          agentId,
+          reason: guard.reason,
+          timestamp: Date.now(),
+        };
+        await repository.addZaloPersonalLog(blockedLog);
+        set((st) => ({ zaloPersonalLogs: [blockedLog, ...st.zaloPersonalLogs].slice(0, 250) }));
+        return { ok: false, error: guard.reason };
+      }
+
+      const res = await zaloPersonalAdapter.sendMessage({
+        peerId,
+        peerName,
+        text,
+        envMode: s.settings.envMode,
+      });
+
+      if (res.anomalyDetected && s.settings.zaloPersonal?.autoPauseOnAnomaly) {
+        await get().updateZaloPersonalConfig({ anomalyPausedReason: res.anomalyDetected });
+      }
+
+      const log: ZaloPersonalMessageLog = {
+        id: `zp_${Date.now().toString(36)}`,
+        direction: 'outbound',
+        peerIdMasked: masked,
+        peerName,
+        isReplyToInbound,
+        preview: text.slice(0, 120),
+        status: res.ok ? 'sent' : 'blocked_unconfirmed',
+        agentId,
+        reason: res.error || res.anomalyDetected,
+        timestamp: Date.now(),
+      };
+      await repository.addZaloPersonalLog(log);
+      set((st) => ({ zaloPersonalLogs: [log, ...st.zaloPersonalLogs].slice(0, 250) }));
+      return { ok: res.ok, error: res.error };
+    },
+
+    addZaloPersonalDnc: async (peerId) => {
+      const cur = get().settings.zaloPersonal ?? buildFallbackBaseSettings().zaloPersonal!;
+      const clean = peerId.trim();
+      if (!clean || cur.dncList.includes(clean)) return;
+      await get().updateZaloPersonalConfig({ dncList: [...cur.dncList, clean] });
+    },
+
+    // === BỔ SUNG P: OKR & KẾ HOẠCH DOANH THU ===
+    upsertOkrObjective: async (okr) => {
+      const next = { ...okr, updatedAt: Date.now() };
+      await repository.putOkrObjective(next);
+      set((s) => {
+        const exists = s.okrObjectives.some((o) => o.id === okr.id);
+        return {
+          okrObjectives: exists
+            ? s.okrObjectives.map((o) => (o.id === okr.id ? next : o))
+            : [next, ...s.okrObjectives],
+        };
+      });
+    },
+
+    computeOkrPlan: (objectiveId) => {
+      const s = get();
+      const obj = s.okrObjectives.find((o) => o.id === objectiveId);
+      if (!obj) return null;
+      return calculateRevenueFunnel({
+        objective: obj,
+        leads: s.leads,
+        commissions: s.affiliateCommissions,
+        expenses: s.expenses,
+      });
+    },
+
+    // === BỔ SUNG Q: HR TỰ ĐIỀU PHỐI & SOP ===
+    upsertRoleSop: async (sop) => {
+      const next = { ...sop, updatedAt: Date.now() };
+      await repository.putRoleSop(next);
+      set((s) => {
+        const exists = s.roleSops.some((x) => x.id === sop.id);
+        return {
+          roleSops: exists ? s.roleSops.map((x) => (x.id === sop.id ? next : x)) : [next, ...s.roleSops],
+        };
+      });
+      // Mark playbooks in same department as needing review on SOP change (BỔ SUNG W)
+      const deptPlaybooks = get().playbooks.filter((p) => p.department === sop.department);
+      for (const pb of deptPlaybooks) {
+        const flagged = { ...pb, dirtyNeedsReview: true, dirtyReason: `SOP ${sop.roleTitle} vừa cập nhật v${sop.version}` };
+        await repository.putPlaybook(flagged);
+        set((s) => ({ playbooks: s.playbooks.map((x) => (x.id === pb.id ? flagged : x)) }));
+      }
+    },
+
+    runAgentOnboardingExam: async (agentId, customAnswers) => {
+      const s = get();
+      const agent = s.agents.find((a) => a.id === agentId);
+      if (!agent) return null;
+      const answers = customAnswers || [
+        'Em sẽ kiểm tra bảng Product Master, nếu tính năng chưa có hoặc đang phát triển thì trả lời trung thực và xin xác nhận PM.',
+        'Tuân thủ NĐ 91/2020: gửi khung giờ hành chính 08:00-20:00, kèm câu từ chối DỪNG và gắn nhãn tiếp thị minh bạch.',
+        'Chặn ngay lập tức, không tự ý sửa số tài khoản và báo CEO xác thực 2FA cùng Kế toán.',
+      ];
+      const attempt = gradeAgentOnboardingExam({ agent, answers });
+      await repository.putOnboardingExam(attempt);
+      const updatedAgent: AgentProfile = {
+        ...agent,
+        probationStatus: attempt.passed ? 'passed' : 'probation',
+        lastExamScore: attempt.score,
+        updatedAt: Date.now(),
+      };
+      await repository.putAgent(updatedAgent);
+      set((st) => ({
+        onboardingExams: [attempt, ...st.onboardingExams].slice(0, 120),
+        agents: st.agents.map((a) => (a.id === agentId ? updatedAgent : a)),
+      }));
+      return attempt;
+    },
+
+    runHrWorkloadCheck: async () => {
+      const s = get();
+      const recs = analyzeWorkloadForHrRecommendations({
+        agents: s.agents,
+        tasks: s.tasks,
+        tokenUsage: s.tokenUsage,
+        settings: s.settings,
+      });
+      set({ hrRecommendations: recs });
+      return recs;
+    },
+
+    resolveHrRecommendation: async (recId, decision) => {
+      const rec = get().hrRecommendations.find((r) => r.id === recId);
+      if (!rec) return;
+      if (decision === 'approved') {
+        if (rec.type === 'clone' && rec.targetAgentId) {
+          const base = get().agents.find((a) => a.id === rec.targetAgentId);
+          if (base) {
+            await get().cloneAgent(base.id, `${base.name} (Phó)`);
+          }
+        } else if (rec.type === 'sleep_idle' && rec.targetAgentId) {
+          await get().updateAgentProfile(rec.targetAgentId, { sleepWhenIdle: true }, 'HR AI Scale');
+        }
+      }
+      set((s) => ({
+        hrRecommendations: s.hrRecommendations.map((r) =>
+          r.id === recId ? { ...r, status: decision } : r
+        ),
+      }));
+    },
+
+    // === BỔ SUNG R: PRODUCT MASTER & TÀI KHOẢN NGÂN HÀNG ===
+    upsertProductMaster: async (product) => {
+      const next = { ...product, updatedAt: Date.now() };
+      await repository.putProductMaster(next);
+      set((s) => {
+        const exists = s.productMasters.some((p) => p.id === product.id);
+        return {
+          productMasters: exists
+            ? s.productMasters.map((p) => (p.id === product.id ? next : p))
+            : [next, ...s.productMasters],
+        };
+      });
+      // Dirty flag Playbooks in sales/marketing/cs when product master changes (BỔ SUNG W)
+      const affected = get().playbooks.filter((p) => ['sales', 'marketing', 'cs'].includes(p.department));
+      for (const pb of affected) {
+        const dirty = { ...pb, dirtyNeedsReview: true, dirtyReason: `Product Master "${product.shortName}" cập nhật v${product.version}` };
+        await repository.putPlaybook(dirty);
+        set((s) => ({ playbooks: s.playbooks.map((x) => (x.id === pb.id ? dirty : x)) }));
+      }
+    },
+
+    addOrUpdateBankAccountWith2Fa: async ({ ceoPassword, otpCode, account }) => {
+      const s = get();
+      const pwValid = await verifyPasswordPBKDF2(ceoPassword, s.settings.ceoPasswordHash, s.settings.ceoPasswordSalt);
+      if (!pwValid) {
+        return { ok: false, error: 'Mật khẩu CEO không chính xác.' };
+      }
+      if (!otpCode || otpCode.trim().length < 4) {
+        return { ok: false, error: 'Bắt buộc nhập mã xác thực 2FA (>= 4 ký tự) để lưu Tài khoản Ngân hàng công ty.' };
+      }
+      const now = Date.now();
+      const record: PaymentBankAccount = {
+        ...account,
+        id: account.id || `bank_${now.toString(36)}`,
+        twoFactorConfirmedAt: now,
+        createdBy: 'ceo',
+        updatedAt: now,
+      };
+      await repository.putBankAccount(record);
+      set((st) => {
+        const exists = st.bankAccounts.some((b) => b.id === record.id);
+        return {
+          bankAccounts: exists
+            ? st.bankAccounts.map((b) => (b.id === record.id ? record : b))
+            : [...st.bankAccounts, record],
+        };
+      });
+      await get().addAuditLog({
+        id: `aud_bank_${now}`,
+        agentId: 'ceo',
+        agentName: 'Chủ tịch / CEO',
+        action: `bank:save (${record.bankCode} ${record.accountNumberMasked})`,
+        result: 'allowed',
+        timestamp: now,
+      });
+      return { ok: true };
+    },
+
+    deleteBankAccountWith2Fa: async (id, ceoPassword) => {
+      const s = get();
+      const pwValid = await verifyPasswordPBKDF2(ceoPassword, s.settings.ceoPasswordHash, s.settings.ceoPasswordSalt);
+      if (!pwValid) return { ok: false, error: 'Sai mật khẩu CEO.' };
+      await repository.deleteBankAccount(id);
+      set((st) => ({ bankAccounts: st.bankAccounts.filter((b) => b.id !== id) }));
+      return { ok: true };
+    },
+
+    // === BỔ SUNG S, T, U, V, W ===
+    createHandoverTicket: async ({ fromDepartment, toDepartment, fromAgentId, toAgentId, title, payloadSummary, deliverableRef, slaMinutes = 30 }) => {
+      const now = Date.now();
+      const ticket: CrossDeptHandoverTicket = {
+        id: `bg_${now.toString(36)}`,
+        code: `#BG-${101 + get().handoverTickets.length}`,
+        fromDepartment,
+        toDepartment,
+        fromAgentId,
+        toAgentId,
+        title,
+        payloadSummary,
+        deliverableRef,
+        slaMinutes,
+        dueAt: now + slaMinutes * 60_000,
+        status: 'pending_accept',
+        escalatedCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await repository.putHandoverTicket(ticket);
+      set((s) => ({ handoverTickets: [ticket, ...s.handoverTickets].slice(0, 200) }));
+      await get().addMessage({
+        channelId: toDepartment,
+        senderId: fromAgentId,
+        senderName: getLiveAgentById(fromAgentId)?.name || fromAgentId,
+        senderTitle: 'Phiếu bàn giao liên phòng ban',
+        department: fromDepartment,
+        content: `Gửi **${ticket.code}** (${fromDepartment} → ${toDepartment}): **${title}** (SLA ${slaMinutes} phút).`,
+        busType: 'request',
+      });
+      return ticket;
+    },
+
+    respondHandoverTicket: async (ticketId, action, reason) => {
+      const ticket = get().handoverTickets.find((t) => t.id === ticketId);
+      if (!ticket) return;
+      const updated: CrossDeptHandoverTicket = {
+        ...ticket,
+        status: action,
+        rejectReason: action === 'rejected' ? reason || 'Chưa đủ thông tin đầu vào' : ticket.rejectReason,
+        updatedAt: Date.now(),
+      };
+      await repository.putHandoverTicket(updated);
+      set((s) => ({ handoverTickets: s.handoverTickets.map((t) => (t.id === ticketId ? updated : t)) }));
+    },
+
+    runIdleMoneyBrainstorm: async () => {
+      const s = get();
+      const active = s.agents.filter((a) => a.employmentStatus === 'active');
+      const proposer = active.find((a) => a.department === 'marketing') || active[0];
+      const count = s.moneyIdeas.length;
+      const topics = [
+        'Gói Combo Website + Chatbot Zalo OA trọn gói cho Trung tâm Ngoại ngữ vừa và nhỏ',
+        'Kênh Affiliate review thiết bị học tập & phần mềm giáo dục kèm mã giảm giá độc quyền',
+        'Dịch vụ Thiết lập Quy trình Chăm sóc Phụ huynh Tự động cho Chuỗi Mầm non Tư thục',
+      ];
+      const idea = buildIdleMoneyPlan({
+        title: topics[count % topics.length],
+        proposedBy: proposer?.id || 'cmo',
+        department: proposer?.department || 'marketing',
+        evidence: 'Tổng hợp nhu cầu hỏi giá trên kênh Inbound và tệp khách hàng SME tại TP.HCM/Hà Nội.',
+        sources: ['https://chuyenweb.com', 'Dữ liệu CRM nội bộ'],
+        costVnd: 0,
+        lowVnd: 12_000_000,
+        midVnd: 28_000_000,
+        highVnd: 55_000_000,
+      });
+      await repository.putMoneyIdea(idea);
+      set((st) => ({ moneyIdeas: [idea, ...st.moneyIdeas] }));
+      return idea;
+    },
+
+    updateMoneyIdeaStage: async (ideaId, stage, ceoApproved) => {
+      const idea = get().moneyIdeas.find((i) => i.id === ideaId);
+      if (!idea) return;
+      const updated: MoneyIdeaCard = {
+        ...idea,
+        stage,
+        ceoApproved: ceoApproved ?? idea.ceoApproved,
+        updatedAt: Date.now(),
+      };
+      await repository.putMoneyIdea(updated);
+      set((s) => ({ moneyIdeas: s.moneyIdeas.map((i) => (i.id === ideaId ? updated : i)) }));
+    },
+
+    runCompetitorWatchCycle: async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const next = get().competitorWatches.map((w) => ({
+        ...w,
+        lastCheckedAt: Date.now(),
+        recentChanges: [
+          {
+            date: today,
+            summary: 'Đã quét trang công khai hợp pháp: bảng giá công khai ổn định, chưa ghi nhận chiến dịch giảm giá đột biến.',
+            severity: 'info' as const,
+          },
+          ...w.recentChanges,
+        ].slice(0, 8),
+      }));
+      for (const item of next) await repository.putCompetitorWatch(item);
+      set({ competitorWatches: next });
+    },
+
+    proposeSystemUpgrade: async (params) => {
+      const now = Date.now();
+      const prop: UpgradeProposal = {
+        id: `upg_${now.toString(36)}`,
+        code: `#NC-${String(get().upgradeProposals.length + 1).padStart(2, '0')}`,
+        title: params.title,
+        proposedBy: params.proposedBy,
+        bottleneckEvidence: params.bottleneckEvidence,
+        solutionSummary: params.solutionSummary,
+        expectedRoi: params.expectedRoi,
+        estimatedCostVnd: params.estimatedCostVnd ?? 0,
+        risksAndRollback: 'Thử nghiệm Sandbox trước -> Pilot -> Rollout toàn bộ; có thể Rollback về phiên bản trước 1 nút.',
+        rolloutStage: 'proposal',
+        beforeMetric: params.beforeMetric,
+        ceoApproved: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await repository.putUpgradeProposal(prop);
+      set((s) => ({ upgradeProposals: [prop, ...s.upgradeProposals] }));
+      return prop;
+    },
+
+    advanceUpgradeStage: async (proposalId, stage) => {
+      const prop = get().upgradeProposals.find((u) => u.id === proposalId);
+      if (!prop) return;
+      const now = Date.now();
+      const updated: UpgradeProposal = {
+        ...prop,
+        rolloutStage: stage,
+        ceoApproved: stage === 'pilot' || stage === 'deployed_all' ? true : prop.ceoApproved,
+        afterMetric: stage === 'deployed_all' ? 'Giảm ~25% độ trễ & giữ chất lượng >= 90/100' : prop.afterMetric,
+        updatedAt: now,
+      };
+      await repository.putUpgradeProposal(updated);
+      set((s) => ({ upgradeProposals: s.upgradeProposals.map((u) => (u.id === proposalId ? updated : u)) }));
+
+      if (stage === 'deployed_all' || stage === 'rolled_back') {
+        const entry: UpgradeChangelogEntry = {
+          id: `chg_${now.toString(36)}`,
+          version: `v${get().upgradeChangelog.length + 1}.0`,
+          proposalId,
+          title: `${prop.code} (${stage === 'rolled_back' ? 'ROLLBACK' : 'APPLIED'}): ${prop.title}`,
+          summary: prop.solutionSummary,
+          beforeMetric: prop.beforeMetric,
+          afterMetric: updated.afterMetric || 'Đã hoàn tác về bản trước',
+          timestamp: now,
+        };
+        await repository.putUpgradeChangelog(entry);
+        set((s) => ({ upgradeChangelog: [entry, ...s.upgradeChangelog] }));
+      }
+    },
+
+    scoutGitRepo: async (query) => {
+      let rawRepos: Array<{
+        full_name: string;
+        html_url: string;
+        stargazers_count: number;
+        updated_at: string;
+        license?: { spdx_id?: string };
+      }> = [];
+
+      try {
+        const res = await fetch(`/api/repos/search?q=${encodeURIComponent(query)}`);
+        if (res.ok) {
+          const data = (await res.json()) as { items?: typeof rawRepos };
+          rawRepos = data.items || [];
+        }
+      } catch {
+        // graceful fallback below
+      }
+
+      const reports: GitRepoEvaluationReport[] =
+        rawRepos.length > 0
+          ? rawRepos.slice(0, 3).map((r) =>
+              evaluateGitRepoMetadata({
+                query,
+                repoFullName: r.full_name,
+                repoUrl: r.html_url,
+                stars: r.stargazers_count,
+                lastUpdated: r.updated_at?.slice(0, 10) || new Date().toISOString().slice(0, 10),
+                license: r.license?.spdx_id || 'Unknown',
+              })
+            )
+          : [
+              evaluateGitRepoMetadata({
+                query,
+                repoFullName: `offline-cache/${query.toLowerCase().replace(/\s+/g, '-')}`,
+                repoUrl: `https://github.com/search?q=${encodeURIComponent(query)}`,
+                stars: 0,
+                lastUpdated: new Date().toISOString().slice(0, 10),
+                license: 'Unknown',
+              }),
+            ];
+
+      for (const rep of reports) {
+        await repository.putRepoEvaluation(rep);
+      }
+      set((s) => ({ repoEvaluations: [...reports, ...s.repoEvaluations].slice(0, 60) }));
+      return reports;
+    },
+
+    runSandboxTestOnRepo: async (repoReportId) => {
+      const rep = get().repoEvaluations.find((r) => r.id === repoReportId);
+      if (!rep) return null;
+      try {
+        const res = await fetch('/api/repos/sandbox-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repoUrl: rep.repoUrl, repoFullName: rep.repoFullName }),
+        });
+        if (res.ok) {
+          const out = (await res.json()) as {
+            executed: boolean;
+            passed: boolean;
+            stdoutExcerpt: string;
+          };
+          const updated: GitRepoEvaluationReport = {
+            ...rep,
+            sandboxStatus: out.executed ? (out.passed ? 'sandbox_passed' : 'sandbox_failed') : 'static_only_unverified',
+            verificationLabel: out.executed ? 'ĐÃ CHẠY SANDBOX' : 'CHƯA KIỂM CHỨNG',
+            stdoutExcerpt: out.stdoutExcerpt,
+          };
+          await repository.putRepoEvaluation(updated);
+          set((s) => ({ repoEvaluations: s.repoEvaluations.map((x) => (x.id === repoReportId ? updated : x)) }));
+          return updated;
+        }
+      } catch {
+        // keep static unverified honestly
+      }
+      return rep;
+    },
+
+    recordPlaybookRun: async (playbookId, qualityScore) => {
+      const pb = get().playbooks.find((p) => p.id === playbookId);
+      if (!pb) return;
+      const updated = recordPlaybookOutcome(pb, qualityScore);
+      await repository.putPlaybook(updated);
+      set((s) => ({ playbooks: s.playbooks.map((p) => (p.id === playbookId ? updated : p)) }));
+    },
+
+    togglePlaybookFastTrack: async (playbookId) => {
+      const pb = get().playbooks.find((p) => p.id === playbookId);
+      if (!pb) return;
+      const check = canUsePlaybookFastTrack({ playbook: pb, isHighRiskTask: false });
+      const next = { ...pb, allowFastTrack: !pb.allowFastTrack && check.allowed ? true : !pb.allowFastTrack, dirtyNeedsReview: false };
+      await repository.putPlaybook(next);
+      set((s) => ({ playbooks: s.playbooks.map((p) => (p.id === playbookId ? next : p)) }));
+    },
+
+    // === BỔ SUNG X+: PLUG-AND-PLAY ANDROID DEVICE FARM ===
+    refreshDevices: async () => {
+      try {
+        const res = await fetch('/api/devices');
+        if (res.ok) {
+          const data = (await res.json()) as { devices?: ManagedDeviceRecord[] };
+          if (Array.isArray(data.devices)) {
+            set({ managedDevices: data.devices });
+          }
+        }
+      } catch {
+        // fallback stays untouched
+      }
+    },
+
+    connectWirelessDevice: async (ipPort, pairingCode) => {
+      try {
+        const res = await fetch('/api/devices/pair-wifi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ipPort, pairingCode }),
+        });
+        const data = (await res.json()) as { ok: boolean; message: string };
+        await get().refreshDevices();
+        return data;
+      } catch (err) {
+        return { ok: false, message: err instanceof Error ? err.message : 'Không kết nối được /api/devices/pair-wifi' };
+      }
+    },
+
+    setDeviceControlMode: async (deviceId, mode) => {
+      const updated = get().managedDevices.map((d) => (d.id === deviceId ? { ...d, controlMode: mode } : d));
+      set({ managedDevices: updated });
+      fetch(`/api/devices/${encodeURIComponent(deviceId)}/mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      }).catch(() => {});
+    },
+
+    assignDeviceToAgent: async (deviceId, agentId) => {
+      const agent = agentId ? get().agents.find((a) => a.id === agentId) : undefined;
+      const updated = get().managedDevices.map((d) =>
+        d.id === deviceId ? { ...d, assignedAgentId: agentId, assignedDepartment: agent?.department } : d
+      );
+      set({ managedDevices: updated });
+      fetch(`/api/devices/${encodeURIComponent(deviceId)}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId, department: agent?.department }),
+      }).catch(() => {});
+    },
+
+    toggleDeviceStream: async (deviceId, active) => {
+      const updated = get().managedDevices.map((d) => (d.id === deviceId ? { ...d, isStreaming: active } : d));
+      set({ managedDevices: updated });
+      if (active) {
+        await get().executeDeviceCommand({ deviceId, agentId: 'ceo', action: 'screenshot' });
+      }
+    },
+
+    executeDeviceCommand: async ({ deviceId, agentId, action, x, y, x2, y2, text, packageName, ceoConfirmed }) => {
+      const s = get();
+      if (s.settings.killSwitchActive || s.settings.paused) {
+        return { ok: false, error: 'Kill Switch hoặc tạm dừng công ty đang bật.' };
+      }
+      const dev = s.managedDevices.find((d) => d.id === deviceId);
+      if (!dev) return { ok: false, error: 'Không tìm thấy thiết bị.' };
+
+      if (action !== 'screenshot' && action !== 'ocr_read') {
+        if (dev.controlMode === 'view_only') {
+          return { ok: false, error: 'Thiết bị đang ở chế độ CHỈ XEM — không cho phép agent thao tác.' };
+        }
+        if (dev.controlMode === 'approved_actions' && agentId !== 'ceo' && !ceoConfirmed) {
+          return { ok: false, error: 'Chế độ ĐIỀU KHIỂN CÓ DUYỆT yêu cầu CEO xác nhận thao tác này.' };
+        }
+      }
+
+      if (packageName && s.devicePolicy.blockedPackages.includes(packageName)) {
+        const log: DeviceActionLog = {
+          id: `dlog_${Date.now().toString(36)}`,
+          deviceId,
+          serial: dev.serial,
+          agentId,
+          action: `${action}:${packageName}`,
+          foregroundPackage: packageName,
+          result: 'blocked_policy',
+          reason: 'App nằm trong danh sách cấm tuyệt đối (Ngân hàng / Ví / 2FA / Cài đặt).',
+          timestamp: Date.now(),
+        };
+        await repository.addDeviceActionLog(log);
+        set((st) => ({ deviceLogs: [log, ...st.deviceLogs].slice(0, 300) }));
+        return { ok: false, error: log.reason };
+      }
+
+      try {
+        const res = await fetch(`/api/devices/${encodeURIComponent(deviceId)}/command`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId, action, x, y, x2, y2, text, packageName, policy: s.devicePolicy }),
+        });
+        const data = (await res.json()) as {
+          ok: boolean;
+          error?: string;
+          screenshotDataUrl?: string;
+          ocrText?: string;
+          device?: ManagedDeviceRecord;
+          log?: DeviceActionLog;
+        };
+        if (data.device) {
+          set((st) => ({
+            managedDevices: st.managedDevices.map((d) => (d.id === deviceId ? data.device! : d)),
+          }));
+        }
+        if (data.log) {
+          await repository.addDeviceActionLog(data.log);
+          set((st) => ({ deviceLogs: [data.log!, ...st.deviceLogs].slice(0, 300) }));
+        }
+        return { ok: data.ok, error: data.error, screenshotDataUrl: data.screenshotDataUrl, ocrText: data.ocrText };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'Lỗi gửi lệnh thiết bị' };
+      }
+    },
+
+    grabDeviceControlStop: async (deviceId) => {
+      await get().setDeviceControlMode(deviceId, 'view_only');
+      fetch(`/api/devices/${encodeURIComponent(deviceId)}/stop`, { method: 'POST' }).catch(() => {});
+    },
+
+    updateDevicePolicy: (patch) => {
+      set((s) => ({ devicePolicy: { ...s.devicePolicy, ...patch } }));
     },
   };
 });

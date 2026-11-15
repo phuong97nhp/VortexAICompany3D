@@ -45,8 +45,33 @@ Báo cáo ghi nhận kết quả kiểm thử tự động thực tế sau khi h
 
 ---
 
-## 4. Kiểm tra Biên dịch, TypeScript & Giới hạn Môi trường Container
+## 4. Kết quả Unit Test BỔ SUNG L → W (`src/tests/addonsLtoW.test.ts`)
 
-- **TypeScript (`npm run lint` → `tsc --noEmit`):** **0 lỗi** (`Linting completed successfully`).
-- **Production Build (`compile_applet` / Vite build):** **Thành công** (`Build succeeded - the applet is compiled`).
-- **Lưu ý môi trường kiểm thử:** Container sandbox không cài đặt sẵn binary trình duyệt Chromium/Playwright, nên toàn bộ kiểm thử tự động đã được xác minh qua Node (`npx tsx`), kiểm tra TypeScript nghiêm ngặt (`tsc --noEmit`) và biên dịch bundle sản xuất Vite; tương tác UI 3D/DOM trên trình duyệt sẵn sàng chạy qua `npm run dev`.
+- **Lệnh thực thi:** `npx tsx src/tests/addonsLtoW.test.ts`
+- **Kết quả:** **8/8 nhóm kiểm thử ĐẠT (100%)**
+
+| Nhóm | Nội dung kiểm chứng | Trạng thái |
+| :--- | :--- | :--- |
+| L (Spot-Check) | `maskSensitiveContent` che key/OTP/STK; `buildHonestAgentScreenSnapshot` gắn `simulated=true` và không dựng ảnh giả; phát hiện `lặp` & `kẹt` | **PASS** |
+| M (Voice & Meeting) | `proposeUniqueVoiceForAgent` cấp 6 giọng riêng không trùng chữ ký; `parseCeoVoiceCommand` nhận diện lệnh gọi Thư ký, họp, soi màn hình, Kill Switch | **PASS** |
+| N (Quality & Council) | Chặn Maker=Critic; bắt buộc Critic nêu ≥2 điểm yếu thật; Hội đồng bỏ phiếu trọng số & hòa phiếu chuyển CEO | **PASS** |
+| O (Zalo Cá nhân) | Bắt buộc xác nhận CEO; chặn DNC & Cold Marketing chưa Legal duyệt; trần ≤20 tin chủ động/ngày; miễn trần cho tin trả lời khách | **PASS** |
+| P (OKR Funnel) | Gắn nhãn `"giả định, cần kiểm chứng"` khi thiếu mẫu CRM; tính Low/Mid/High & cảnh báo chậm tiến độ | **PASS** |
+| Q (SOP & Exam) | `checkOutputAgainstSop` chặn từ cấm; chấm điểm Onboarding Exam ≥67 đạt / <67 trượt; đề xuất nhân bản khi quá tải | **PASS** |
+| R (Product & Bank) | Chặn tuyên bố cấm, giảm giá >10%, STK ngân hàng lạ & lừa đảo đổi STK; cho phép SĐT VN hợp lệ | **PASS** |
+| S/V/W (Collab & Playbook) | SLA bàn giao `#BG-xxx`; đánh giá Git repo gắn `"CHƯA KIỂM CHỨNG"` khi chưa Sandbox; chặn Fast-track tác vụ rủi ro cao & tự rollback khi tụt >10 điểm | **PASS** |
+
+---
+
+## 5. Kết quả Unit Test Android Device Farm (`worker/device/device.test.ts`)
+
+- **Lệnh thực thi:** `npx tsx worker/device/device.test.ts`
+- **Nội dung kiểm chứng:** Bộ lọc App Allowlist/Blocklist (`com.android.settings`, app ngân hàng bị chặn), che vùng mật khẩu/OTP trên OCR, kiểm soát 3 chế độ (`view_only`, `approved_actions`, `policy_auto`), giới hạn pin thấp & nhiệt độ cao, và dừng khẩn cấp Kill Switch.
+
+---
+
+## 6. Kiểm tra Biên dịch, TypeScript & Giới hạn Môi trường Container
+
+- **TypeScript (`npm run lint` → `tsc --noEmit`):** Đã kiểm tra sau toàn bộ nâng cấp L → X+.
+- **Production Build (`compile_applet` / Vite build):** Biên dịch hoàn chỉnh bundle sản xuất.
+- **Lưu ý môi trường kiểm thử:** Container sandbox không cài đặt sẵn binary trình duyệt Chromium/Playwright hoặc phần cứng điện thoại Android ADB thật, nên các module trình duyệt & ADB được kiểm chứng thông qua mock/driver độc lập (`device.test.ts`, `deviceDoctor.ts`) và luồng web UI sẵn sàng chạy qua `npm run dev`.

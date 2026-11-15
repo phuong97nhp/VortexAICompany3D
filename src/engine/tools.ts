@@ -31,6 +31,8 @@ import { ROLE_TEMPLATES } from './roleTemplates';
 import { sanitizeExternalUntrustedContent } from './resilience';
 import { runAffiliateComplianceCheck } from '../integrations/affiliate/affiliateEngine';
 import { buildLegalReport } from './legal/legalEngine';
+import { checkOutgoingClaimsAndBankSafety } from './productBankEngine';
+import { checkOutputAgainstSop } from './hrSopEngine';
 
 export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
   create_task: {
@@ -755,6 +757,140 @@ export const TOOL_DEFINITIONS: Record<ToolName, LlmToolDefinition> = {
       },
     },
   },
+  quality_review: {
+    type: 'function',
+    function: {
+      name: 'quality_review',
+      description: 'Chạy vòng Kiểm định Chất lượng (Maker -> Critic -> Verifier -> Duyệt) trước khi bàn giao.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          definitionOfDone: { type: 'string' },
+          draftText: { type: 'string' },
+        },
+        required: ['title', 'draftText'],
+      },
+    },
+  },
+  council_vote: {
+    type: 'function',
+    function: {
+      name: 'council_vote',
+      description: 'Triệu tập Hội đồng 3–5 trưởng phòng thảo luận có trọng số cho quyết định lớn.',
+      parameters: {
+        type: 'object',
+        properties: {
+          topic: { type: 'string' },
+        },
+        required: ['topic'],
+      },
+    },
+  },
+  create_handover: {
+    type: 'function',
+    function: {
+      name: 'create_handover',
+      description: 'Tạo Phiếu bàn giao chính thức (#BG-xxx) liên phòng ban kèm SLA.',
+      parameters: {
+        type: 'object',
+        properties: {
+          toDepartment: { type: 'string' },
+          title: { type: 'string' },
+          payloadSummary: { type: 'string' },
+          slaMinutes: { type: 'number' },
+        },
+        required: ['toDepartment', 'title', 'payloadSummary'],
+      },
+    },
+  },
+  propose_money_plan: {
+    type: 'function',
+    function: {
+      name: 'propose_money_plan',
+      description: 'Đề xuất kế hoạch kiếm tiền hợp pháp kèm nguồn dẫn & kịch bản Thấp/TB/Cao trình CEO duyệt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+        },
+      },
+    },
+  },
+  watch_competitor: {
+    type: 'function',
+    function: {
+      name: 'watch_competitor',
+      description: 'Quét theo dõi đối thủ từ nguồn công khai hợp pháp.',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  propose_upgrade: {
+    type: 'function',
+    function: {
+      name: 'propose_upgrade',
+      description: 'Đề xuất nâng cấp quy trình/kiến trúc kèm bằng chứng điểm nghẽn (không tự sửa code nguồn).',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          bottleneckEvidence: { type: 'string' },
+          solutionSummary: { type: 'string' },
+          expectedRoi: { type: 'string' },
+          beforeMetric: { type: 'string' },
+        },
+        required: ['title', 'bottleneckEvidence', 'solutionSummary'],
+      },
+    },
+  },
+  scout_git_repo: {
+    type: 'function',
+    function: {
+      name: 'scout_git_repo',
+      description: 'Tìm kiếm & đánh giá repo Git công khai theo yêu cầu trực tiếp của CEO.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  run_device_action: {
+    type: 'function',
+    function: {
+      name: 'run_device_action',
+      description: 'Thao tác hoặc đọc màn hình điện thoại Android đã kết nối theo chế độ & danh sách app cho phép.',
+      parameters: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' },
+          action: { type: 'string', enum: ['screenshot', 'ocr_read', 'tap', 'swipe', 'input_text', 'open_app', 'back', 'home'] },
+          text: { type: 'string' },
+          packageName: { type: 'string' },
+        },
+        required: ['deviceId', 'action'],
+      },
+    },
+  },
+  send_zalo_personal: {
+    type: 'function',
+    function: {
+      name: 'send_zalo_personal',
+      description: 'Gửi tin nhắn qua Zalo Cá nhân (bị giới hạn <=20 tin chủ động/ngày, chặn DNC & marketing lạnh chưa duyệt).',
+      parameters: {
+        type: 'object',
+        properties: {
+          peerId: { type: 'string' },
+          peerName: { type: 'string' },
+          text: { type: 'string' },
+          isReplyToInbound: { type: 'boolean' },
+        },
+        required: ['peerId', 'text'],
+      },
+    },
+  },
 };
 
 export function getToolsForAgent(allowedTools: ToolName[]): LlmToolDefinition[] {
@@ -1291,6 +1427,32 @@ export async function executeAgentTool(
         ? args.channel
         : 'Email') as 'Email' | 'Zalo OA' | 'Facebook';
       const settings = store.settings;
+      const msgText = String(args.message || '');
+
+      // 0. Product Master Claim & Bank Account Safety Check + SOP compliance (BỔ SUNG R & Q)
+      const matchedProduct = store.productMasters.find((p) => p.id === lead.recommendedProductId) || store.productMasters[0];
+      const claimRes = checkOutgoingClaimsAndBankSafety({
+        text: msgText,
+        product: matchedProduct,
+        bankAccounts: store.bankAccounts,
+      });
+      if (!claimRes.passed) {
+        return {
+          ok: false,
+          output: {
+            blocked: true,
+            error: `Chặn gửi do vi phạm Product Master / An toàn STK: ${claimRes.violations.map((v) => v.rule).join('; ')}`,
+          },
+        };
+      }
+      const roleSop = store.roleSops.find((s) => s.department === agent.department);
+      const sopRes = checkOutputAgainstSop(msgText, roleSop);
+      if (!sopRes.compliant) {
+        return {
+          ok: false,
+          output: { blocked: true, error: `Vi phạm SOP phòng ${agent.department}: ${sopRes.violations.join('; ')}` },
+        };
+      }
 
       // 1. Check Blacklist
       if (lead.blacklisted) {
@@ -1718,6 +1880,21 @@ export async function executeAgentTool(
       const title = String(args.title || '').trim();
       const content = String(args.content || '').trim();
       if (!title || !content) return { ok: false, output: { error: 'Thiếu tiêu đề hoặc nội dung bài đăng.' } };
+
+      const claimCheck = checkOutgoingClaimsAndBankSafety({
+        text: `${title}\n${content}`,
+        product: store.productMasters[0],
+        bankAccounts: store.bankAccounts,
+      });
+      if (!claimCheck.passed) {
+        return {
+          ok: false,
+          output: {
+            blocked: true,
+            error: `Bài đăng vi phạm quy chuẩn Product Master / An toàn STK: ${claimCheck.violations.map((v) => v.rule).join('; ')}`,
+          },
+        };
+      }
 
       const duplicate = store.scheduledPosts.find(
         (p) => p.title.toLowerCase() === title.toLowerCase() && p.platform === platform
@@ -2615,6 +2792,134 @@ export async function executeAgentTool(
           summaryFiveLines: report.summaryFiveLines,
         },
       };
+    }
+
+    case 'quality_review': {
+      const cycle = await store.runQualityCycle({
+        title: String(args.title || 'Kiểm định đầu ra'),
+        department: agent.department,
+        definitionOfDone: 'Đầy đủ số liệu thực tế, không còn [CẦN BỔ SUNG], đạt chuẩn bàn giao.',
+        draftText: String(args.draftText || ''),
+        makerId: agentId,
+      });
+      return {
+        ok: cycle.status === 'approved',
+        output: {
+          cycleId: cycle.id,
+          status: cycle.status,
+          rounds: cycle.currentRound,
+          finalSummary: cycle.finalSummary,
+        },
+      };
+    }
+
+    case 'council_vote': {
+      const session = await store.conveneCouncil({
+        topic: String(args.topic || 'Đánh giá phương án chiến lược'),
+      });
+      return {
+        ok: true,
+        output: {
+          sessionId: session.id,
+          status: session.status,
+          winningOption: session.winningOption,
+          summary: session.ceoExecutiveSummary,
+        },
+      };
+    }
+
+    case 'create_handover': {
+      const toDept = String(args.toDepartment || 'legal') as DepartmentId;
+      const targetHead =
+        store.agents.find((a) => a.department === toDept && a.role === 'Dept Head' && a.employmentStatus === 'active') ||
+        store.agents.find((a) => a.department === toDept && a.employmentStatus === 'active') ||
+        agent;
+      const ticket = await store.createHandoverTicket({
+        fromDepartment: agent.department,
+        toDepartment: toDept,
+        fromAgentId: agentId,
+        toAgentId: targetHead.id,
+        title: String(args.title || 'Bàn giao đầu việc'),
+        payloadSummary: String(args.payloadSummary || ''),
+        slaMinutes: Number(args.slaMinutes || 30),
+      });
+      return {
+        ok: true,
+        output: {
+          ticketId: ticket.id,
+          code: ticket.code,
+          toAgentName: targetHead.name,
+          dueAt: ticket.dueAt,
+        },
+      };
+    }
+
+    case 'propose_money_plan': {
+      const idea = await store.runIdleMoneyBrainstorm();
+      return { ok: true, output: { ideaId: idea.id, title: idea.title, stage: idea.stage } };
+    }
+
+    case 'watch_competitor': {
+      await store.runCompetitorWatchCycle();
+      return { ok: true, output: { watchedCount: store.competitorWatches.length } };
+    }
+
+    case 'propose_upgrade': {
+      const prop = await store.proposeSystemUpgrade({
+        title: String(args.title || 'Đề xuất tối ưu quy trình'),
+        proposedBy: agentId,
+        bottleneckEvidence: String(args.bottleneckEvidence || 'Phát hiện nút thắt token/thời gian phản hồi.'),
+        solutionSummary: String(args.solutionSummary || 'Áp dụng Playbook & bộ lọc chuẩn trước khi gọi tool.'),
+        expectedRoi: String(args.expectedRoi || 'Giảm 20% token và thời gian xử lý'),
+        beforeMetric: String(args.beforeMetric || 'Chưa đo'),
+      });
+      return { ok: true, output: { proposalId: prop.id, code: prop.code, stage: prop.rolloutStage } };
+    }
+
+    case 'scout_git_repo': {
+      const query = String(args.query || '').trim();
+      if (!query) return { ok: false, output: { error: 'Thiếu từ khóa tìm repo.' } };
+      const reports = await store.scoutGitRepo(query);
+      return {
+        ok: true,
+        output: {
+          count: reports.length,
+          reports: reports.map((r) => ({
+            id: r.id,
+            repo: r.repoFullName,
+            stars: r.stars,
+            license: r.license,
+            verificationLabel: r.verificationLabel,
+          })),
+        },
+      };
+    }
+
+    case 'run_device_action': {
+      const deviceId = String(args.deviceId || store.managedDevices[0]?.id || '');
+      const res = await store.executeDeviceCommand({
+        deviceId,
+        agentId,
+        action: (args.action as never) || 'screenshot',
+        text: args.text ? String(args.text) : undefined,
+        packageName: args.packageName ? String(args.packageName) : undefined,
+      });
+      return {
+        ok: res.ok,
+        output: { error: res.error, ocrText: res.ocrText, hasScreenshot: Boolean(res.screenshotDataUrl) },
+      };
+    }
+
+    case 'send_zalo_personal': {
+      const res = await store.sendZaloPersonalMessage({
+        peerId: String(args.peerId || ''),
+        peerName: String(args.peerName || 'Khách hàng'),
+        text: String(args.text || ''),
+        agentId,
+        isReplyToInbound: Boolean(args.isReplyToInbound),
+        isColdMarketing: !args.isReplyToInbound,
+      });
+      return { ok: res.ok, output: { sent: res.ok, error: res.error } };
     }
 
     default:

@@ -15,9 +15,13 @@ import { runCanvaSocialPlaybook } from '../playbooks/canva_social.js';
 import { runTikTokBusinessPlaybook } from '../playbooks/tiktok_business.js';
 import { runYouTubeChannelPlaybook } from '../playbooks/youtube_channel.js';
 import { runLinkedInPagePlaybook } from '../playbooks/linkedin_page.js';
+import { DeviceFarmService } from '../device/deviceService.js';
+import { ZaloPersonalWorker } from './zaloPersonalWorker.js';
+import { runRepoInDockerSandbox } from './repoSandboxRunner.js';
 
 const PORT = Number(process.env.PORT || 4100);
 const prisma = new PrismaClient();
+const zaloPersonal = new ZaloPersonalWorker();
 
 const app = express();
 app.use((_req, res, next) => {
@@ -216,6 +220,42 @@ app.post('/outreach/email', async (req, res) => {
   const { to, subject, text } = req.body as { to: string; subject: string; text: string };
   const result = await sendEmailSmtp({ to, subject, text });
   res.json(result);
+});
+
+// Personal Zalo (zca-js) endpoints
+app.get('/zalo-personal/status', (_req, res) => {
+  res.json(zaloPersonal.getSession());
+});
+app.post('/zalo-personal/qr-start', async (_req, res) => {
+  const session = await zaloPersonal.startQrLogin();
+  res.json(session);
+});
+app.post('/zalo-personal/qr-confirm-sim', (req, res) => {
+  const session = zaloPersonal.confirmSimulatedQr(req.body?.accountName);
+  res.json(session);
+});
+app.post('/zalo-personal/disconnect', (_req, res) => {
+  res.json(zaloPersonal.disconnect());
+});
+app.post('/zalo-personal/send', async (req, res) => {
+  const { peerId, text } = req.body as { peerId: string; text: string };
+  const out = await zaloPersonal.sendMessage({ peerId: String(peerId || ''), text: String(text || '') });
+  res.json(out);
+});
+
+// Docker --network=none Repo Sandbox Runner (BỔ SUNG V)
+app.post('/repos/sandbox-test', async (req, res) => {
+  const { repoUrl, fullName } = req.body as { repoUrl: string; fullName: string };
+  const out = await runRepoInDockerSandbox(String(repoUrl || ''), String(fullName || ''));
+  res.json(out);
+});
+
+// Plug-and-Play Android Device Farm (BỔ SUNG X+)
+const deviceFarm = new DeviceFarmService(broadcastEvent);
+app.use('/devices', deviceFarm.createRouter());
+
+deviceFarm.init().catch((err) => {
+  console.error('[DeviceFarmService] Init warning:', err);
 });
 
 server.listen(PORT, () => {

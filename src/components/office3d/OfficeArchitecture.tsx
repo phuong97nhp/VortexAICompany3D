@@ -179,6 +179,9 @@ function AnimatedElevator({ showF1, showF2, showF3 }: { showF1: boolean; showF2:
 export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 | 2 | 3 }) {
   const selectRoom = useCompanyStore((s) => s.selectRoom);
   const selectedRoomId = useCompanyStore((s) => s.selectedRoomId);
+  const openSpotCheck = useCompanyStore((s) => s.openSpotCheck);
+  const setMonitorWallOpen = useCompanyStore((s) => s.setMonitorWallOpen);
+  const handoverTickets = useCompanyStore((s) => s.handoverTickets);
   const dayNightMode = useCompanyStore((s) => s.settings.dayNightMode);
   const dealCelebrationNonce = useCompanyStore((s) => s.dealCelebrationNonce);
   const agents = useCompanyStore((s) => s.agents);
@@ -219,8 +222,15 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
   );
 
   const filteredDesks = useMemo(() => {
-    const all = [
+    const all: Array<{
+      agentId?: string;
+      floor: 1 | 2 | 3;
+      pos: [number, number, number];
+      rotY: number;
+      color: string;
+    }> = [
       ...activeAgents.map((a) => ({
+        agentId: a.id,
         floor: a.floor,
         pos: a.deskPosition,
         rotY: a.deskRotationY || 0,
@@ -650,6 +660,29 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
               <boxGeometry args={[0.55, 1.8, 1.4]} />
               <meshStandardMaterial color="#451A03" roughness={0.6} />
             </mesh>
+            {/* Clickable 24/7 Monitor Wall in Exec Room */}
+            <group
+              position={[-8.5, 5.25, -8.86]}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMonitorWallOpen(true);
+              }}
+              onPointerOver={() => {
+                document.body.style.cursor = 'pointer';
+              }}
+              onPointerOut={() => {
+                document.body.style.cursor = 'default';
+              }}
+            >
+              <mesh castShadow>
+                <boxGeometry args={[3.4, 1.6, 0.1]} />
+                <meshStandardMaterial color="#0F172A" roughness={0.3} />
+              </mesh>
+              <mesh position={[0, 0, 0.06]}>
+                <planeGeometry args={[3.15, 1.35]} />
+                <meshStandardMaterial color="#0284C7" emissive="#38BDF8" emissiveIntensity={0.45} side={THREE.DoubleSide} />
+              </mesh>
+            </group>
             <PottedPlant position={[-4.6, 3.8, -8.3]} />
           </group>
 
@@ -898,9 +931,24 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
           args={[undefined, undefined, filteredDesks.length]}
           frustumCulled={false}
           castShadow
+          onClick={(e) => {
+            e.stopPropagation();
+            if (typeof e.instanceId === 'number') {
+              const targetDesk = filteredDesks[e.instanceId];
+              if (targetDesk?.agentId) {
+                openSpotCheck(targetDesk.agentId);
+              }
+            }
+          }}
+          onPointerOver={() => {
+            document.body.style.cursor = 'pointer';
+          }}
+          onPointerOut={() => {
+            document.body.style.cursor = 'default';
+          }}
         >
           <boxGeometry args={[0.7, 0.44, 0.06]} />
-          <meshStandardMaterial color="#FFFFFF" emissive="#38BDF8" emissiveIntensity={0.22} roughness={0.25} />
+          <meshStandardMaterial color="#FFFFFF" emissive="#38BDF8" emissiveIntensity={0.28} roughness={0.25} />
         </instancedMesh>
 
         <instancedMesh
@@ -934,6 +982,38 @@ export function OfficeArchitecture({ visibleFloor }: { visibleFloor: 'all' | 1 |
           <boxGeometry args={[0.26, 0.09, 0.07]} />
           <meshStandardMaterial color="#FFFFFF" roughness={0.35} />
         </instancedMesh>
+      {/* 3D Cross-Dept Handover Flow Arcs (BỔ SUNG S) */}
+      {handoverTickets
+        .filter((t) => t.status === 'pending_accept' || t.status === 'accepted' || t.status === 'escalated_overdue')
+        .slice(0, 6)
+        .map((t) => {
+          const fromDept = departments.find((d) => d.id === t.fromDepartment);
+          const toDept = departments.find((d) => d.id === t.toDepartment);
+          if (!fromDept || !toDept) return null;
+          if (visibleFloor !== 'all' && fromDept.floor !== visibleFloor && toDept.floor !== visibleFloor) return null;
+          const p0 = new THREE.Vector3(fromDept.roomCenter[0], fromDept.roomCenter[1] + 2.1, fromDept.roomCenter[2]);
+          const p2 = new THREE.Vector3(toDept.roomCenter[0], toDept.roomCenter[1] + 2.1, toDept.roomCenter[2]);
+          const mid = p0.clone().lerp(p2, 0.5);
+          mid.y += 1.65;
+          const colorHex = t.status === 'escalated_overdue' ? '#EF4444' : '#38BDF8';
+          return (
+            <group key={t.id}>
+              {[0.25, 0.5, 0.75].map((u) => {
+                const pt = new THREE.Vector3(
+                  (1 - u) * (1 - u) * p0.x + 2 * (1 - u) * u * mid.x + u * u * p2.x,
+                  (1 - u) * (1 - u) * p0.y + 2 * (1 - u) * u * mid.y + u * u * p2.y,
+                  (1 - u) * (1 - u) * p0.z + 2 * (1 - u) * u * mid.z + u * u * p2.z
+                );
+                return (
+                  <mesh key={u} position={[pt.x, pt.y, pt.z]}>
+                    <sphereGeometry args={[u === 0.5 ? 0.14 : 0.09, 8, 8]} />
+                    <meshStandardMaterial color={colorHex} emissive={colorHex} emissiveIntensity={0.9} />
+                  </mesh>
+                );
+              })}
+            </group>
+          );
+        })}
       </group>
     </group>
   );

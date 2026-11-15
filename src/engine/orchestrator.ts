@@ -269,6 +269,11 @@ export async function runSingleAgentTurn(
   }
 
   store.setAgentStatus(agentId, 'thinking', 'Đang phân tích...', userInstruction.slice(0, 48), 25);
+  store.recordTimelineEvent({
+    agentId,
+    stepLabel: `Phân tích yêu cầu: ${userInstruction.slice(0, 56)}`,
+    detailMasked: 'Bắt đầu phiên xử lý LLM + chọn công cụ.',
+  });
   if (activeTask) {
     activeTask = { ...activeTask, progressPercent: 25, lastProgressAt: Date.now(), updatedAt: Date.now() };
     await store.putTask(activeTask);
@@ -418,6 +423,12 @@ export async function runSingleAgentTurn(
       for (const tc of res.toolCalls.slice(0, 3)) {
         const toolResult = await executeAgentTool(agentId, tc.name as never, tc.arguments, {
           onDeliverable: (d) => deliverables.push(d),
+        });
+        store.recordTimelineEvent({
+          agentId,
+          stepLabel: `Gọi công cụ ${tc.name}`,
+          detailMasked: toolResult.ok ? 'Thực thi thành công' : String(toolResult.output.error || 'Bị chặn/lỗi'),
+          toolName: tc.name,
         });
         toolLogs.push({
           name: tc.name,
@@ -1266,6 +1277,40 @@ export async function handleCeoChatCommand(rawText: string, activeChannel: ChatC
     return;
   }
 
+  // On-demand Git Repo Scout (BỔ SUNG V - ONLY runs when CEO explicitly asks "tìm repo...")
+  const lowerTxt = foldVietnamese(text);
+  if (/^(tim repo|tim thu vien|scout repo|tim ma nguon)\b/.test(lowerTxt)) {
+    const query = text.replace(/^(tìm repo|tìm thư viện|scout repo|tìm mã nguồn)\s*/i, '').trim() || text;
+    const reports = await store.scoutGitRepo(query);
+    store.setActiveTab('collab');
+    await store.addMessage({
+      channelId: activeChannel,
+      senderId: 'tech_lead',
+      senderName: getLiveAgentById('tech_lead')?.name || 'Tech Lead',
+      senderTitle: 'Git Repo Scout',
+      department: 'product',
+      content:
+        reports.length > 0
+          ? `Đã quét ${reports.length} kho mã nguồn công khai cho **"${query}"** (mới quét tĩnh, gắn nhãn **${reports[0].verificationLabel}**):\n${reports
+              .map((r) => `- **${r.repoFullName}** (${r.stars}★, License: ${r.license}) — ${r.recommendation}`)
+              .join('\n')}`
+          : `Không tìm thấy repo phù hợp cho "${query}".`,
+      busType: 'report',
+    });
+    return;
+  }
+
+  // Quick live voice meeting shortcut ("gặp mặt" / "họp trực tiếp")
+  if (/^(gap mat|hop truc tiep|voice meeting)\b/.test(lowerTxt)) {
+    const topic = text.replace(/^(gặp mặt|họp trực tiếp|voice meeting)\s*/i, '').trim() || 'Giao ban nhanh cùng Ban Điều hành';
+    await store.startVoiceMeeting({
+      title: topic,
+      participantIds: ['secretary', 'cmo', 'sales_director', 'coo'],
+      isQuickFiveMin: true,
+    });
+    return;
+  }
+
   // 6. Direct Message Channel
   if (activeChannel.startsWith('dm:')) {
     const targetId = activeChannel.replace('dm:', '');
@@ -1431,6 +1476,35 @@ export function startBackgroundSchedulers() {
             `[Digest ${todayKey}] Việc đang mở: ${openCount} · Trễ hạn: ${delayedCount} · Phiếu chi chờ duyệt: ${pendingExpCount}.`
           );
         }
+      }
+    }
+
+    // 5. COO Auto Spot-Check schedule (BỔ SUNG L)
+    const scCfg = store.settings.spotCheck;
+    if (scCfg?.autoEnabled && store.initialized) {
+      const hour = new Date(now).getHours();
+      if (hour >= scCfg.startHour && hour <= scCfg.endHour) {
+        const minGapMs = Math.max(60_000, ((scCfg.endHour - scCfg.startHour + 1) * 3600_000) / Math.max(1, scCfg.runsPerDay));
+        const lastAuto = store.spotChecks.find((r) => r.inspector === 'coo');
+        if (!lastAuto || now - lastAuto.createdAt >= minGapMs) {
+          store.runRandomSpotCheck('coo').catch(() => {});
+        }
+      }
+    }
+
+    // 6. Cross-Dept Handover SLA Watchdog (BỔ SUNG S)
+    for (const tk of store.handoverTickets) {
+      if ((tk.status === 'pending_accept' || tk.status === 'accepted') && now > tk.dueAt && tk.escalatedCount === 0) {
+        store.respondHandoverTicket(tk.id, tk.status === 'pending_accept' ? 'accepted' : tk.status).catch(() => {});
+        store.addMessage({
+          channelId: 'exec',
+          senderId: 'coo',
+          senderName: getLiveAgentById('coo')?.name || 'COO Điều hành',
+          senderTitle: 'Cảnh báo SLA Bàn giao',
+          department: 'exec',
+          content: `Phiếu bàn giao **${tk.code}** (${tk.fromDepartment} → ${tk.toDepartment}: *${tk.title}*) đã quá hạn SLA ${tk.slaMinutes} phút.`,
+          busType: 'escalation',
+        });
       }
     }
   }, 20000);

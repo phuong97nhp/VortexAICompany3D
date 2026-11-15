@@ -4,10 +4,12 @@ import {
   BellRing,
   CheckCircle2,
   Cpu,
+  Eye,
   KeyRound,
   Lock,
   MessageCircle,
   Palette,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Save,
@@ -15,6 +17,8 @@ import {
   ShieldCheck,
   Trash2,
   Upload,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import {
   DEFAULT_BRAND_PALETTE,
@@ -24,7 +28,7 @@ import {
 import { PRODUCTS } from '../../config/products';
 import { listLocalModels, ROUTING_PRESET_LABELS, testLocalConnection } from '../../engine/llm';
 import { useCompanyStore } from '../../store/useCompanyStore';
-import { GraphicsQuality, OutfitStyleId, ProviderId, RoutingPresetId } from '../../types';
+import { GraphicsQuality, OutfitStyleId, ProviderId, RoutingPresetId, VoiceProviderId } from '../../types';
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Google Gemini (Mặc định AI Studio)',
@@ -51,12 +55,30 @@ export function SettingsPanel() {
   const updateAffiliateSettings = useCompanyStore((s) => s.updateAffiliateSettings);
   const sendTestCeoAlert = useCompanyStore((s) => s.sendTestCeoAlert);
   const setActiveTab = useCompanyStore((s) => s.setActiveTab);
+  const updateSpotCheckConfig = useCompanyStore((s) => s.updateSpotCheckConfig);
+  const runRandomSpotCheck = useCompanyStore((s) => s.runRandomSpotCheck);
+  const setMonitorWallOpen = useCompanyStore((s) => s.setMonitorWallOpen);
+  const updateVoiceSettings = useCompanyStore((s) => s.updateVoiceSettings);
+  const speakAsAgent = useCompanyStore((s) => s.speakAsAgent);
+  const stopSpeakingNow = useCompanyStore((s) => s.stopSpeakingNow);
+  const zaloPersonalSession = useCompanyStore((s) => s.zaloPersonalSession);
+  const zaloPersonalLogs = useCompanyStore((s) => s.zaloPersonalLogs);
+  const updateZaloPersonalConfig = useCompanyStore((s) => s.updateZaloPersonalConfig);
+  const startZaloPersonalQr = useCompanyStore((s) => s.startZaloPersonalQr);
+  const confirmZaloPersonalQrSim = useCompanyStore((s) => s.confirmZaloPersonalQrSim);
+  const disconnectZaloPersonal = useCompanyStore((s) => s.disconnectZaloPersonal);
+  const addZaloPersonalDnc = useCompanyStore((s) => s.addZaloPersonalDnc);
+  const sendZaloPersonalMessage = useCompanyStore((s) => s.sendZaloPersonalMessage);
 
   const [geminiKeyDraft, setGeminiKeyDraft] = useState(settings.geminiApiKey);
   const [deepseekKeyDraft, setDeepseekKeyDraft] = useState(settings.deepseekApiKey);
   const [brandNotice, setBrandNotice] = useState<string | null>(null);
   const [affNotice, setAffNotice] = useState<string | null>(null);
   const [alertNotice, setAlertNotice] = useState<string | null>(null);
+  const [zaloPersNotice, setZaloPersNotice] = useState<string | null>(null);
+  const [dncInput, setDncInput] = useState('');
+  const [zaloPersTestPeer, setZaloPersTestPeer] = useState('0901234567');
+  const [zaloPersTestMsg, setZaloPersTestMsg] = useState('Chào anh/chị, em liên hệ từ bộ phận CSKH Chuyên Web.');
   const [confirmHardReset, setConfirmHardReset] = useState(false);
   const [localTestStatus, setLocalTestStatus] = useState<{
     loading: boolean;
@@ -1135,6 +1157,414 @@ export function SettingsPanel() {
             </div>
           )}
         </div>
+      </section>
+
+      {/* 7. Giám sát màn hình bất chợt (Spot-Check L) */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="font-bold text-sm flex items-center gap-1.5">
+            <Eye className="w-4 h-4 text-amber-500" />
+            <span>7. Kiểm tra màn hình bất chợt (Spot-Check)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => runRandomSpotCheck('ceo')}
+              className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+            >
+              Soi ngẫu nhiên ngay
+            </button>
+            <button
+              type="button"
+              onClick={() => setMonitorWallOpen(true)}
+              className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 text-[11px] font-medium cursor-pointer whitespace-nowrap"
+            >
+              Mở Tường GS
+            </button>
+          </div>
+        </div>
+
+        <label className="flex items-center justify-between cursor-pointer">
+          <span>COO Agent tự động soi bất chợt theo lịch ngẫu nhiên</span>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.spotCheck?.autoEnabled)}
+            onChange={(e) => updateSpotCheckConfig({ autoEnabled: e.target.checked })}
+            className="w-4 h-4 accent-amber-500"
+          />
+        </label>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Số lần soi / ngày</label>
+            <input
+              type="number"
+              min={1}
+              max={24}
+              value={settings.spotCheck?.runsPerDay ?? 4}
+              onChange={(e) => updateSpotCheckConfig({ runsPerDay: Math.max(1, Number(e.target.value) || 4) })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Khung giờ bắt đầu</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={settings.spotCheck?.startHour ?? 8}
+              onChange={(e) => updateSpotCheckConfig({ startHour: Math.min(23, Math.max(0, Number(e.target.value) || 8)) })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Khung giờ kết thúc</label>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={settings.spotCheck?.endHour ?? 21}
+              onChange={(e) => updateSpotCheckConfig({ endHour: Math.min(23, Math.max(0, Number(e.target.value) || 21)) })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Lưu snapshot (ngày)</label>
+            <input
+              type="number"
+              min={7}
+              max={30}
+              value={settings.spotCheck?.retentionDays ?? 14}
+              onChange={(e) =>
+                updateSpotCheckConfig({ retentionDays: Math.min(30, Math.max(7, Number(e.target.value) || 14)) })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        <label className="flex items-center justify-between cursor-pointer">
+          <span>Báo Zalo/Banner khi phát hiện lệch việc, kẹt hoặc lặp vòng</span>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.spotCheck?.alertOnAbnormal ?? true)}
+            onChange={(e) => updateSpotCheckConfig({ alertOnAbnormal: e.target.checked })}
+            className="w-4 h-4 accent-amber-500"
+          />
+        </label>
+      </section>
+
+      {/* 8. Giọng nói & Họp trực tiếp (M) */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="font-bold text-sm flex items-center gap-1.5">
+            <Volume2 className="w-4 h-4 text-sky-500" />
+            <span>8. Giọng nói & Họp trực tiếp (Voice AI)</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => speakAsAgent('secretary', 'Xin chào Chủ tịch, em là Thư ký ảo. Hệ thống họp trực tiếp đã sẵn sàng.')}
+              className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+            >
+              Đọc thử giọng Thư ký
+            </button>
+            <button
+              type="button"
+              onClick={() => stopSpeakingNow()}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg border border-rose-500/40 text-rose-500 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+            >
+              <VolumeX className="w-3 h-3" />
+              <span>Dừng</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Voice Provider</label>
+            <select
+              value={settings.voice?.provider || 'web_speech'}
+              onChange={(e) => updateVoiceSettings({ provider: e.target.value as VoiceProviderId })}
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+            >
+              <option value="web_speech">Trình duyệt (Web Speech API)</option>
+              <option value="gemini_tts">Gemini TTS (/api/voice/gemini-tts)</option>
+              <option value="text_only">Chỉ văn bản (Tắt âm thanh)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Thời lượng họp nhanh (phút)</label>
+            <input
+              type="number"
+              min={1}
+              max={60}
+              value={settings.voice?.quickMeetingDefaultMinutes ?? 5}
+              onChange={(e) =>
+                updateVoiceSettings({ quickMeetingDefaultMinutes: Math.min(60, Math.max(1, Number(e.target.value) || 5)) })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Lượt tối đa/Agent trong họp</label>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={settings.voice?.maxTurnsPerAgentInMeeting ?? 4}
+              onChange={(e) =>
+                updateVoiceSettings({ maxTurnsPerAgentInMeeting: Math.min(20, Math.max(1, Number(e.target.value) || 4)) })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+        </div>
+
+        <label className="flex items-center justify-between cursor-pointer">
+          <span>Tự động đọc thành tiếng khi nhân sự báo cáo CEO</span>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.voice?.autoReadResponses)}
+            onChange={(e) => updateVoiceSettings({ autoReadResponses: e.target.checked })}
+            className="w-4 h-4 accent-sky-600"
+          />
+        </label>
+        <label className="flex items-center justify-between cursor-pointer">
+          <span>Mặc định bật tùy chọn lưu biên bản họp vào Kho tài liệu</span>
+          <input
+            type="checkbox"
+            checked={Boolean(settings.voice?.defaultRecordTranscript)}
+            onChange={(e) => updateVoiceSettings({ defaultRecordTranscript: e.target.checked })}
+            className="w-4 h-4 accent-sky-600"
+          />
+        </label>
+      </section>
+
+      {/* 9. Zalo Cá nhân Có Rào chắn (zca-js - O) */}
+      <section className="p-3 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="font-bold text-sm flex items-center gap-1.5">
+            <QrCode className="w-4 h-4 text-emerald-500" />
+            <span>9. Zalo Cá nhân Có Rào chắn (zca-js · Kênh phụ)</span>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded text-[10.5px] font-semibold border ${
+              zaloPersonalSession.status === 'connected'
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-500'
+                : zaloPersonalSession.status === 'blocked_anomaly'
+                ? 'border-rose-500/40 bg-rose-500/10 text-rose-500'
+                : 'border-slate-300 dark:border-slate-700 text-slate-500'
+            }`}
+          >
+            {zaloPersonalSession.status} ({zaloPersonalSession.mode})
+          </span>
+        </div>
+
+        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-700 dark:text-amber-300">
+          <strong>Nguyên tắc:</strong> <strong>Zalo OA vẫn là kênh chính thức #1</strong>. Zalo cá nhân chỉ dùng bổ trợ bằng SIM/tài khoản riêng của công ty, trần nhắn mới tối đa <strong>20 tin/ngày</strong> (tin trả lời khách chủ động được miễn trần) và tôn trọng tuyệt đối danh sách DNC.
+        </div>
+
+        {settings.zaloPersonal?.anomalyPausedReason && (
+          <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/40 text-[11px] text-rose-500 flex items-center justify-between gap-2">
+            <span>Tạm dừng bất thường: {settings.zaloPersonal.anomalyPausedReason}</span>
+            <button
+              type="button"
+              onClick={() => updateZaloPersonalConfig({ anomalyPausedReason: undefined })}
+              className="px-2 py-0.5 rounded bg-rose-600 text-white text-[10.5px] font-semibold cursor-pointer whitespace-nowrap"
+            >
+              Mở lại
+            </button>
+          </div>
+        )}
+
+        <div className="space-y-1.5 p-2.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.zaloPersonal?.riskConfirmedByCeo)}
+              onChange={(e) =>
+                updateZaloPersonalConfig({
+                  riskConfirmedByCeo: e.target.checked,
+                  riskConfirmedAt: e.target.checked ? Date.now() : undefined,
+                  enabled: e.target.checked ? Boolean(settings.zaloPersonal?.enabled) : false,
+                })
+              }
+              className="accent-sky-600"
+            />
+            <span>CEO xác nhận đã hiểu rủi ro nền tảng & tuân thủ giới hạn tần suất Zalo cá nhân</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={Boolean(settings.zaloPersonal?.dedicatedCompanyAccountConfirmed)}
+              onChange={(e) =>
+                updateZaloPersonalConfig({
+                  dedicatedCompanyAccountConfirmed: e.target.checked,
+                  enabled: e.target.checked ? Boolean(settings.zaloPersonal?.enabled) : false,
+                })
+              }
+              className="accent-sky-600"
+            />
+            <span>Xác nhận đây là SIM/tài khoản phụ chuyên dụng của công ty (không dùng SIM chính CEO)</span>
+          </label>
+          <label className="flex items-center justify-between pt-1 cursor-pointer">
+            <span className="font-semibold">Bật kênh Zalo cá nhân (`enabled`)</span>
+            <input
+              type="checkbox"
+              disabled={!settings.zaloPersonal?.riskConfirmedByCeo || !settings.zaloPersonal?.dedicatedCompanyAccountConfirmed}
+              checked={Boolean(settings.zaloPersonal?.enabled)}
+              onChange={(e) => updateZaloPersonalConfig({ enabled: e.target.checked })}
+              className="w-4 h-4 accent-emerald-600"
+            />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10px] text-slate-400 mb-0.5">Trần tin tiếp cận mới/ngày (tối đa 20)</label>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={settings.zaloPersonal?.dailyColdOutboundCap ?? 20}
+              onChange={(e) =>
+                updateZaloPersonalConfig({
+                  dailyColdOutboundCap: Math.min(20, Math.max(1, Number(e.target.value) || 20)),
+                })
+              }
+              className="w-full rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+            />
+          </div>
+          <label className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 cursor-pointer">
+            <span>Pháp chế đã duyệt Cold Marketing</span>
+            <input
+              type="checkbox"
+              checked={Boolean(settings.zaloPersonal?.allowColdMarketingApprovedByLegal)}
+              onChange={(e) => updateZaloPersonalConfig({ allowColdMarketingApprovedByLegal: e.target.checked })}
+              className="w-4 h-4 accent-emerald-600"
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              await startZaloPersonalQr();
+              setZaloPersNotice('Đã tạo phiên QR Zalo cá nhân. Quét hoặc xác nhận ở chế độ Sandbox.');
+            }}
+            className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold cursor-pointer whitespace-nowrap"
+          >
+            Tạo QR Đăng nhập
+          </button>
+          {zaloPersonalSession.status === 'qr_pending' && (
+            <button
+              type="button"
+              onClick={async () => {
+                await confirmZaloPersonalQrSim('Zalo Công ty (SIM Phụ)');
+                setZaloPersNotice('Đã kết nối phiên Zalo cá nhân mô phỏng an toàn.');
+              }}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer whitespace-nowrap"
+            >
+              Xác nhận đã quét QR (Sandbox)
+            </button>
+          )}
+          {zaloPersonalSession.status === 'connected' && (
+            <button
+              type="button"
+              onClick={async () => {
+                await disconnectZaloPersonal();
+                setZaloPersNotice('Đã ngắt phiên Zalo cá nhân.');
+              }}
+              className="px-3 py-1.5 rounded-lg border border-rose-500/40 text-rose-500 font-semibold cursor-pointer whitespace-nowrap"
+            >
+              Ngắt kết nối
+            </button>
+          )}
+        </div>
+
+        {/* DNC + Test Send */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+          <div className="space-y-1">
+            <label className="block text-[10px] text-slate-400">Thêm số/ID vào danh sách Chặn (DNC)</label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={dncInput}
+                onChange={(e) => setDncInput(e.target.value)}
+                placeholder="SĐT hoặc peerId..."
+                className="flex-1 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!dncInput.trim()) return;
+                  await addZaloPersonalDnc(dncInput.trim());
+                  setZaloPersNotice(`Đã đưa "${dncInput.trim()}" vào DNC.`);
+                  setDncInput('');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-semibold cursor-pointer"
+              >
+                Chặn DNC
+              </button>
+            </div>
+            <div className="text-[10px] text-slate-400">
+              DNC hiện tại ({(settings.zaloPersonal?.dncList || []).length}): {(settings.zaloPersonal?.dncList || []).join(', ') || 'Trống'}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-[10px] text-slate-400">Thử kiểm tra rào chắn gửi tin (Chế độ rào chắn)</label>
+            <div className="flex gap-1">
+              <input
+                type="text"
+                value={zaloPersTestPeer}
+                onChange={(e) => setZaloPersTestPeer(e.target.value)}
+                placeholder="Peer ID / SĐT"
+                className="w-28 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1 font-mono-num"
+              />
+              <input
+                type="text"
+                value={zaloPersTestMsg}
+                onChange={(e) => setZaloPersTestMsg(e.target.value)}
+                className="flex-1 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-2 py-1"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const res = await sendZaloPersonalMessage({
+                    peerId: zaloPersTestPeer.trim(),
+                    peerName: 'Khách kiểm thử',
+                    text: zaloPersTestMsg,
+                    agentId: 'cskh_1',
+                    isReplyToInbound: true,
+                    isColdMarketing: false,
+                  });
+                  setZaloPersNotice(res.ok ? 'Đã ghi nhận gửi qua rào chắn.' : `Đã chặn: ${res.error}`);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-semibold cursor-pointer whitespace-nowrap"
+              >
+                Gửi thử
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {zaloPersNotice && <div className="text-[11px] text-sky-500 font-medium">{zaloPersNotice}</div>}
+
+        {zaloPersonalLogs.length > 0 && (
+          <div className="max-h-24 overflow-y-auto space-y-1 border-t border-slate-200 dark:border-slate-800 pt-1.5">
+            {zaloPersonalLogs.slice(0, 6).map((l) => (
+              <div key={l.id} className="flex items-center justify-between text-[10.5px] font-mono-num">
+                <span className="truncate">
+                  [{l.status}] {l.peerIdMasked}: {l.preview}
+                </span>
+                <span className="text-slate-400 shrink-0">{new Date(l.timestamp).toLocaleTimeString('vi-VN')}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

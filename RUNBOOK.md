@@ -62,3 +62,18 @@ Trước khi chuyển hệ thống từ `SANDBOX` / `READ-ONLY` sang `LIVE (Ghi 
   - Kiểm tra mọi thẻ **`[CẦN BỔ SUNG]`** màu đỏ và mục **`CHƯA XÁC MINH - CẦN LUẬT SƯ XÁC NHẬN`** trước khi xuất `.docx` / `.pdf`.
   - Hợp đồng có giá trị > ngưỡng hoặc liên quan **dữ liệu trẻ em (Trường Mầm non)** / **yếu tố nước ngoài** / **bán mã nguồn** sẽ tự động gắn cờ **Bắt buộc chuyển Luật sư thật**.
   - Phê duyệt nhanh qua Zalo Simulator: gõ `1 #HD-2026-001` (Duyệt gửi), `2 #HD-2026-001 ghi chú` (Sửa lại), hoặc `3 #HD-2026-001` (Chuyển Luật sư thật).
+
+---
+
+## 5. Vận hành BỔ SUNG L → X+ (Giám sát, Zalo Cá nhân, Ngân hàng 2FA & Android Farm)
+
+- **Spot-Check & Tường Giám sát (L):**
+  - Mọi dữ liệu nhạy cảm (API key, token, OTP, mật khẩu, STK) đều đi qua `maskSensitiveContent()` trước khi lưu snapshot. Ở `SANDBOX`, màn hình luôn gắn nhãn **Mô phỏng** và không bao giờ tạo ảnh chụp trình duyệt giả.
+- **Zalo Cá nhân Có Rào chắn (O):**
+  - Chỉ dùng SIM/tài khoản riêng công ty sau khi CEO tích đủ 2 ô xác nhận trong **Cài đặt → 9. Zalo Cá nhân**.
+  - Giới hạn cứng `<= 20` tin tiếp cận mới/ngày (tin trả lời khách được miễn), tự dừng ngay khi gặp dấu hiệu bất thường hoặc khi bật **KILL SWITCH**.
+- **Tài khoản Ngân hàng Công ty (R):**
+  - Chỉ CEO có thể thêm/sửa/xóa qua bước xác thực **Mật khẩu CEO + mã OTP** trong tab **SP & Ngân hàng**. Agent AI bị chặn cứng đổi số tài khoản hoặc gửi STK ngoài danh mục công ty.
+- **Thiết bị Android Cắm là Chạy (X+):**
+  - Xem hướng dẫn từng bước tại `worker/DEVICE_SETUP.md`. Chạy `cd worker && npm run device:doctor` để kiểm tra ADB trên máy local.
+  - Mặc định mọi thiết bị mới gắn vào luôn khởi đầu ở mức **`view_only` (Chỉ xem)**; cần CEO chuyển sang `approved_actions` hoặc `policy_auto`, với nút **Giành quyền / DỪNG** luôn sẵn sàng.

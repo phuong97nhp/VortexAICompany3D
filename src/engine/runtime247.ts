@@ -7,7 +7,7 @@ import {
 } from '../types';
 import { circuitBreakers, createTraceId } from './resilience';
 
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /**
  * Durable Job Queue helper: ensures tasks survive browser reloads or server restarts.
